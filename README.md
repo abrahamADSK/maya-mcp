@@ -92,7 +92,7 @@ maya-mcp/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/maya-mcp.git
+git clone https://github.com/abrahamADSK/maya-mcp.git
 cd maya-mcp
 ```
 
