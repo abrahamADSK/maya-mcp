@@ -24,9 +24,9 @@ if not _project_dir:
     # Cuando se ejecuta via exec() en Maya, __file__ no está disponible.
     # Intentar buscar el proyecto por nombre de directorio conocido.
     _candidates = [
-        os.path.expanduser('~/Documents/hunyuan3d-maya-pipeline'),
-        os.path.expanduser('~/hunyuan3d-maya-pipeline'),
-        os.path.expanduser('~/projects/hunyuan3d-maya-pipeline'),
+        os.path.expanduser('~/Documents/maya-mcp-server'),
+        os.path.expanduser('~/maya-mcp-server'),
+        os.path.expanduser('~/projects/maya-mcp-server'),
     ]
     for _c in _candidates:
         if os.path.isdir(_c):
