@@ -1,0 +1,40 @@
+# ── Environment & secrets ────────────────────────────────────
+.env
+*.env.local
+
+# ── Pipeline outputs ─────────────────────────────────────────
+reference/3d_output/
+renders/
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv*/
+*.egg-info/
+dist/
+build/
+
+# ── macOS ────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+
+# ── Cowork skill bundles ─────────────────────────────────────
+*.skill
+
+# ── Editor ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Maya ─────────────────────────────────────────────────────
+*.ma
+*.mb
+*.mayaSwatches/
+
+# ── Large model files (weights should never be committed) ────
+*.safetensors
+*.ckpt
+*.bin
+hf_models/
