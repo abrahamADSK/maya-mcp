@@ -4,7 +4,7 @@
 
 set -e
 
-REPO_NAME="maya-mcp-server"
+REPO_NAME="maya-mcp"
 DESCRIPTION="Image → 3D → Maya: Convert a 2D reference into a textured 3D mesh using Hunyuan3D-2 on a remote GPU, with a FastMCP server for LLM control of Autodesk Maya"
 
 cd "$(dirname "$0")"

@@ -1,4 +1,4 @@
-# maya-mcp-server
+# maya-mcp
 
 > **Image → 3D → Maya** — End-to-end pipeline that converts a 2D reference image into a fully textured, production-ready 3D mesh inside Autodesk Maya, powered by [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2) running on a remote GPU server.
 
@@ -41,7 +41,7 @@ This project connects three systems:
 ## Project Structure
 
 ```
-maya-mcp-server/
+maya-mcp/
 ├── core/                          # MCP Server (Claude ↔ Maya bridge)
 │   ├── server.py                  # FastMCP server — 11 Maya tools
 │   ├── maya_bridge.py             # TCP socket bridge → Maya Command Port :7001
@@ -92,8 +92,8 @@ maya-mcp-server/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/maya-mcp-server.git
-cd maya-mcp-server
+git clone https://github.com/YOUR_USERNAME/maya-mcp.git
+cd maya-mcp
 ```
 
 ### 2. Configure environment variables
@@ -112,7 +112,7 @@ Key variables to set in `.env`:
 | `GPU_REMOTE_BASE` | Root of ai-studio install on GPU server | `/opt/ai-studio` |
 | `GPU_VENV` | Python venv on GPU server | `/opt/ai-studio/vision/.venv` |
 | `GPU_MODELS_DIR` | Hunyuan3D model weights directory | `/opt/ai-studio/vision/hf_models` |
-| `PROJECT_DIR` | Absolute path to this repo on your Mac | `/Users/you/projects/maya-mcp-server` |
+| `PROJECT_DIR` | Absolute path to this repo on your Mac | `/Users/you/projects/maya-mcp` |
 
 ### 3. Set up the MCP server (core/)
 
@@ -178,7 +178,7 @@ Run the full pipeline directly from Maya's Script Editor. The pipeline SSHes to 
 ```python
 # In Maya Script Editor → Python tab
 import os
-os.environ['PROJECT_DIR'] = '/path/to/maya-mcp-server'
+os.environ['PROJECT_DIR'] = '/path/to/maya-mcp'
 os.environ['GPU_SSH_HOST'] = 'user@your-gpu-server'
 # ... set other env vars, or use a .env loader
 
@@ -189,7 +189,7 @@ Or for paint-only (if you already have a mesh):
 
 ```python
 # Place your mesh.glb in reference/3d_output/0/ first
-exec(open('/path/to/maya-mcp-server/vision/pipeline_runner.py').read())
+exec(open('/path/to/maya-mcp/vision/pipeline_runner.py').read())
 # Runs in paint-only mode when exec()'d (no __main__ guard)
 ```
 
@@ -212,13 +212,13 @@ After the pipeline completes, import the result into Maya:
 
 ```python
 # In Maya Script Editor → Python tab
-exec(open('/path/to/maya-mcp-server/vision/maya_import_hires.py').read())
+exec(open('/path/to/maya-mcp/vision/maya_import_hires.py').read())
 ```
 
 Then apply position correction and smooth subdivision:
 
 ```python
-exec(open('/path/to/maya-mcp-server/vision/maya_fix_position_smooth.py').read())
+exec(open('/path/to/maya-mcp/vision/maya_fix_position_smooth.py').read())
 ```
 
 ---
@@ -270,8 +270,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "maya": {
-      "command": "/path/to/maya-mcp-server/core/.venv/bin/python",
-      "args": ["/path/to/maya-mcp-server/core/server.py"]
+      "command": "/path/to/maya-mcp/core/.venv/bin/python",
+      "args": ["/path/to/maya-mcp/core/server.py"]
     }
   }
 }
@@ -292,7 +292,7 @@ GPU_VENV=/opt/ai-studio/vision/.venv
 GPU_MODELS_DIR=/opt/ai-studio/vision/hf_models
 
 # Local project
-PROJECT_DIR=/path/to/maya-mcp-server
+PROJECT_DIR=/path/to/maya-mcp
 OUTPUT_SUBDIR=0                     # Subdirectory under reference/3d_output/
 REFERENCE_IMAGE=/path/to/ref.jpg    # Default reference image
 

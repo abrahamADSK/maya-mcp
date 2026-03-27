@@ -45,7 +45,7 @@ Reference image (.jpg/.png)
 ### Expected folder structure
 
 ```
-maya-mcp-server/
+maya-mcp/
 ├── reference/
 │   ├── reference.jpg              ← your reference image
 │   └── 3d_output/
@@ -62,7 +62,7 @@ maya-mcp-server/
 ```python
 # In Maya Script Editor → Python tab
 import os
-os.environ['PROJECT_DIR'] = '/path/to/maya-mcp-server'
+os.environ['PROJECT_DIR'] = '/path/to/maya-mcp'
 os.environ['GPU_SSH_HOST'] = 'user@your-gpu-server'
 exec(open(os.path.join(os.environ['PROJECT_DIR'], 'vision/pipeline_runner.py')).read())
 ```
@@ -106,7 +106,7 @@ This is the definitive import script. It handles scaling, positioning, material 
 5. Type:
 
 ```python
-exec(open('/path/to/maya-mcp-server/vision/maya_import_hires.py').read())
+exec(open('/path/to/maya-mcp/vision/maya_import_hires.py').read())
 ```
 
 6. Press **Ctrl+Enter** to execute
@@ -164,13 +164,13 @@ LISTO
 Run in Script Editor Python tab:
 
 ```python
-exec(open('/path/to/maya-mcp-server/vision/maya_fix_position_smooth.py').read())
+exec(open('/path/to/maya-mcp/vision/maya_fix_position_smooth.py').read())
 ```
 
 Or from MEL tab (if the Python tab has paste issues):
 
 ```mel
-python("exec(open('/path/to/maya-mcp-server/vision/maya_fix_position_smooth.py').read())");
+python("exec(open('/path/to/maya-mcp/vision/maya_fix_position_smooth.py').read())");
 ```
 
 ### What `maya_fix_position_smooth.py` does
