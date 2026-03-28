@@ -269,13 +269,56 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "maya": {
-      "command": "/path/to/maya-mcp/core/.venv/bin/python",
-      "args": ["/path/to/maya-mcp/core/server.py"]
+    "maya-mcp": {
+      "command": "/path/to/maya-mcp/.venv/bin/python",
+      "args": ["core/server.py"],
+      "cwd": "/path/to/maya-mcp"
     }
   }
 }
 ```
+
+The `cwd` field ensures the server can resolve relative paths and find the `.env` file.
+
+### Configuring Claude Code
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__maya-mcp__maya_ping",
+      "mcp__maya-mcp__maya_create_primitive",
+      "mcp__maya-mcp__maya_assign_material",
+      "mcp__maya-mcp__maya_transform",
+      "mcp__maya-mcp__maya_list_scene",
+      "mcp__maya-mcp__maya_delete",
+      "mcp__maya-mcp__maya_create_light",
+      "mcp__maya-mcp__maya_create_camera",
+      "mcp__maya-mcp__maya_new_scene",
+      "mcp__maya-mcp__maya_save_scene",
+      "mcp__maya-mcp__maya_execute_python",
+      "mcp__maya-mcp__texture_mesh_remote"
+    ]
+  },
+  "mcpServers": {
+    "maya-mcp": {
+      "command": "/path/to/maya-mcp/.venv/bin/python",
+      "args": ["core/server.py"],
+      "cwd": "/path/to/maya-mcp"
+    }
+  }
+}
+```
+
+The `permissions.allow` list auto-approves all maya-mcp tools so Claude Code can call them without manual confirmation each time. This is also required for the fpt-mcp Qt console, which routes messages through Claude Code CLI.
+
+### Cross-MCP pipeline (maya-mcp + fpt-mcp)
+
+When both maya-mcp and fpt-mcp are configured in the same Claude Code or Claude Desktop instance, Claude can orchestrate end-to-end VFX workflows in a single conversation. For example, Claude can query ShotGrid for an asset's reference image via fpt-mcp, download it, generate a 3D model via Hunyuan3D-2, import it into Maya, and register the publish back in ShotGrid — all from one natural language request.
+
+To enable this, add both servers to `~/.claude/settings.json` and include permissions for both in `permissions.allow`. See the fpt-mcp README for its server configuration.
 
 ---
 
