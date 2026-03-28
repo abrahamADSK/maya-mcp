@@ -137,6 +137,21 @@ class CameraInput(BaseModel):
 # Tools
 # ─────────────────────────────────────────────
 
+async def _run_cmd(cmd: List[str], timeout: int = 60) -> tuple:
+    """Ejecuta un comando local async y devuelve (returncode, stdout, stderr)."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return -1, "", f"Timeout después de {timeout}s"
+    return proc.returncode, stdout.decode(), stderr.decode()
+
+
 def _handle_error(e: Exception) -> str:
     """Formateo consistente de errores."""
     if isinstance(e, MayaBridgeError):
