@@ -2,3 +2,5 @@
 fastapi>=0.115.0
 uvicorn>=0.30.0
 python-multipart>=0.0.9
+sse-starlette>=1.6.0          # Server-Sent Events support
+pyfqmr>=0.2.0                 # Fast quadric mesh reduction (optional but recommended)

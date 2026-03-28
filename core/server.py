@@ -578,7 +578,11 @@ class TextureRemoteInput(BaseModel):
 
 @mcp.tool(name="shape_generate_remote")
 async def shape_generate_remote(params: ShapeGenerateInput) -> str:
-    """Genera geometría 3D desde una imagen en el servidor GPU remoto (via HTTPS API)."""
+    """Genera geometría 3D texturizada desde una imagen en el servidor GPU remoto.
+
+    Pipeline completo: imagen → shape → decimación → texturizado.
+    Devuelve mesh.glb (raw), textured.glb, mesh_uv.obj y texture_baked.png.
+    """
     try:
         image_local = Path(params.image_path)
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
@@ -593,7 +597,7 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
         # Crear directorio de salida local
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copiar imagen al directorio de salida como input.png (para texture_mesh_remote)
+        # Copiar imagen al directorio de salida como input.png
         import shutil
         input_copy = out_dir / "input.png"
         shutil.copy2(str(image_local), str(input_copy))
@@ -602,13 +606,17 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
         log = lambda msg: log_lines.append(msg)
         client = _get_http_client()
 
-        # ── Paso 1: Subir imagen al GPU server ───────────────────────────
-        log(f"[1/3] Subiendo imagen a GPU server ({_GPU_API_URL})...")
+        # ── Paso 1: Subir imagen al GPU server (pipeline completo) ────────
+        log(f"[1/4] Subiendo imagen a GPU server ({_GPU_API_URL})...")
+        log(f"       Pipeline: shape + decimación + texturizado")
         with open(str(image_local), "rb") as f:
             resp = await client.post(
-                "/api/generate-shape",
+                "/api/generate-full",
                 files={"image": (image_local.name, f, "image/png")},
-                data={"output_subdir": params.output_subdir},
+                data={
+                    "output_subdir": params.output_subdir,
+                    "target_faces": "50000",
+                },
             )
 
         if resp.status_code != 200:
@@ -619,37 +627,43 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
 
         job = resp.json()
         job_id = job["job_id"]
-        log(f"[1/3] Job creado: {job_id}")
+        log(f"[1/4] Job creado: {job_id}")
 
-        # ── Paso 2: Esperar resultado ─────────────────────────────────────
-        log(f"[2/3] Generando geometría 3D (~3-8 min)...")
+        # ── Paso 2: Esperar resultado (shape + texture) ──────────────────
+        log(f"[2/4] Generando shape + textura (~5-15 min)...")
         result = await _poll_job(job_id, log_fn=log)
-        log(f"[2/3] Shape generation completado.")
+        log(f"[2/4] Pipeline completo.")
 
-        # ── Paso 3: Descargar mesh.glb ────────────────────────────────────
-        log(f"[3/3] Descargando mesh.glb...")
-        mesh_local = out_dir / "mesh.glb"
-        ok = await _download_file(job_id, "mesh.glb", mesh_local)
+        # ── Paso 3: Descargar todos los archivos ─────────────────────────
+        log(f"[3/4] Descargando archivos...")
+        files_to_download = ["textured.glb", "mesh_uv.obj", "texture_baked.png", "mesh.glb"]
+        downloaded = []
+        for fname in files_to_download:
+            ok = await _download_file(job_id, fname, out_dir / fname)
+            if ok:
+                downloaded.append(fname)
+                size_kb = (out_dir / fname).stat().st_size // 1024
+                log(f"       {fname} ({size_kb} KB)")
 
-        if not ok:
-            return json.dumps({
-                "error": "No se pudo descargar mesh.glb del servidor GPU",
-                "log": "\n".join(log_lines)
-            })
+        # ── Paso 4: Resultado ────────────────────────────────────────────
+        baked_ready = (out_dir / "mesh_uv.obj").exists() and \
+                      (out_dir / "texture_baked.png").exists()
+        textured_ready = (out_dir / "textured.glb").exists()
 
-        mesh_size_kb = mesh_local.stat().st_size // 1024 if mesh_local.exists() else 0
-        log(f"[3/3] mesh.glb descargado ({mesh_size_kb} KB)")
+        log(f"[4/4] Descargados: {len(downloaded)} archivos")
 
         return json.dumps({
             "status": "ok",
-            "mesh_path": str(mesh_local),
-            "mesh_size_kb": mesh_size_kb,
             "output_dir": str(out_dir),
+            "downloaded": downloaded,
+            "textured": textured_ready,
+            "baked_texture": baked_ready,
             "image_copy": str(input_copy),
             "next_step": (
-                f"Mesh generado. Para texturizar, llama a texture_mesh_remote con "
-                f"output_subdir='{params.output_subdir}'. La imagen ya está copiada "
-                f"como input.png en el directorio de salida."
+                "Modelo texturizado listo. Importa textured.glb en Maya, o usa "
+                "mesh_uv.obj + texture_baked.png para control total de UVs."
+                if textured_ready else
+                "Solo se generó el mesh sin textura. Revisa los logs del servidor."
             ),
             "log_summary": "\n".join(log_lines)
         }, indent=2)
