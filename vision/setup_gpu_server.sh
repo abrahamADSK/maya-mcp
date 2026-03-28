@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup_gpu_server.sh — Install and configure the GPU inference API server.
 #
-# Run this on the GPU machine (e.g. glorfindel):
+# Run this on the GPU machine:
 #   bash setup_gpu_server.sh
 #
 # What it does:

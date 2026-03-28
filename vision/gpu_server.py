@@ -2,7 +2,7 @@
 """
 gpu_server.py — FastAPI inference server for Hunyuan3D-2.
 
-Runs on the GPU machine (e.g. glorfindel) and exposes REST endpoints
+Runs on the GPU machine and exposes REST endpoints
 for shape generation (image-to-3D, text-to-3D) and texture painting.
 Replaces the previous SSH-based communication.
 

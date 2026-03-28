@@ -9,10 +9,10 @@
 # The GPU server (gpu_server.py) must be running on localhost:8000.
 
 # ── Option A: LAN with hostname (self-signed TLS) ──────────────────────────
-# Replace "glorfindel" with your GPU machine's hostname or IP.
+# Replace "your-gpu-hostname" with your GPU machine's hostname or IP.
 # Clients must trust the self-signed cert or use --insecure / verify=False.
 
-https://glorfindel:9443 {
+https://your-gpu-hostname:9443 {
 	tls internal
 
 	# Rate limiting: max 10 requests per minute per client

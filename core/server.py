@@ -12,7 +12,7 @@ Uso:
 Variables de entorno (ver .env.example):
     MAYA_HOST          — host donde corre Maya (default: localhost)
     MAYA_PORT          — puerto Command Port de Maya (default: 7001)
-    GPU_API_URL        — URL del servidor GPU API (ej: https://glorfindel:9443)
+    GPU_API_URL        — URL del servidor GPU API (ej: https://your-gpu-host:9443)
     GPU_API_KEY        — API key para autenticación con el servidor GPU
 """
 
@@ -467,7 +467,7 @@ else:
 # ─────────────────────────────────────────────
 
 # Configuración via variables de entorno
-_GPU_API_URL  = os.environ.get("GPU_API_URL",  "https://glorfindel:9443").rstrip("/")
+_GPU_API_URL  = os.environ.get("GPU_API_URL",  "http://localhost:8000").rstrip("/")
 _GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")
 _GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "false").lower() in ("true", "1", "yes")
 _MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
@@ -559,7 +559,7 @@ class ShapeTextInput(BaseModel):
 
 
 class TextureRemoteInput(BaseModel):
-    """Parámetros para el texturizado remoto en glorfindel (RTX 3090)."""
+    """Parámetros para el texturizado remoto en el servidor GPU."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
     output_subdir: str = Field(
