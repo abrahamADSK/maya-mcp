@@ -1,6 +1,6 @@
 # maya-mcp
 
-> **Image → 3D → Maya** — End-to-end pipeline that converts a 2D reference image into a fully textured, production-ready 3D mesh inside Autodesk Maya, powered by [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2) running on a remote GPU server.
+> **Image → 3D → Maya** — End-to-end pipeline that converts a 2D reference image into a fully textured, production-ready 3D mesh inside Autodesk Maya, powered by [Vision3D](https://github.com/YOUR_USERNAME/vision3d) running on a remote GPU server.
 
 ---
 
@@ -9,18 +9,18 @@
 This project connects three systems:
 
 1. **Local Mac** running Autodesk Maya — the final destination for the 3D asset
-2. **Remote GPU server** (Linux, NVIDIA RTX 3090 or better) — runs Hunyuan3D-2 for shape generation and texture painting
+2. **[Vision3D](https://github.com/YOUR_USERNAME/vision3d)** on a remote GPU server — REST API for AI-powered 3D generation and texturing
 3. **MCP Server** (`core/`) — exposes Maya tools as MCP tools so Claude and other LLMs can control Maya via natural language
 
 ```
 [Reference image]
       │
       ▼
-[Remote GPU server]
-  Hunyuan3D-2 DiT   → shape generation  → mesh.glb
-  Hunyuan3D-2 Paint → texture generation → mesh_uv.obj + texture_baked.png
+[Vision3D GPU server]
+  Shape generation   → mesh.glb (with polygon decimation)
+  Texture painting   → mesh_uv.obj + texture_baked.png + textured.glb
       │
-      ▼  (SCP transfer)
+      ▼  (HTTPS API)
 [Local Mac — Maya 2026]
   maya_import_hires.py     → import + scale + apply texture
   maya_fix_position_smooth.py → ground alignment + smooth subdivision
@@ -30,7 +30,7 @@ This project connects three systems:
 
 ## Features
 
-- **Full mode**: Reference image → shape generation (Hunyuan3D DiT) → texture painting (Hunyuan3D Paint) → Maya
+- **Full mode**: Reference image → shape generation → texture painting → Maya (single API call via Vision3D)
 - **Paint-only mode**: Existing mesh (`.glb`) → texture painting → Maya (faster, when geometry already exists)
 - **Maya MCP server**: 13 tools to control Maya via Claude/LLM (create objects, assign materials, transform, render, shape generation, texturing, etc.)
 - **Fully configurable via environment variables** — no hardcoded paths or hostnames
@@ -113,31 +113,16 @@ Key variables to set in `.env`:
 
 #### GPU server setup (required for 3D generation)
 
-The MCP server communicates with the GPU box via HTTPS API (FastAPI + Caddy). This replaces the previous SSH-based approach.
-
-**1. On the GPU server**, copy and run the setup script:
-
-```bash
-scp vision/gpu_server.py vision/setup_gpu_server.sh vision/requirements-server.txt user@your-gpu-host:~/ai-studio/vision/
-ssh user@your-gpu-host "cd ~/ai-studio/vision && bash setup_gpu_server.sh"
-```
-
-The setup script installs FastAPI + Caddy, generates an API key, and creates systemd services. It prints the `GPU_API_URL` and `GPU_API_KEY` values to use.
-
-**2. Verify** from your Mac:
-
-```bash
-curl -k https://your-gpu-host:9443/api/health
-```
-
-**3. Set the env vars** in your `.env` or `~/.claude.json`:
+maya-mcp uses [Vision3D](https://github.com/YOUR_USERNAME/vision3d) as its GPU backend. Follow the Vision3D README to install and run the server, then set the env vars:
 
 ```
-GPU_API_URL=https://your-gpu-host:9443
-GPU_API_KEY=your-api-key-from-setup
+GPU_API_URL=http://your-gpu-host:8000
+GPU_API_KEY=your-api-key  # leave empty if open access on LAN
 ```
 
-> **Note:** The `-k` flag (or `GPU_VERIFY_TLS=false`) is needed for self-signed certificates on LAN. For a public domain with Let's Encrypt, set `GPU_VERIFY_TLS=true`.
+Verify from your Mac: `curl http://your-gpu-host:8000/api/health`
+
+Vision3D also provides a web UI at `http://your-gpu-host:8000` for standalone use without maya-mcp.
 
 ### 3. Set up the MCP server (core/)
 
@@ -274,9 +259,9 @@ python core/server.py
 | `maya_new_scene` | New empty scene |
 | `maya_save_scene` | Save current scene |
 | `maya_execute_python` | Execute arbitrary Python code in Maya |
-| `shape_generate_remote` | Generate 3D mesh from image via Hunyuan3D-2 DiT on remote GPU |
-| `shape_generate_text` | Generate 3D mesh from text prompt (text-to-3D) on remote GPU |
-| `texture_mesh_remote` | Texture an existing mesh via Hunyuan3D-2 Paint on remote GPU |
+| `shape_generate_remote` | Generate textured 3D mesh from image via Vision3D (full pipeline) |
+| `shape_generate_text` | Generate 3D mesh from text prompt (text-to-3D) via Vision3D |
+| `texture_mesh_remote` | Texture an existing mesh via Vision3D |
 
 ### Architecture
 
@@ -388,7 +373,7 @@ Restart Maya after creating this file. Verify with: `echo 'print("OK")' | nc loc
 
 ### Cross-MCP pipeline (maya-mcp + fpt-mcp)
 
-When both maya-mcp and fpt-mcp are configured in the same Claude Code or Claude Desktop instance, Claude can orchestrate end-to-end VFX workflows in a single conversation. For example, Claude can query ShotGrid for an asset's reference image via fpt-mcp, download it, generate a 3D model via Hunyuan3D-2, import it into Maya, and register the publish back in ShotGrid — all from one natural language request.
+When both maya-mcp and fpt-mcp are configured in the same Claude Code or Claude Desktop instance, Claude can orchestrate end-to-end VFX workflows in a single conversation. For example, Claude can query ShotGrid for an asset's reference image via fpt-mcp, download it, generate a 3D model via Vision3D, import it into Maya, and register the publish back in ShotGrid — all from one natural language request.
 
 To enable this, add both servers to `~/.claude.json` (via `claude mcp add -s user`) and include permissions for both in `~/.claude/settings.json`. See the fpt-mcp README for its server configuration.
 
@@ -470,37 +455,7 @@ hy3dgen  (from Hunyuan3D-2 repo: pip install -e .)
 
 ## Security considerations
 
-The GPU communication uses **HTTPS API** (FastAPI + Caddy) instead of SSH. This provides:
-
-**Architecture:**
-
-```
- Client (MCP / ComfyUI / Web UI / curl)
-        │  HTTPS + API key
-        ▼
- Caddy (TLS termination, rate-limiting)
-        │  HTTP (localhost only)
-        ▼
- FastAPI (GPU server, port 8000)
-   POST /api/generate-shape     — image-to-3D
-   POST /api/generate-text      — text-to-3D
-   POST /api/texture-mesh       — texture painting
-   GET  /api/jobs/{id}          — poll progress
-   GET  /api/jobs/{id}/files/*  — download results
-```
-
-**Benefits over SSH:**
-- API key grants inference-only access (no shell access to the GPU server).
-- Reusable from any HTTP client: MCP server, ComfyUI workflows, FaceSwap, browser, curl.
-- TLS encryption (self-signed on LAN, or automatic Let's Encrypt for public domains).
-- No SSH key distribution — just share the API key.
-- Async job model with polling for long-running inference.
-
-**Hardening recommendations:**
-- Keep the API key in `~/.claude.json` env vars (not committed to git).
-- For production: use a real domain with Let's Encrypt (set `GPU_VERIFY_TLS=true`).
-- Restrict Caddy to your LAN IP range in the Caddyfile.
-- Rotate the API key periodically (`python3 -c "import secrets; print(secrets.token_urlsafe(32))"`).
+maya-mcp communicates with [Vision3D](https://github.com/YOUR_USERNAME/vision3d) via HTTP REST API. Vision3D handles GPU inference, polygon decimation, and texturing independently. See the Vision3D README for security configuration (API keys, HTTPS via Caddy, etc.).
 
 ---
 
