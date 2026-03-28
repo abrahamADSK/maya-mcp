@@ -1,0 +1,38 @@
+# Caddyfile — Reverse proxy for Hunyuan3D-2 GPU Server
+#
+# On a LAN with no public domain, Caddy auto-generates a self-signed cert.
+# For a public domain, Caddy gets a Let's Encrypt cert automatically.
+#
+# Usage:
+#   caddy run --config /path/to/Caddyfile
+#
+# The GPU server (gpu_server.py) must be running on localhost:8000.
+
+# ── Option A: LAN with hostname (self-signed TLS) ──────────────────────────
+# Replace "glorfindel" with your GPU machine's hostname or IP.
+# Clients must trust the self-signed cert or use --insecure / verify=False.
+
+https://glorfindel:9443 {
+	tls internal
+
+	# Rate limiting: max 10 requests per minute per client
+	# (requires caddy-ratelimit plugin; remove if not installed)
+	# rate_limit {remote.ip} 10r/m
+
+	reverse_proxy localhost:8000
+
+	log {
+		output file /var/log/caddy/gpu-server.log
+		format console
+	}
+}
+
+# ── Option B: Public domain (automatic Let's Encrypt) ──────────────────────
+# Uncomment and replace with your real domain:
+#
+# gpu.yourdomain.com {
+# 	reverse_proxy localhost:8000
+# 	log {
+# 		output file /var/log/caddy/gpu-server.log
+# 	}
+# }

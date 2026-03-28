@@ -1,0 +1,4 @@
+# GPU server API dependencies (in addition to Hunyuan3D-2)
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9

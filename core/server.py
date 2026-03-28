@@ -12,8 +12,8 @@ Uso:
 Variables de entorno (ver .env.example):
     MAYA_HOST          — host donde corre Maya (default: localhost)
     MAYA_PORT          — puerto Command Port de Maya (default: 7001)
-    GPU_SSH_HOST       — usuario@host del servidor GPU remoto
-    GPU_REMOTE_BASE    — directorio base en el servidor remoto
+    GPU_API_URL        — URL del servidor GPU API (ej: https://glorfindel:9443)
+    GPU_API_KEY        — API key para autenticación con el servidor GPU
 """
 
 import asyncio
@@ -448,17 +448,69 @@ else:
 
 
 # ─────────────────────────────────────────────
-# Texturizado remoto — glorfindel RTX 3090
+# GPU remoto — API REST (Hunyuan3D-2)
 # ─────────────────────────────────────────────
 
-# Configuración via variables de entorno (o valores por defecto)
-_LINUX_SSH_HOST   = os.environ.get("GPU_SSH_HOST",        "user@gpu-host")
-_LINUX_REMOTE_DIR = os.environ.get("GPU_REMOTE_BASE",     "/opt/ai-studio")
-_LINUX_VISION_DIR = os.environ.get("GPU_VISION_DIR",      "/opt/ai-studio/vision")
-_LINUX_WORK_DIR   = os.environ.get("GPU_WORK_DIR",        "/opt/ai-studio/reference/3d_output")
-_LINUX_VENV       = os.environ.get("GPU_VENV",            "/opt/ai-studio/vision/.venv")
-_MAC_BASE_DIR     = os.environ.get("MAYA_BASE_DIR",
-                                   str(Path(__file__).parent.parent))           # raíz del proyecto en Mac
+# Configuración via variables de entorno
+_GPU_API_URL  = os.environ.get("GPU_API_URL",  "https://glorfindel:9443").rstrip("/")
+_GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")
+_GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "false").lower() in ("true", "1", "yes")
+_MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
+                                str(Path(__file__).parent.parent))           # raíz del proyecto en Mac
+
+# Lazy httpx client
+_http_client = None
+
+def _get_http_client():
+    """Return a reusable httpx client for GPU API calls."""
+    global _http_client
+    if _http_client is None:
+        import httpx
+        headers = {}
+        if _GPU_API_KEY:
+            headers["x-api-key"] = _GPU_API_KEY
+        _http_client = httpx.AsyncClient(
+            base_url=_GPU_API_URL,
+            headers=headers,
+            verify=_GPU_VERIFY,
+            timeout=httpx.Timeout(connect=10, read=900, write=60, pool=10),
+        )
+    return _http_client
+
+
+async def _poll_job(job_id: str, log_fn=None, poll_interval: float = 5.0) -> dict:
+    """Poll a GPU server job until it completes or fails."""
+    client = _get_http_client()
+    last_log_len = 0
+
+    while True:
+        resp = await client.get(f"/api/jobs/{job_id}")
+        resp.raise_for_status()
+        job = resp.json()
+
+        # Stream new log lines
+        if log_fn and "log" in job:
+            for line in job["log"][last_log_len:]:
+                log_fn(line)
+            last_log_len = len(job["log"])
+
+        if job["status"] == "completed":
+            return job
+        elif job["status"] == "failed":
+            raise RuntimeError(job.get("error", "Job failed without details"))
+
+        await asyncio.sleep(poll_interval)
+
+
+async def _download_file(job_id: str, filename: str, dest: Path) -> bool:
+    """Download a single file from a completed job."""
+    client = _get_http_client()
+    resp = await client.get(f"/api/jobs/{job_id}/files/{filename}")
+    if resp.status_code == 200:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(resp.content)
+        return True
+    return False
 
 
 class ShapeGenerateInput(BaseModel):
@@ -509,24 +561,9 @@ class TextureRemoteInput(BaseModel):
     )
 
 
-async def _run_cmd(cmd: List[str], timeout: int = 600) -> tuple[int, str, str]:
-    """Ejecuta un comando async y devuelve (returncode, stdout, stderr)."""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        return -1, "", f"Timeout después de {timeout}s"
-    return proc.returncode, stdout.decode(), stderr.decode()
-
-
 @mcp.tool(name="shape_generate_remote")
 async def shape_generate_remote(params: ShapeGenerateInput) -> str:
-    """Genera geometría 3D desde una imagen en el servidor GPU remoto."""
+    """Genera geometría 3D desde una imagen en el servidor GPU remoto (via HTTPS API)."""
     try:
         image_local = Path(params.image_path)
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
@@ -546,70 +583,47 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
         input_copy = out_dir / "input.png"
         shutil.copy2(str(image_local), str(input_copy))
 
-        remote_work = f"{_LINUX_WORK_DIR}/{params.output_subdir}"
-        ssh_host = _LINUX_SSH_HOST
-
         log_lines = []
         log = lambda msg: log_lines.append(msg)
+        client = _get_http_client()
 
-        # ── Paso 1: Crear directorio remoto ───────────────────────────────
-        log(f"[1/4] Creando directorio remoto en {ssh_host}...")
-        rc, _, err = await _run_cmd(["ssh", ssh_host, f"mkdir -p {remote_work}"])
-        if rc != 0:
-            return json.dumps({"error": f"SSH mkdir falló: {err.strip()}",
-                               "hint": "Verifica SSH sin contraseña al servidor GPU."})
+        # ── Paso 1: Subir imagen al GPU server ───────────────────────────
+        log(f"[1/3] Subiendo imagen a GPU server ({_GPU_API_URL})...")
+        with open(str(image_local), "rb") as f:
+            resp = await client.post(
+                "/api/generate-shape",
+                files={"image": (image_local.name, f, "image/png")},
+                data={"output_subdir": params.output_subdir},
+            )
 
-        # ── Paso 2: Subir imagen ──────────────────────────────────────────
-        log(f"[2/4] Subiendo imagen {image_local.name}...")
-        rc, _, err = await _run_cmd([
-            "scp",
-            str(image_local),
-            f"{ssh_host}:{remote_work}/input.png"
-        ])
-        if rc != 0:
-            return json.dumps({"error": f"SCP upload falló: {err.strip()}"})
-
-        # ── Paso 3: Ejecutar shape generation ─────────────────────────────
-        log(f"[3/4] Ejecutando Hunyuan3D-2 Shape en {ssh_host} (~3-8 min)...")
-        remote_script = f"{_LINUX_VISION_DIR}/shape_remote.py"
-        remote_cmd = (
-            f"source {_LINUX_VENV}/bin/activate && "
-            f"python {remote_script} "
-            f"--image {remote_work}/input.png "
-            f"--output {remote_work}"
-        )
-        rc, stdout, stderr = await _run_cmd(
-            ["ssh", ssh_host, remote_cmd],
-            timeout=900  # 15 min máximo
-        )
-
-        output_log = (stdout + stderr).strip()
-        if rc != 0:
+        if resp.status_code != 200:
             return json.dumps({
-                "error": "Shape generation falló en el servidor GPU",
-                "log": output_log[-2000:],
-                "hint": "Verifica con: ssh <gpu-host> 'source .venv/bin/activate && python shape_remote.py --test'"
+                "error": f"GPU API error ({resp.status_code}): {resp.text}",
+                "hint": f"Verifica que el servidor GPU está corriendo: curl -k {_GPU_API_URL}/api/health"
             })
 
-        log(f"[3/4] Shape generation completado.")
+        job = resp.json()
+        job_id = job["job_id"]
+        log(f"[1/3] Job creado: {job_id}")
 
-        # ── Paso 4: Descargar mesh.glb ────────────────────────────────────
-        log(f"[4/4] Descargando mesh.glb...")
+        # ── Paso 2: Esperar resultado ─────────────────────────────────────
+        log(f"[2/3] Generando geometría 3D (~3-8 min)...")
+        result = await _poll_job(job_id, log_fn=log)
+        log(f"[2/3] Shape generation completado.")
+
+        # ── Paso 3: Descargar mesh.glb ────────────────────────────────────
+        log(f"[3/3] Descargando mesh.glb...")
         mesh_local = out_dir / "mesh.glb"
-        rc, _, err = await _run_cmd([
-            "scp",
-            f"{ssh_host}:{remote_work}/mesh.glb",
-            str(mesh_local)
-        ])
+        ok = await _download_file(job_id, "mesh.glb", mesh_local)
 
-        if rc != 0:
+        if not ok:
             return json.dumps({
-                "error": f"No se pudo descargar mesh.glb: {err.strip()}",
+                "error": "No se pudo descargar mesh.glb del servidor GPU",
                 "log": "\n".join(log_lines)
             })
 
         mesh_size_kb = mesh_local.stat().st_size // 1024 if mesh_local.exists() else 0
-        log(f"[4/4] mesh.glb descargado ({mesh_size_kb} KB)")
+        log(f"[3/3] mesh.glb descargado ({mesh_size_kb} KB)")
 
         return json.dumps({
             "status": "ok",
@@ -631,60 +645,48 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
 
 @mcp.tool(name="shape_generate_text")
 async def shape_generate_text(params: ShapeTextInput) -> str:
-    """Genera geometría 3D desde una descripción de texto (text-to-3D) en el servidor GPU remoto."""
+    """Genera geometría 3D desde una descripción de texto (text-to-3D) en el servidor GPU remoto (via HTTPS API)."""
     try:
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        remote_work = f"{_LINUX_WORK_DIR}/{params.output_subdir}"
-        ssh_host = _LINUX_SSH_HOST
-
         log_lines = []
         log = lambda msg: log_lines.append(msg)
+        client = _get_http_client()
 
-        # ── Paso 1: Crear directorio remoto ───────────────────────────────
-        log(f"[1/3] Creando directorio remoto en {ssh_host}...")
-        rc, _, err = await _run_cmd(["ssh", ssh_host, f"mkdir -p {remote_work}"])
-        if rc != 0:
-            return json.dumps({"error": f"SSH mkdir falló: {err.strip()}",
-                               "hint": "Verifica SSH sin contraseña al servidor GPU."})
-
-        # ── Paso 2: Ejecutar text-to-3D ───────────────────────────────────
-        log(f"[2/3] Ejecutando Hunyuan3D-2 Text-to-3D: '{params.text_prompt}' (~3-8 min)...")
-        remote_script = f"{_LINUX_VISION_DIR}/shape_remote.py"
-        remote_cmd = (
-            f"source {_LINUX_VENV}/bin/activate && "
-            f"python {remote_script} "
-            f"--text \"{params.text_prompt}\" "
-            f"--output {remote_work}"
-        )
-        rc, stdout, stderr = await _run_cmd(
-            ["ssh", ssh_host, remote_cmd],
-            timeout=900
+        # ── Paso 1: Enviar prompt al GPU server ──────────────────────────
+        log(f"[1/3] Enviando prompt a GPU server: '{params.text_prompt}'...")
+        resp = await client.post(
+            "/api/generate-text",
+            data={
+                "text_prompt": params.text_prompt,
+                "output_subdir": params.output_subdir,
+            },
         )
 
-        output_log = (stdout + stderr).strip()
-        if rc != 0:
+        if resp.status_code != 200:
             return json.dumps({
-                "error": "Text-to-3D generation falló en el servidor GPU",
-                "log": output_log[-2000:],
-                "hint": "Verifica con: ssh <gpu-host> 'source .venv/bin/activate && python shape_remote.py --test'"
+                "error": f"GPU API error ({resp.status_code}): {resp.text}",
+                "hint": f"Verifica que el servidor GPU está corriendo: curl -k {_GPU_API_URL}/api/health"
             })
 
+        job = resp.json()
+        job_id = job["job_id"]
+        log(f"[1/3] Job creado: {job_id}")
+
+        # ── Paso 2: Esperar resultado ─────────────────────────────────────
+        log(f"[2/3] Generando geometría 3D desde texto (~3-8 min)...")
+        result = await _poll_job(job_id, log_fn=log)
         log("[2/3] Text-to-3D completado.")
 
         # ── Paso 3: Descargar mesh.glb ────────────────────────────────────
         log("[3/3] Descargando mesh.glb...")
         mesh_local = out_dir / "mesh.glb"
-        rc, _, err = await _run_cmd([
-            "scp",
-            f"{ssh_host}:{remote_work}/mesh.glb",
-            str(mesh_local)
-        ])
+        ok = await _download_file(job_id, "mesh.glb", mesh_local)
 
-        if rc != 0:
+        if not ok:
             return json.dumps({
-                "error": f"No se pudo descargar mesh.glb: {err.strip()}",
+                "error": "No se pudo descargar mesh.glb del servidor GPU",
                 "log": "\n".join(log_lines)
             })
 
@@ -711,7 +713,7 @@ async def shape_generate_text(params: ShapeTextInput) -> str:
 
 @mcp.tool(name="texture_mesh_remote")
 async def texture_mesh_remote(params: TextureRemoteInput) -> str:
-    """Texturiza el mesh en glorfindel (RTX 3090) y recupera los resultados."""
+    """Texturiza el mesh en el servidor GPU remoto (via HTTPS API) y recupera los resultados."""
     try:
         out_dir     = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
         mesh_local  = out_dir / params.mesh_filename
@@ -729,74 +731,51 @@ async def texture_mesh_remote(params: TextureRemoteInput) -> str:
                 "hint":   f"Copia la imagen de referencia como '{params.image_filename}' en {out_dir}"
             })
 
-        remote_work = f"{_LINUX_WORK_DIR}/{params.output_subdir}"
-        ssh_host    = _LINUX_SSH_HOST
-
         log_lines = []
         log = lambda msg: log_lines.append(msg)
+        client = _get_http_client()
 
-        # ── Paso 1: Crear directorio remoto ────────────────────────────────
-        log(f"[1/5] Creando directorio remoto en {ssh_host}...")
-        rc, _, err = await _run_cmd(["ssh", ssh_host, f"mkdir -p {remote_work}"])
-        if rc != 0:
-            return json.dumps({"error": f"SSH mkdir falló: {err.strip()}",
-                               "hint": "Verifica SSH sin contraseña: ssh maya-linux echo OK"})
+        # ── Paso 1: Subir mesh + imagen al GPU server ─────────────────────
+        log(f"[1/3] Subiendo {params.mesh_filename} y {params.image_filename} a GPU server...")
+        with open(str(mesh_local), "rb") as mf, open(str(image_local), "rb") as imf:
+            resp = await client.post(
+                "/api/texture-mesh",
+                files={
+                    "mesh": (params.mesh_filename, mf, "application/octet-stream"),
+                    "image": (params.image_filename, imf, "image/png"),
+                },
+                data={"output_subdir": params.output_subdir},
+            )
 
-        # ── Paso 2: Subir archivos ─────────────────────────────────────────
-        log(f"[2/5] Subiendo {params.mesh_filename} y {params.image_filename}...")
-        rc, _, err = await _run_cmd([
-            "scp",
-            str(mesh_local),
-            str(image_local),
-            f"{ssh_host}:{remote_work}/"
-        ])
-
-        if rc != 0:
-            return json.dumps({"error": f"SCP upload falló: {err.strip()}"})
-
-        # ── Paso 3: Ejecutar texturizado remoto ────────────────────────────
-        log(f"[3/5] Ejecutando Hunyuan3D-Paint en {ssh_host} (~3-5 min)...")
-        remote_script = f"{_LINUX_VISION_DIR}/texture_remote.py"
-        remote_cmd = (
-            f"source {_LINUX_VENV}/bin/activate && "
-            f"python {remote_script} "
-            f"--mesh {remote_work}/{params.mesh_filename} "
-            f"--image {remote_work}/{params.image_filename} "
-            f"--output {remote_work}"
-        )
-        rc, stdout, stderr = await _run_cmd(
-            ["ssh", ssh_host, remote_cmd],
-            timeout=900  # 15 min máximo
-        )
-
-        output_log = (stdout + stderr).strip()
-        if rc != 0:
+        if resp.status_code != 200:
             return json.dumps({
-                "error":  "Texturizado remoto falló",
-                "log":    output_log[-2000:],  # últimas 2000 chars del log
-                "hint":   "Ejecuta el test: ssh maya-linux 'conda run -n hy3d-tex python /home/flame/ai-studio/vision/texture_remote.py --test'"
+                "error": f"GPU API error ({resp.status_code}): {resp.text}",
+                "hint": f"Verifica que el servidor GPU está corriendo: curl -k {_GPU_API_URL}/api/health"
             })
 
-        log(f"[4/5] Texturizado completado en {ssh_host}.")
+        job = resp.json()
+        job_id = job["job_id"]
+        log(f"[1/3] Job creado: {job_id}")
 
-        # ── Paso 4: Descargar resultados ───────────────────────────────────
-        log(f"[4/5] Descargando resultados...")
+        # ── Paso 2: Esperar resultado ─────────────────────────────────────
+        log(f"[2/3] Texturizando mesh (~3-5 min)...")
+        result = await _poll_job(job_id, log_fn=log)
+        log("[2/3] Texturizado completado.")
+
+        # ── Paso 3: Descargar resultados ──────────────────────────────────
+        log("[3/3] Descargando resultados...")
         results_to_download = ["textured.glb", "mesh_uv.obj", "texture_baked.png"]
         downloaded = []
         failed     = []
 
         for fname in results_to_download:
-            rc, _, err = await _run_cmd([
-                "scp",
-                f"{ssh_host}:{remote_work}/{fname}",
-                str(out_dir / fname)
-            ])
-            if rc == 0:
+            ok = await _download_file(job_id, fname, out_dir / fname)
+            if ok:
                 downloaded.append(fname)
             else:
                 failed.append(fname)
 
-        log(f"[5/5] Descargados: {downloaded}")
+        log(f"[3/3] Descargados: {downloaded}")
 
         # ── Resultado ──────────────────────────────────────────────────────
         baked_ready = (out_dir / "mesh_uv.obj").exists() and \
