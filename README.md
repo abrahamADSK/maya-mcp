@@ -107,12 +107,45 @@ Key variables to set in `.env`:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `GPU_SSH_HOST` | SSH target for the GPU server | `user@192.168.1.50` |
-| `GPU_SSH_KEY` | Path to SSH private key | `~/.ssh/id_rsa` |
+| `GPU_SSH_HOST` | SSH alias or `user@host` for the GPU server | `my-gpu` (alias) or `flame@192.168.1.50` |
 | `GPU_REMOTE_BASE` | Root of ai-studio install on GPU server | `/opt/ai-studio` |
 | `GPU_VENV` | Python venv on GPU server | `/opt/ai-studio/vision/.venv` |
 | `GPU_MODELS_DIR` | Hunyuan3D model weights directory | `/opt/ai-studio/vision/hf_models` |
 | `PROJECT_DIR` | Absolute path to this repo on your Mac | `/Users/you/projects/maya-mcp` |
+
+#### SSH setup (required for GPU communication)
+
+The MCP server connects to the GPU box via SSH. Passwordless SSH **must** work before anything else.
+
+**1. Create a dedicated SSH key** (if you don't have one):
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/maya_gpu -N "" -C "maya-mcp GPU access"
+ssh-copy-id -i ~/.ssh/maya_gpu.pub flame@your-gpu-host
+```
+
+**2. Add an SSH config alias** (`~/.ssh/config`):
+
+```
+Host my-gpu
+    HostName your-gpu-host      # hostname or IP of the Linux GPU machine
+    User flame                  # Linux username on the GPU server
+    IdentityFile ~/.ssh/maya_gpu
+```
+
+**3. Verify** (must print OK with no password prompt):
+
+```bash
+ssh my-gpu echo "OK"
+```
+
+**4. Set `GPU_SSH_HOST`** to the alias name:
+
+```
+GPU_SSH_HOST=my-gpu
+```
+
+> **Common mistake:** Using the raw hostname (e.g. `glorfindel`) instead of the SSH alias (e.g. `my-gpu`). If your `~/.ssh/config` defines `Host my-gpu` with `HostName glorfindel`, then `GPU_SSH_HOST` must be `my-gpu` — otherwise SSH won't find the right user, key, or hostname mapping.
 
 ### 3. Set up the MCP server (core/)
 
@@ -301,7 +334,14 @@ claude mcp add maya-mcp -s user -- /path/to/maya-mcp/.venv/bin/python /path/to/m
   "mcpServers": {
     "maya-mcp": {
       "command": "/path/to/maya-mcp/.venv/bin/python",
-      "args": ["/path/to/maya-mcp/core/server.py"]
+      "args": ["/path/to/maya-mcp/core/server.py"],
+      "env": {
+        "GPU_SSH_HOST": "my-gpu",
+        "GPU_REMOTE_BASE": "/opt/ai-studio",
+        "GPU_VENV": "/opt/ai-studio/vision/.venv",
+        "GPU_VISION_DIR": "/opt/ai-studio/vision",
+        "GPU_WORK_DIR": "/opt/ai-studio/reference/3d_output"
+      }
     }
   }
 }
@@ -371,10 +411,12 @@ All configurable values are set via environment variables. Copy `.env.example` t
 
 ```bash
 # Remote GPU server
-GPU_SSH_HOST=user@gpu-host          # SSH target (user@host or user@ip)
-GPU_SSH_KEY=~/.ssh/id_rsa           # SSH private key path
+GPU_SSH_HOST=my-gpu                 # SSH alias from ~/.ssh/config (recommended)
+                                    # or user@host (e.g. flame@192.168.1.50)
 GPU_REMOTE_BASE=/opt/ai-studio      # Root of ai-studio install on GPU server
 GPU_VENV=/opt/ai-studio/vision/.venv
+GPU_VISION_DIR=/opt/ai-studio/vision
+GPU_WORK_DIR=/opt/ai-studio/reference/3d_output
 GPU_MODELS_DIR=/opt/ai-studio/vision/hf_models
 
 # Local project
@@ -404,6 +446,9 @@ The texture extraction fallback may not have triggered. Use `textured.glb` direc
 **Scale factor looks wrong in Maya (giant or tiny mesh)**
 Freeze transformations on your base mesh before running the pipeline: `Modify → Freeze Transformations` in Maya.
 
+**SSH asks for password / "Connection refused"**
+This almost always means `GPU_SSH_HOST` doesn't match your `~/.ssh/config` alias. Run `ssh -v $GPU_SSH_HOST echo OK` and check that it uses the correct user, key, and hostname. Common causes: using the raw hostname (`glorfindel`) instead of the alias (`my-gpu`), missing `ssh-copy-id`, or wrong permissions on `~/.ssh/` (must be 700) or `~/.ssh/authorized_keys` (must be 600) on the server.
+
 **Maya Command Port not responding**
 Confirm port 7001 is open: in Maya's Script Editor run `cmds.commandPort(':7001', query=True)`. If `False`, run the `open_command_port()` snippet above.
 
@@ -419,7 +464,7 @@ Press **6** in the Maya viewport to enable Textured mode. If still gray, check t
 
 ### core/requirements.txt
 ```
-fastmcp>=0.1.0
+mcp>=1.26.0
 pydantic>=2.0
 ```
 
@@ -431,6 +476,47 @@ Pillow
 huggingface_hub
 hy3dgen  (from Hunyuan3D-2 repo: pip install -e .)
 ```
+
+---
+
+## Security considerations
+
+The current architecture uses **SSH + SCP** for all GPU communication. This works well for a single-user studio but has limitations:
+
+**Current model (SSH):**
+- SSH keys on disk (`~/.ssh/maya_gpu`) grant full shell access to the GPU server — if the key leaks, the attacker gets a shell, not just inference access.
+- No per-tool authorization: anyone with SSH access can run any command, not just 3D generation.
+- Not reusable from web interfaces (ComfyUI, FaceSwap/FaceFusion) without tunneling.
+- Key distribution is manual — adding a new workstation means `ssh-copy-id` each time.
+
+**Recommended hardening (current SSH setup):**
+- Use `command=` restriction in `authorized_keys` to limit what the key can execute.
+- Restrict the key to SCP + specific scripts only (no interactive shell).
+- Set `PermitRootLogin no` and `AllowUsers flame` in `/etc/ssh/sshd_config`.
+- Use `~/.ssh/config` aliases (not raw hostnames) to avoid user/key mismatches.
+
+### Roadmap: REST API on GPU server
+
+A future version will replace SSH with a **FastAPI service** running on the GPU server behind a **Caddy reverse proxy** (automatic HTTPS). This brings several advantages:
+
+```
+ Client (MCP / ComfyUI / Web UI / curl)
+        │  HTTPS + API key
+        ▼
+ Caddy (TLS termination, auth, rate-limiting)
+        │  HTTP (localhost)
+        ▼
+ FastAPI (GPU server, port 8000)
+   POST /api/generate-shape     — image-to-3D
+   POST /api/generate-text      — text-to-3D
+   POST /api/texture-mesh       — texture painting
+   GET  /api/jobs/{id}/status   — poll progress
+   WS   /ws?client_id=...       — real-time progress
+```
+
+Benefits over SSH: scoped permissions (API key grants inference only, not shell access), reusable from any HTTP client (ComfyUI workflows, FaceSwap, browser), automatic TLS certificates via Caddy, WebSocket progress updates for long jobs, and no SSH key distribution.
+
+See [issue #X] for tracking. Contributions welcome.
 
 ---
 
