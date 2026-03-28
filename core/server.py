@@ -501,6 +501,21 @@ _MAC_BASE_DIR     = os.environ.get("MAYA_BASE_DIR",
                                    str(Path(__file__).parent.parent))           # raíz del proyecto en Mac
 
 
+class ShapeGenerateInput(BaseModel):
+    """Parámetros para la generación de geometría 3D en el servidor GPU remoto."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    image_path: str = Field(
+        ...,
+        description="Ruta local absoluta a la imagen de referencia (.jpg/.png). "
+                    "Puede ser una imagen descargada de ShotGrid u otra fuente."
+    )
+    output_subdir: str = Field(
+        default="0",
+        description="Subdirectorio de salida dentro de reference/3d_output/ (ej: '0', 'asset_1478')"
+    )
+
+
 class TextureRemoteInput(BaseModel):
     """Parámetros para el texturizado remoto en glorfindel (RTX 3090)."""
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -532,6 +547,128 @@ async def _run_cmd(cmd: List[str], timeout: int = 600) -> tuple[int, str, str]:
         proc.kill()
         return -1, "", f"Timeout después de {timeout}s"
     return proc.returncode, stdout.decode(), stderr.decode()
+
+
+@mcp.tool(
+    name="shape_generate_remote",
+    description=(
+        "Genera geometría 3D (mesh.glb) a partir de una imagen de referencia usando "
+        "Hunyuan3D-2 DiT en el servidor GPU remoto (Linux RTX 3090). "
+        "Sube la imagen al servidor, ejecuta shape_remote.py (~3-8 min), "
+        "y descarga mesh.glb al directorio local reference/3d_output/{output_subdir}/. "
+        "El mesh resultante no tiene UVs ni textura — usa texture_mesh_remote después "
+        "para pintar la textura. "
+        "Requiere SSH configurado sin contraseña al servidor GPU."
+    ),
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True
+    }
+)
+async def shape_generate_remote(params: ShapeGenerateInput) -> str:
+    """Genera geometría 3D desde una imagen en el servidor GPU remoto."""
+    try:
+        image_local = Path(params.image_path)
+        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
+
+        # ── Verificar imagen local ────────────────────────────────────────
+        if not image_local.exists():
+            return json.dumps({
+                "error": f"Imagen no encontrada: {image_local}",
+                "hint": "Descarga primero la imagen con sg_download de fpt-mcp."
+            })
+
+        # Crear directorio de salida local
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copiar imagen al directorio de salida como input.png (para texture_mesh_remote)
+        import shutil
+        input_copy = out_dir / "input.png"
+        shutil.copy2(str(image_local), str(input_copy))
+
+        remote_work = f"{_LINUX_WORK_DIR}/{params.output_subdir}"
+        ssh_host = _LINUX_SSH_HOST
+
+        log_lines = []
+        log = lambda msg: log_lines.append(msg)
+
+        # ── Paso 1: Crear directorio remoto ───────────────────────────────
+        log(f"[1/4] Creando directorio remoto en {ssh_host}...")
+        rc, _, err = await _run_cmd(["ssh", ssh_host, f"mkdir -p {remote_work}"])
+        if rc != 0:
+            return json.dumps({"error": f"SSH mkdir falló: {err.strip()}",
+                               "hint": "Verifica SSH sin contraseña al servidor GPU."})
+
+        # ── Paso 2: Subir imagen ──────────────────────────────────────────
+        log(f"[2/4] Subiendo imagen {image_local.name}...")
+        rc, _, err = await _run_cmd([
+            "scp",
+            str(image_local),
+            f"{ssh_host}:{remote_work}/input.png"
+        ])
+        if rc != 0:
+            return json.dumps({"error": f"SCP upload falló: {err.strip()}"})
+
+        # ── Paso 3: Ejecutar shape generation ─────────────────────────────
+        log(f"[3/4] Ejecutando Hunyuan3D-2 Shape en {ssh_host} (~3-8 min)...")
+        remote_script = f"{_LINUX_VISION_DIR}/shape_remote.py"
+        remote_cmd = (
+            f"source {_LINUX_VENV}/bin/activate && "
+            f"python {remote_script} "
+            f"--image {remote_work}/input.png "
+            f"--output {remote_work}"
+        )
+        rc, stdout, stderr = await _run_cmd(
+            ["ssh", ssh_host, remote_cmd],
+            timeout=900  # 15 min máximo
+        )
+
+        output_log = (stdout + stderr).strip()
+        if rc != 0:
+            return json.dumps({
+                "error": "Shape generation falló en el servidor GPU",
+                "log": output_log[-2000:],
+                "hint": "Verifica con: ssh <gpu-host> 'source .venv/bin/activate && python shape_remote.py --test'"
+            })
+
+        log(f"[3/4] Shape generation completado.")
+
+        # ── Paso 4: Descargar mesh.glb ────────────────────────────────────
+        log(f"[4/4] Descargando mesh.glb...")
+        mesh_local = out_dir / "mesh.glb"
+        rc, _, err = await _run_cmd([
+            "scp",
+            f"{ssh_host}:{remote_work}/mesh.glb",
+            str(mesh_local)
+        ])
+
+        if rc != 0:
+            return json.dumps({
+                "error": f"No se pudo descargar mesh.glb: {err.strip()}",
+                "log": "\n".join(log_lines)
+            })
+
+        mesh_size_kb = mesh_local.stat().st_size // 1024 if mesh_local.exists() else 0
+        log(f"[4/4] mesh.glb descargado ({mesh_size_kb} KB)")
+
+        return json.dumps({
+            "status": "ok",
+            "mesh_path": str(mesh_local),
+            "mesh_size_kb": mesh_size_kb,
+            "output_dir": str(out_dir),
+            "image_copy": str(input_copy),
+            "next_step": (
+                f"Mesh generado. Para texturizar, llama a texture_mesh_remote con "
+                f"output_subdir='{params.output_subdir}'. La imagen ya está copiada "
+                f"como input.png en el directorio de salida."
+            ),
+            "log_summary": "\n".join(log_lines)
+        }, indent=2)
+
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 @mcp.tool(

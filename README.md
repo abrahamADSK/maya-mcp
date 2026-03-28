@@ -32,7 +32,7 @@ This project connects three systems:
 
 - **Full mode**: Reference image → shape generation (Hunyuan3D DiT) → texture painting (Hunyuan3D Paint) → Maya
 - **Paint-only mode**: Existing mesh (`.glb`) → texture painting → Maya (faster, when geometry already exists)
-- **Maya MCP server**: 11 tools to control Maya via Claude/LLM (create objects, assign materials, transform, render, etc.)
+- **Maya MCP server**: 13 tools to control Maya via Claude/LLM (create objects, assign materials, transform, render, shape generation, texturing, etc.)
 - **Fully configurable via environment variables** — no hardcoded paths or hostnames
 - **Clean Maya integration**: auto-scales imported mesh to match scene, applies baked texture, smooths normals
 
@@ -249,6 +249,8 @@ python core/server.py
 | `maya_new_scene` | New empty scene |
 | `maya_save_scene` | Save current scene |
 | `maya_execute_python` | Execute arbitrary Python code in Maya |
+| `shape_generate_remote` | Generate 3D mesh from image via Hunyuan3D-2 DiT on remote GPU |
+| `texture_mesh_remote` | Texture an existing mesh via Hunyuan3D-2 Paint on remote GPU |
 
 ### Architecture
 
@@ -299,6 +301,7 @@ Add to `~/.claude/settings.json`:
       "mcp__maya-mcp__maya_new_scene",
       "mcp__maya-mcp__maya_save_scene",
       "mcp__maya-mcp__maya_execute_python",
+      "mcp__maya-mcp__shape_generate_remote",
       "mcp__maya-mcp__texture_mesh_remote"
     ]
   },
