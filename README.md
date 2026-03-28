@@ -1,6 +1,6 @@
 # maya-mcp
 
-> **Image → 3D → Maya** — End-to-end pipeline that converts a 2D reference image into a fully textured, production-ready 3D mesh inside Autodesk Maya, powered by [Vision3D](https://github.com/YOUR_USERNAME/vision3d) running on a remote GPU server.
+> **Image → 3D → Maya** — End-to-end pipeline that converts a 2D reference image into a fully textured, production-ready 3D mesh inside Autodesk Maya, powered by [Vision3D](https://github.com/abrahamADSK/vision3d) running on a remote GPU server.
 
 ---
 
@@ -9,7 +9,7 @@
 This project connects three systems:
 
 1. **Local Mac** running Autodesk Maya — the final destination for the 3D asset
-2. **[Vision3D](https://github.com/YOUR_USERNAME/vision3d)** on a remote GPU server — REST API for AI-powered 3D generation and texturing
+2. **[Vision3D](https://github.com/abrahamADSK/vision3d)** on a remote GPU server — REST API for AI-powered 3D generation and texturing
 3. **MCP Server** (`core/`) — exposes Maya tools as MCP tools so Claude and other LLMs can control Maya via natural language
 
 ```
@@ -92,7 +92,7 @@ maya-mcp/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/maya-mcp.git
+git clone https://github.com/abrahamADSK/maya-mcp.git
 cd maya-mcp
 ```
 
@@ -113,7 +113,7 @@ Key variables to set in `.env`:
 
 #### GPU server setup (required for 3D generation)
 
-maya-mcp uses [Vision3D](https://github.com/YOUR_USERNAME/vision3d) as its GPU backend. Follow the Vision3D README to install and run the server, then set the env vars:
+maya-mcp uses [Vision3D](https://github.com/abrahamADSK/vision3d) as its GPU backend. Follow the Vision3D README to install and run the server, then set the env vars:
 
 ```
 GPU_API_URL=http://your-gpu-host:8000
@@ -455,7 +455,7 @@ hy3dgen  (from Hunyuan3D-2 repo: pip install -e .)
 
 ## Security considerations
 
-maya-mcp communicates with [Vision3D](https://github.com/YOUR_USERNAME/vision3d) via HTTP REST API. Vision3D handles GPU inference, polygon decimation, and texturing independently. See the Vision3D README for security configuration (API keys, HTTPS via Caddy, etc.).
+maya-mcp communicates with [Vision3D](https://github.com/abrahamADSK/vision3d) via HTTP REST API. Vision3D handles GPU inference, polygon decimation, and texturing independently. See the Vision3D README for security configuration (API keys, HTTPS via Caddy, etc.).
 
 ---
 
