@@ -250,6 +250,7 @@ python core/server.py
 | `maya_save_scene` | Save current scene |
 | `maya_execute_python` | Execute arbitrary Python code in Maya |
 | `shape_generate_remote` | Generate 3D mesh from image via Hunyuan3D-2 DiT on remote GPU |
+| `shape_generate_text` | Generate 3D mesh from text prompt (text-to-3D) on remote GPU |
 | `texture_mesh_remote` | Texture an existing mesh via Hunyuan3D-2 Paint on remote GPU |
 
 ### Architecture
@@ -284,12 +285,35 @@ The `cwd` field ensures the server can resolve relative paths and find the `.env
 
 ### Configuring Claude Code
 
-Add to `~/.claude/settings.json`:
+Claude Code uses **two separate files** for MCP configuration:
+
+**1. MCP server definitions** — `~/.claude.json` (note: file in home dir, not inside `~/.claude/`):
+
+```bash
+# Add the server via CLI (recommended):
+claude mcp add maya-mcp -s user -- /path/to/maya-mcp/.venv/bin/python /path/to/maya-mcp/core/server.py
+
+# Or edit ~/.claude.json manually:
+```
+
+```json
+{
+  "mcpServers": {
+    "maya-mcp": {
+      "command": "/path/to/maya-mcp/.venv/bin/python",
+      "args": ["/path/to/maya-mcp/core/server.py"]
+    }
+  }
+}
+```
+
+**2. Tool permissions** — `~/.claude/settings.json`:
 
 ```json
 {
   "permissions": {
     "allow": [
+      "mcp__maya-mcp__maya_launch",
       "mcp__maya-mcp__maya_ping",
       "mcp__maya-mcp__maya_create_primitive",
       "mcp__maya-mcp__maya_assign_material",
@@ -302,26 +326,42 @@ Add to `~/.claude/settings.json`:
       "mcp__maya-mcp__maya_save_scene",
       "mcp__maya-mcp__maya_execute_python",
       "mcp__maya-mcp__shape_generate_remote",
+      "mcp__maya-mcp__shape_generate_text",
       "mcp__maya-mcp__texture_mesh_remote"
     ]
-  },
-  "mcpServers": {
-    "maya-mcp": {
-      "command": "/path/to/maya-mcp/.venv/bin/python",
-      "args": ["core/server.py"],
-      "cwd": "/path/to/maya-mcp"
-    }
   }
 }
 ```
 
-The `permissions.allow` list auto-approves all maya-mcp tools so Claude Code can call them without manual confirmation each time. This is also required for the fpt-mcp Qt console, which routes messages through Claude Code CLI.
+> **Important:** `mcpServers` must be in `~/.claude.json`, NOT in `~/.claude/settings.json`. The `settings.json` file is only for permissions and other settings. If you put `mcpServers` in the wrong file, `claude mcp list` will not show the server.
+
+### Maya Command Port (required)
+
+maya-mcp communicates with Maya via TCP on port 7001. Create `~/Library/Preferences/Autodesk/maya/2026/scripts/userSetup.py`:
+
+```python
+import maya.cmds as cmds
+
+def open_command_port():
+    port_name = ":7001"
+    try:
+        if cmds.commandPort(port_name, query=True):
+            cmds.commandPort(name=port_name, close=True)
+    except RuntimeError:
+        pass
+    cmds.commandPort(name=port_name, sourceType="mel")
+    print(f"[MCP] Command Port abierto en {port_name}")
+
+cmds.evalDeferred(open_command_port)
+```
+
+Restart Maya after creating this file. Verify with: `echo 'print("OK")' | nc localhost 7001`
 
 ### Cross-MCP pipeline (maya-mcp + fpt-mcp)
 
 When both maya-mcp and fpt-mcp are configured in the same Claude Code or Claude Desktop instance, Claude can orchestrate end-to-end VFX workflows in a single conversation. For example, Claude can query ShotGrid for an asset's reference image via fpt-mcp, download it, generate a 3D model via Hunyuan3D-2, import it into Maya, and register the publish back in ShotGrid — all from one natural language request.
 
-To enable this, add both servers to `~/.claude/settings.json` and include permissions for both in `permissions.allow`. See the fpt-mcp README for its server configuration.
+To enable this, add both servers to `~/.claude.json` (via `claude mcp add -s user`) and include permissions for both in `~/.claude/settings.json`. See the fpt-mcp README for its server configuration.
 
 ---
 

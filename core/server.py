@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pydantic import BaseModel, Field, ConfigDict
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from maya_bridge import MayaBridge, MayaBridgeError
 
@@ -39,6 +39,7 @@ from maya_bridge import MayaBridge, MayaBridgeError
 
 MAYA_HOST = os.environ.get("MAYA_HOST", "localhost")
 MAYA_PORT = int(os.environ.get("MAYA_PORT", "7001"))
+MAYA_APP  = os.environ.get("MAYA_APP", "Maya")  # macOS app name for `open -a`
 
 mcp = FastMCP("maya_mcp")
 bridge = MayaBridge(host=MAYA_HOST, port=MAYA_PORT)
@@ -143,16 +144,7 @@ def _handle_error(e: Exception) -> str:
     return f"Error inesperado: {type(e).__name__}: {e}"
 
 
-@mcp.tool(
-    name="maya_ping",
-    annotations={
-        "title": "Verificar conexión con Maya",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_ping")
 async def maya_ping() -> str:
     """Verifica la conexión con Maya y devuelve info del entorno (versión, escena actual, renderer)."""
     try:
@@ -162,16 +154,65 @@ async def maya_ping() -> str:
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_create_primitive",
-    annotations={
-        "title": "Crear primitiva 3D",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_launch")
+async def maya_launch() -> str:
+    """Abre Maya y espera a que el Command Port responda."""
+    import socket
+    import time
+
+    # 1. Comprobar si ya está conectado
+    try:
+        info = bridge.ping()
+        return json.dumps({
+            "status": "already_running",
+            "version": info.get("version", "unknown"),
+            "message": "Maya ya está abierto y el Command Port responde."
+        }, ensure_ascii=False)
+    except Exception:
+        pass  # No está corriendo o no responde — lo abrimos
+
+    # 2. Lanzar Maya
+    rc, _, err = await _run_cmd(["open", "-a", MAYA_APP], timeout=10)
+    if rc != 0:
+        return json.dumps({
+            "error": f"No se pudo abrir Maya ({MAYA_APP}): {err.strip()}",
+            "hint": "Verifica que Maya está instalado. Configura MAYA_APP en .env si el nombre es distinto."
+        }, ensure_ascii=False)
+
+    # 3. Esperar a que el Command Port esté listo (max 90s)
+    max_wait = 90
+    poll_interval = 3
+    waited = 0
+
+    while waited < max_wait:
+        await asyncio.sleep(poll_interval)
+        waited += poll_interval
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect((MAYA_HOST, MAYA_PORT))
+            sock.close()
+            # Puerto abierto — intentar ping real
+            try:
+                info = bridge.ping()
+                return json.dumps({
+                    "status": "launched",
+                    "waited_seconds": waited,
+                    "version": info.get("version", "unknown"),
+                    "message": f"Maya abierto y Command Port listo ({waited}s)."
+                }, ensure_ascii=False)
+            except Exception:
+                continue  # Puerto abierto pero Maya aún cargando
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            continue  # Puerto aún no disponible
+
+    return json.dumps({
+        "error": f"Maya se abrió pero el Command Port no respondió en {max_wait}s.",
+        "hint": "Verifica que tienes el Command Port en userSetup.py: cmds.commandPort(name=':7001', sourceType='mel')"
+    }, ensure_ascii=False)
+
+
+@mcp.tool(name="maya_create_primitive")
 async def maya_create_primitive(params: CreatePrimitiveInput) -> str:
     """Crea una primitiva 3D en Maya (cubo, esfera, cilindro, cono, plano, torus) con posición, escala y rotación opcionales."""
     try:
@@ -204,16 +245,7 @@ obj = {func}({name_arg})[0]
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_assign_material",
-    annotations={
-        "title": "Crear y asignar material",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_assign_material")
 async def maya_assign_material(params: MaterialInput) -> str:
     """Crea un material (lambert, blinn, phong, aiStandardSurface) con color RGB y lo asigna a un objeto."""
     try:
@@ -235,16 +267,7 @@ result = {{'material': mat, 'shading_group': sg, 'assigned_to': '{params.object_
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_transform",
-    annotations={
-        "title": "Transformar objeto",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_transform")
 async def maya_transform(params: TransformInput) -> str:
     """Mueve, rota o escala un objeto en la escena de Maya."""
     try:
@@ -270,16 +293,7 @@ result = {{'object': '{params.object_name}', 'position': pos, 'rotation': rot, '
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_list_scene",
-    annotations={
-        "title": "Consultar objetos de la escena",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_list_scene")
 async def maya_list_scene(params: SceneQueryInput) -> str:
     """Lista objetos de la escena de Maya, con filtros opcionales por tipo o nombre."""
     try:
@@ -302,16 +316,7 @@ result = {{'count': len(objects), 'objects': objects}}
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_delete",
-    annotations={
-        "title": "Eliminar objeto",
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_delete")
 async def maya_delete(params: DeleteObjectInput) -> str:
     """Elimina un objeto de la escena de Maya por nombre (soporta wildcards como *sphere*)."""
     try:
@@ -329,16 +334,7 @@ else:
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_create_light",
-    annotations={
-        "title": "Crear luz",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_create_light")
 async def maya_create_light(params: LightInput) -> str:
     """Crea una luz en Maya (directional, point, spot, area, ambient) con intensidad y color configurables."""
     try:
@@ -383,16 +379,7 @@ cmds.xform(parent, translation={params.position}, worldSpace=True)
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_create_camera",
-    annotations={
-        "title": "Crear cámara",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_create_camera")
 async def maya_create_camera(params: CameraInput) -> str:
     """Crea una cámara en Maya con posición, punto de mira y focal length configurables."""
     try:
@@ -419,16 +406,7 @@ cmds.delete(aim)
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_execute_python",
-    annotations={
-        "title": "Ejecutar Python en Maya",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_execute_python")
 async def maya_execute_python(params: ExecutePythonInput) -> str:
     """Ejecuta código Python arbitrario en Maya. El código debe asignar su resultado a la variable 'result'. Útil para operaciones avanzadas no cubiertas por otros tools."""
     try:
@@ -437,16 +415,7 @@ async def maya_execute_python(params: ExecutePythonInput) -> str:
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_new_scene",
-    annotations={
-        "title": "Nueva escena",
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_new_scene")
 async def maya_new_scene() -> str:
     """Crea una nueva escena vacía en Maya (descarta la escena actual sin guardar)."""
     try:
@@ -460,16 +429,7 @@ result = {'status': 'new_scene_created'}
         return _handle_error(e)
 
 
-@mcp.tool(
-    name="maya_save_scene",
-    annotations={
-        "title": "Guardar escena",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False
-    }
-)
+@mcp.tool(name="maya_save_scene")
 async def maya_save_scene() -> str:
     """Guarda la escena actual de Maya."""
     try:
@@ -516,6 +476,21 @@ class ShapeGenerateInput(BaseModel):
     )
 
 
+class ShapeTextInput(BaseModel):
+    """Parámetros para la generación de geometría 3D desde texto (text-to-3D)."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    text_prompt: str = Field(
+        ...,
+        description="Descripción en inglés del objeto 3D a generar. "
+                    "Ejemplos: 'american mailbox', 'wooden chair', 'medieval sword'."
+    )
+    output_subdir: str = Field(
+        default="0",
+        description="Subdirectorio de salida dentro de reference/3d_output/ (ej: '0', 'mailbox_0')"
+    )
+
+
 class TextureRemoteInput(BaseModel):
     """Parámetros para el texturizado remoto en glorfindel (RTX 3090)."""
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -549,24 +524,7 @@ async def _run_cmd(cmd: List[str], timeout: int = 600) -> tuple[int, str, str]:
     return proc.returncode, stdout.decode(), stderr.decode()
 
 
-@mcp.tool(
-    name="shape_generate_remote",
-    description=(
-        "Genera geometría 3D (mesh.glb) a partir de una imagen de referencia usando "
-        "Hunyuan3D-2 DiT en el servidor GPU remoto (Linux RTX 3090). "
-        "Sube la imagen al servidor, ejecuta shape_remote.py (~3-8 min), "
-        "y descarga mesh.glb al directorio local reference/3d_output/{output_subdir}/. "
-        "El mesh resultante no tiene UVs ni textura — usa texture_mesh_remote después "
-        "para pintar la textura. "
-        "Requiere SSH configurado sin contraseña al servidor GPU."
-    ),
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": True
-    }
-)
+@mcp.tool(name="shape_generate_remote")
 async def shape_generate_remote(params: ShapeGenerateInput) -> str:
     """Genera geometría 3D desde una imagen en el servidor GPU remoto."""
     try:
@@ -671,22 +629,87 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
         return json.dumps({"error": str(e)})
 
 
-@mcp.tool(
-    name="texture_mesh_remote",
-    description=(
-        "Texturiza un mesh 3D usando Hunyuan3D-Paint en glorfindel (Linux RTX 3090). "
-        "Envía mesh.glb + imagen de referencia al Linux, ejecuta el texturizado (~3-5 min), "
-        "y recupera mesh_uv.obj + texture_baked.png al directorio local. "
-        "Maya detecta automáticamente los archivos resultantes (USE_BAKED_TEXTURE). "
-        "Requiere SSH configurado sin contraseña a 'maya-linux' (~/.ssh/config)."
-    ),
-    annotations={
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": True
-    }
-)
+@mcp.tool(name="shape_generate_text")
+async def shape_generate_text(params: ShapeTextInput) -> str:
+    """Genera geometría 3D desde una descripción de texto (text-to-3D) en el servidor GPU remoto."""
+    try:
+        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        remote_work = f"{_LINUX_WORK_DIR}/{params.output_subdir}"
+        ssh_host = _LINUX_SSH_HOST
+
+        log_lines = []
+        log = lambda msg: log_lines.append(msg)
+
+        # ── Paso 1: Crear directorio remoto ───────────────────────────────
+        log(f"[1/3] Creando directorio remoto en {ssh_host}...")
+        rc, _, err = await _run_cmd(["ssh", ssh_host, f"mkdir -p {remote_work}"])
+        if rc != 0:
+            return json.dumps({"error": f"SSH mkdir falló: {err.strip()}",
+                               "hint": "Verifica SSH sin contraseña al servidor GPU."})
+
+        # ── Paso 2: Ejecutar text-to-3D ───────────────────────────────────
+        log(f"[2/3] Ejecutando Hunyuan3D-2 Text-to-3D: '{params.text_prompt}' (~3-8 min)...")
+        remote_script = f"{_LINUX_VISION_DIR}/shape_remote.py"
+        remote_cmd = (
+            f"source {_LINUX_VENV}/bin/activate && "
+            f"python {remote_script} "
+            f"--text \"{params.text_prompt}\" "
+            f"--output {remote_work}"
+        )
+        rc, stdout, stderr = await _run_cmd(
+            ["ssh", ssh_host, remote_cmd],
+            timeout=900
+        )
+
+        output_log = (stdout + stderr).strip()
+        if rc != 0:
+            return json.dumps({
+                "error": "Text-to-3D generation falló en el servidor GPU",
+                "log": output_log[-2000:],
+                "hint": "Verifica con: ssh <gpu-host> 'source .venv/bin/activate && python shape_remote.py --test'"
+            })
+
+        log("[2/3] Text-to-3D completado.")
+
+        # ── Paso 3: Descargar mesh.glb ────────────────────────────────────
+        log("[3/3] Descargando mesh.glb...")
+        mesh_local = out_dir / "mesh.glb"
+        rc, _, err = await _run_cmd([
+            "scp",
+            f"{ssh_host}:{remote_work}/mesh.glb",
+            str(mesh_local)
+        ])
+
+        if rc != 0:
+            return json.dumps({
+                "error": f"No se pudo descargar mesh.glb: {err.strip()}",
+                "log": "\n".join(log_lines)
+            })
+
+        mesh_size_kb = mesh_local.stat().st_size // 1024 if mesh_local.exists() else 0
+        log(f"[3/3] mesh.glb descargado ({mesh_size_kb} KB)")
+
+        return json.dumps({
+            "status": "ok",
+            "mesh_path": str(mesh_local),
+            "mesh_size_kb": mesh_size_kb,
+            "output_dir": str(out_dir),
+            "text_prompt": params.text_prompt,
+            "next_step": (
+                f"Mesh generado desde texto. Para texturizar, llama a texture_mesh_remote con "
+                f"output_subdir='{params.output_subdir}'. Nota: text-to-3D no genera imagen de "
+                f"referencia, por lo que el texturizado usará solo la geometría."
+            ),
+            "log_summary": "\n".join(log_lines)
+        }, indent=2)
+
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool(name="texture_mesh_remote")
 async def texture_mesh_remote(params: TextureRemoteInput) -> str:
     """Texturiza el mesh en glorfindel (RTX 3090) y recupera los resultados."""
     try:

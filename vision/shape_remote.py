@@ -149,6 +149,44 @@ def generate_shape(image_path: str, output_dir: str) -> str:
     return str(glb_path)
 
 
+def generate_shape_from_text(text_prompt: str, output_dir: str) -> str:
+    """
+    Genera geometría 3D a partir de un prompt de texto (text-to-3D).
+    Devuelve la ruta al mesh.glb generado.
+
+    Usa Hunyuan3D-2 DiT con el mismo pipeline que image-to-3D pero
+    pasando text= en lugar de image=.
+    Output: mesh.glb sin UVs ni textura (~32K verts, ~65K faces).
+    """
+    import torch
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 1. Cargar pipeline ──────────────────────────────────────────────────
+    print("[1/3] Cargando pipeline Hunyuan3D-2 Shape...")
+    pipeline = _load_pipeline()
+    print("      Pipeline cargado.")
+
+    # ── 2. Generar geometría desde texto ─────────────────────────────────────
+    print(f"[2/3] Generando geometría 3D desde texto: '{text_prompt}'")
+    print("      (RTX 3090 ~3-8 min)")
+    result = pipeline(text=text_prompt)
+    mesh = result[0]
+    print(f"      Geometría generada: {len(mesh.vertices):,} verts | {len(mesh.faces):,} faces")
+
+    # ── 3. Guardar mesh.glb ──────────────────────────────────────────────────
+    print("[3/3] Guardando mesh.glb...")
+    glb_path = output_dir / "mesh.glb"
+    mesh.export(str(glb_path))
+    size_kb = glb_path.stat().st_size // 1024
+    print(f"      → mesh.glb ({size_kb} KB)")
+
+    torch.cuda.empty_cache()
+    print("\n✓ Text-to-3D generation completado.")
+    return str(glb_path)
+
+
 def _detect_solid_background(image):
     """Heurística simple: si la imagen no tiene píxeles transparentes, asume fondo sólido."""
     if image.mode != 'RGBA':
@@ -167,9 +205,11 @@ def main():
 Ejemplos:
   python shape_remote.py --test
   python shape_remote.py --image ref.jpg --output ./output/
+  python shape_remote.py --text "american mailbox" --output ./output/
         """
     )
     parser.add_argument('--image',  type=str, help='Imagen de referencia (.jpg/.png)')
+    parser.add_argument('--text',   type=str, help='Prompt de texto para text-to-3D')
     parser.add_argument('--output', type=str, default='./output', help='Directorio de salida')
     parser.add_argument('--test',   action='store_true', help='Verificar instalación')
     args = parser.parse_args()
@@ -178,15 +218,20 @@ Ejemplos:
         run_test()
         return
 
-    if not args.image:
-        parser.error("Se requiere --image")
+    if not args.image and not args.text:
+        parser.error("Se requiere --image o --text")
 
-    if not os.path.exists(args.image):
-        print(f"ERROR: imagen no encontrada: {args.image}")
-        sys.exit(1)
+    if args.image and args.text:
+        parser.error("Usa --image o --text, no ambos")
 
     try:
-        generate_shape(args.image, args.output)
+        if args.text:
+            generate_shape_from_text(args.text, args.output)
+        else:
+            if not os.path.exists(args.image):
+                print(f"ERROR: imagen no encontrada: {args.image}")
+                sys.exit(1)
+            generate_shape(args.image, args.output)
     except Exception as e:
         print(f"\nERROR durante shape generation: {e}")
         traceback.print_exc()
