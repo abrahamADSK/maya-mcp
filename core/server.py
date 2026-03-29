@@ -463,8 +463,10 @@ else:
 
 
 # ─────────────────────────────────────────────
-# GPU remoto — API REST (Hunyuan3D-2)
+# GPU remoto — Vision3D API REST (Hunyuan3D-2)
 # ─────────────────────────────────────────────
+
+from mcp.server.fastmcp import Context
 
 # Configuración via variables de entorno
 _GPU_API_URL  = os.environ.get("GPU_API_URL",  "http://localhost:8000").rstrip("/")
@@ -475,6 +477,10 @@ _MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
 
 # Lazy httpx client
 _http_client = None
+
+# Track log cursors per job (for incremental log delivery)
+_job_log_cursors: dict[str, int] = {}
+
 
 def _get_http_client():
     """Return a reusable httpx client for GPU API calls."""
@@ -493,30 +499,6 @@ def _get_http_client():
     return _http_client
 
 
-async def _poll_job(job_id: str, log_fn=None, poll_interval: float = 5.0) -> dict:
-    """Poll a GPU server job until it completes or fails."""
-    client = _get_http_client()
-    last_log_len = 0
-
-    while True:
-        resp = await client.get(f"/api/jobs/{job_id}")
-        resp.raise_for_status()
-        job = resp.json()
-
-        # Stream new log lines
-        if log_fn and "log" in job:
-            for line in job["log"][last_log_len:]:
-                log_fn(line)
-            last_log_len = len(job["log"])
-
-        if job["status"] == "completed":
-            return job
-        elif job["status"] == "failed":
-            raise RuntimeError(job.get("error", "Job failed without details"))
-
-        await asyncio.sleep(poll_interval)
-
-
 async def _download_file(job_id: str, filename: str, dest: Path) -> bool:
     """Download a single file from a completed job."""
     client = _get_http_client()
@@ -528,10 +510,31 @@ async def _download_file(job_id: str, filename: str, dest: Path) -> bool:
     return False
 
 
-class ShapeGenerateInput(BaseModel):
-    """Parámetros para la generación de geometría 3D en el servidor GPU remoto.
+def _build_quality_form_data(params) -> dict:
+    """Build form_data dict with quality params from a ShapeGenerateInput or ShapeTextInput."""
+    form_data = {}
+    if hasattr(params, "target_faces") and params.target_faces > 0:
+        form_data["target_faces"] = str(params.target_faces)
+    elif hasattr(params, "target_faces"):
+        form_data["target_faces"] = str(params.target_faces)
+    if params.preset:
+        form_data["preset"] = params.preset
+    if params.model:
+        form_data["model"] = params.model
+    if params.octree_resolution > 0:
+        form_data["octree_resolution"] = str(params.octree_resolution)
+    if params.num_inference_steps > 0:
+        form_data["num_inference_steps"] = str(params.num_inference_steps)
+    return form_data
 
-    Presets de calidad (si no se especifica preset, se usan los valores individuales):
+
+# ── Input models ──────────────────────────────────────────────────────────
+
+
+class ShapeGenerateInput(BaseModel):
+    """Parámetros para iniciar generación 3D desde imagen en Vision3D.
+
+    Presets de calidad:
       - low:    turbo, octree 256, 10 steps, 10k faces   (~1 min, preview rápido)
       - medium: turbo, octree 384, 20 steps, 50k faces   (~2 min, uso general)
       - high:   full,  octree 384, 30 steps, 150k faces  (~8 min, detallado)
@@ -541,8 +544,7 @@ class ShapeGenerateInput(BaseModel):
 
     image_path: str = Field(
         ...,
-        description="Ruta local absoluta a la imagen de referencia (.jpg/.png). "
-                    "Puede ser una imagen descargada de ShotGrid u otra fuente."
+        description="Ruta local absoluta a la imagen de referencia (.jpg/.png)."
     )
     output_subdir: str = Field(
         default="0",
@@ -551,106 +553,104 @@ class ShapeGenerateInput(BaseModel):
     preset: str = Field(
         default="",
         description="Preset de calidad: 'low', 'medium', 'high', 'ultra'. "
-                    "Si se especifica, rellena model/octree/steps/faces automáticamente. "
-                    "Los parámetros individuales que se pasen sobreescriben al preset."
+                    "Los parámetros individuales sobreescriben al preset."
     )
     model: str = Field(
         default="",
-        description="Modelo de shape: 'turbo' (~1 min, bueno para formas simples) "
-                    "o 'full' (~5 min, mejor detalle en picos, dientes, etc.). "
+        description="Modelo de shape: 'turbo' (~1 min) o 'full' (~5 min, más detalle). "
                     "Vacío = usa el del preset o 'turbo' por defecto."
     )
     octree_resolution: int = Field(
         default=0,
-        description="Resolución del octree para marching cubes (256/384/512). "
-                    "Mayor = más detalle geométrico. 0 = usa el del preset."
+        description="Resolución octree (256/384/512). 0 = usa el del preset."
     )
     num_inference_steps: int = Field(
         default=0,
-        description="Pasos de inferencia. turbo: 5-10, full: 30-50. "
-                    "0 = usa el del preset."
+        description="Pasos de inferencia. turbo: 5-10, full: 30-50. 0 = usa el del preset."
     )
     target_faces: int = Field(
         default=50000,
-        description="Número de caras objetivo tras decimación. 0 = sin decimación (máximo detalle)."
+        description="Caras objetivo tras decimación. 0 = sin decimación."
     )
 
 
 class ShapeTextInput(BaseModel):
-    """Parámetros para la generación de geometría 3D desde texto (text-to-3D).
-
-    Presets de calidad: low, medium, high, ultra (ver ShapeGenerateInput).
-    """
+    """Parámetros para iniciar generación 3D desde texto en Vision3D."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
     text_prompt: str = Field(
         ...,
-        description="Descripción en inglés del objeto 3D a generar. "
-                    "Ejemplos: 'american mailbox', 'wooden chair', 'medieval sword'."
+        description="Descripción en inglés del objeto 3D a generar."
     )
     output_subdir: str = Field(
         default="0",
-        description="Subdirectorio de salida dentro de reference/3d_output/ (ej: '0', 'mailbox_0')"
+        description="Subdirectorio de salida (ej: '0', 'mailbox_0')"
     )
-    preset: str = Field(
-        default="",
-        description="Preset de calidad: 'low', 'medium', 'high', 'ultra'."
-    )
-    model: str = Field(
-        default="",
-        description="Modelo de shape: 'turbo' o 'full'. Vacío = usa el del preset."
-    )
-    octree_resolution: int = Field(
-        default=0,
-        description="Resolución del octree (256/384/512). 0 = usa el del preset."
-    )
-    num_inference_steps: int = Field(
-        default=0,
-        description="Pasos de inferencia. 0 = usa el del preset."
-    )
-    target_faces: int = Field(
-        default=0,
-        description="Caras objetivo. 0 = sin decimación."
-    )
+    preset: str = Field(default="", description="Preset: 'low', 'medium', 'high', 'ultra'.")
+    model: str = Field(default="", description="'turbo' o 'full'. Vacío = preset.")
+    octree_resolution: int = Field(default=0, description="256/384/512. 0 = preset.")
+    num_inference_steps: int = Field(default=0, description="Pasos. 0 = preset.")
+    target_faces: int = Field(default=0, description="Caras objetivo. 0 = sin decimación.")
 
 
 class TextureRemoteInput(BaseModel):
-    """Parámetros para el texturizado remoto en el servidor GPU."""
+    """Parámetros para iniciar texturizado en Vision3D."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
     output_subdir: str = Field(
         ...,
-        description="Subdirectorio de salida dentro de reference/3d_output/ (ej: '0', 'frog_0')"
+        description="Subdirectorio dentro de reference/3d_output/"
     )
     mesh_filename: str = Field(
         default="mesh.glb",
-        description="Nombre del archivo mesh dentro de output_subdir (default: mesh.glb)"
+        description="Nombre del mesh dentro de output_subdir"
     )
     image_filename: str = Field(
         default="input.png",
-        description="Nombre de la imagen de referencia dentro de output_subdir (default: input.png)"
+        description="Nombre de la imagen de referencia dentro de output_subdir"
     )
 
 
-@mcp.tool(name="shape_generate_remote")
-async def shape_generate_remote(params: ShapeGenerateInput) -> str:
-    """Genera geometría 3D texturizada desde una imagen en el servidor GPU remoto.
+class Vision3DPollInput(BaseModel):
+    """Parámetros para sondear el estado de un job en Vision3D."""
+    model_config = ConfigDict(str_strip_whitespace=True)
 
-    Pipeline completo: imagen → shape → decimación → texturizado.
-    Devuelve mesh.glb (raw), textured.glb, mesh_uv.obj y texture_baked.png.
+    job_id: str = Field(..., description="ID del job devuelto por shape_generate_remote/text/texture.")
+
+
+class Vision3DDownloadInput(BaseModel):
+    """Parámetros para descargar los resultados de un job completado."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    job_id: str = Field(..., description="ID del job completado.")
+    output_subdir: str = Field(..., description="Subdirectorio local de salida (el mismo usado al crear el job).")
+    files: List[str] = Field(
+        default_factory=lambda: ["textured.glb", "mesh_uv.obj", "texture_baked.png", "mesh.glb"],
+        description="Lista de archivos a descargar. Por defecto descarga todos los del pipeline completo."
+    )
+
+
+# ── Tools: iniciar jobs (non-blocking) ───────────────────────────────────
+
+
+@mcp.tool(name="shape_generate_remote")
+async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str:
+    """Inicia generación 3D texturizada desde imagen en Vision3D (non-blocking).
+
+    Sube la imagen y arranca el pipeline completo (shape + decimación + texturizado).
+    Retorna un job_id inmediatamente. Usa vision3d_poll para seguir el progreso
+    y vision3d_download para descargar los resultados cuando termine.
     """
     try:
         image_local = Path(params.image_path)
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
 
-        # ── Verificar imagen local ────────────────────────────────────────
         if not image_local.exists():
             return json.dumps({
                 "error": f"Imagen no encontrada: {image_local}",
                 "hint": "Descarga primero la imagen con sg_download de fpt-mcp."
             })
 
-        # Crear directorio de salida local
         out_dir.mkdir(parents=True, exist_ok=True)
 
         # Copiar imagen al directorio de salida como input.png
@@ -658,26 +658,14 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
         input_copy = out_dir / "input.png"
         shutil.copy2(str(image_local), str(input_copy))
 
-        log_lines = []
-        log = lambda msg: log_lines.append(msg)
         client = _get_http_client()
-
-        # ── Paso 1: Subir imagen al GPU server (pipeline completo) ────────
         quality_desc = params.preset or f"model={params.model or 'turbo'}"
-        log(f"[1/4] Subiendo imagen a GPU server ({_GPU_API_URL})...")
-        log(f"       Pipeline: shape + decimación + texturizado ({quality_desc})")
-        form_data = {
-            "output_subdir": params.output_subdir,
-            "target_faces": str(params.target_faces),
-        }
-        if params.preset:
-            form_data["preset"] = params.preset
-        if params.model:
-            form_data["model"] = params.model
-        if params.octree_resolution > 0:
-            form_data["octree_resolution"] = str(params.octree_resolution)
-        if params.num_inference_steps > 0:
-            form_data["num_inference_steps"] = str(params.num_inference_steps)
+
+        await ctx.info(f"Subiendo imagen a Vision3D ({quality_desc})...")
+
+        form_data = {"output_subdir": params.output_subdir}
+        form_data.update(_build_quality_form_data(params))
+
         with open(str(image_local), "rb") as f:
             resp = await client.post(
                 "/api/generate-full",
@@ -688,50 +676,25 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verifica que el servidor GPU está corriendo: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Verifica que Vision3D está corriendo: curl -k {_GPU_API_URL}/api/health"
             })
 
         job = resp.json()
         job_id = job["job_id"]
-        log(f"[1/4] Job creado: {job_id}")
+        _job_log_cursors[job_id] = 0
 
-        # ── Paso 2: Esperar resultado (shape + texture) ──────────────────
-        log(f"[2/4] Generando shape + textura (~5-15 min)...")
-        result = await _poll_job(job_id, log_fn=log)
-        log(f"[2/4] Pipeline completo.")
-
-        # ── Paso 3: Descargar todos los archivos ─────────────────────────
-        log(f"[3/4] Descargando archivos...")
-        files_to_download = ["textured.glb", "mesh_uv.obj", "texture_baked.png", "mesh.glb"]
-        downloaded = []
-        for fname in files_to_download:
-            ok = await _download_file(job_id, fname, out_dir / fname)
-            if ok:
-                downloaded.append(fname)
-                size_kb = (out_dir / fname).stat().st_size // 1024
-                log(f"       {fname} ({size_kb} KB)")
-
-        # ── Paso 4: Resultado ────────────────────────────────────────────
-        baked_ready = (out_dir / "mesh_uv.obj").exists() and \
-                      (out_dir / "texture_baked.png").exists()
-        textured_ready = (out_dir / "textured.glb").exists()
-
-        log(f"[4/4] Descargados: {len(downloaded)} archivos")
+        await ctx.info(f"Job iniciado: {job_id}")
 
         return json.dumps({
-            "status": "ok",
+            "status": "started",
+            "job_id": job_id,
+            "output_subdir": params.output_subdir,
             "output_dir": str(out_dir),
-            "downloaded": downloaded,
-            "textured": textured_ready,
-            "baked_texture": baked_ready,
+            "quality": quality_desc,
             "image_copy": str(input_copy),
-            "next_step": (
-                "Modelo texturizado listo. Importa textured.glb en Maya, o usa "
-                "mesh_uv.obj + texture_baked.png para control total de UVs."
-                if textured_ready else
-                "Solo se generó el mesh sin textura. Revisa los logs del servidor."
-            ),
-            "log_summary": "\n".join(log_lines)
+            "next_step": f"Llama a vision3d_poll(job_id='{job_id}') para ver el progreso. "
+                         f"Cuando status sea 'completed', llama a vision3d_download(job_id='{job_id}', "
+                         f"output_subdir='{params.output_subdir}').",
         }, indent=2)
 
     except Exception as e:
@@ -739,79 +702,48 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
 
 
 @mcp.tool(name="shape_generate_text")
-async def shape_generate_text(params: ShapeTextInput) -> str:
-    """Genera geometría 3D desde una descripción de texto (text-to-3D) en el servidor GPU remoto (via HTTPS API)."""
+async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
+    """Inicia generación 3D desde texto en Vision3D (non-blocking).
+
+    Envía el prompt y arranca el pipeline text-to-3D.
+    Retorna job_id. Usa vision3d_poll para seguir el progreso.
+    """
     try:
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        log_lines = []
-        log = lambda msg: log_lines.append(msg)
         client = _get_http_client()
-
-        # ── Paso 1: Enviar prompt al GPU server ──────────────────────────
         quality_desc = params.preset or f"model={params.model or 'turbo'}"
-        log(f"[1/3] Enviando prompt a GPU server: '{params.text_prompt}' ({quality_desc})...")
+
+        await ctx.info(f"Enviando prompt a Vision3D: '{params.text_prompt}' ({quality_desc})...")
+
         form_data = {
             "text_prompt": params.text_prompt,
             "output_subdir": params.output_subdir,
         }
-        if params.preset:
-            form_data["preset"] = params.preset
-        if params.model:
-            form_data["model"] = params.model
-        if params.octree_resolution > 0:
-            form_data["octree_resolution"] = str(params.octree_resolution)
-        if params.num_inference_steps > 0:
-            form_data["num_inference_steps"] = str(params.num_inference_steps)
-        if params.target_faces > 0:
-            form_data["target_faces"] = str(params.target_faces)
-        resp = await client.post(
-            "/api/generate-text",
-            data=form_data,
-        )
+        form_data.update(_build_quality_form_data(params))
+
+        resp = await client.post("/api/generate-text", data=form_data)
 
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verifica que el servidor GPU está corriendo: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Verifica que Vision3D está corriendo: curl -k {_GPU_API_URL}/api/health"
             })
 
         job = resp.json()
         job_id = job["job_id"]
-        log(f"[1/3] Job creado: {job_id}")
+        _job_log_cursors[job_id] = 0
 
-        # ── Paso 2: Esperar resultado ─────────────────────────────────────
-        log(f"[2/3] Generando geometría 3D desde texto (~3-8 min)...")
-        result = await _poll_job(job_id, log_fn=log)
-        log("[2/3] Text-to-3D completado.")
-
-        # ── Paso 3: Descargar mesh.glb ────────────────────────────────────
-        log("[3/3] Descargando mesh.glb...")
-        mesh_local = out_dir / "mesh.glb"
-        ok = await _download_file(job_id, "mesh.glb", mesh_local)
-
-        if not ok:
-            return json.dumps({
-                "error": "No se pudo descargar mesh.glb del servidor GPU",
-                "log": "\n".join(log_lines)
-            })
-
-        mesh_size_kb = mesh_local.stat().st_size // 1024 if mesh_local.exists() else 0
-        log(f"[3/3] mesh.glb descargado ({mesh_size_kb} KB)")
+        await ctx.info(f"Job iniciado: {job_id}")
 
         return json.dumps({
-            "status": "ok",
-            "mesh_path": str(mesh_local),
-            "mesh_size_kb": mesh_size_kb,
+            "status": "started",
+            "job_id": job_id,
+            "output_subdir": params.output_subdir,
             "output_dir": str(out_dir),
-            "text_prompt": params.text_prompt,
-            "next_step": (
-                f"Mesh generado desde texto. Para texturizar, llama a texture_mesh_remote con "
-                f"output_subdir='{params.output_subdir}'. Nota: text-to-3D no genera imagen de "
-                f"referencia, por lo que el texturizado usará solo la geometría."
-            ),
-            "log_summary": "\n".join(log_lines)
+            "quality": quality_desc,
+            "next_step": f"Llama a vision3d_poll(job_id='{job_id}') para seguir el progreso.",
         }, indent=2)
 
     except Exception as e:
@@ -819,31 +751,32 @@ async def shape_generate_text(params: ShapeTextInput) -> str:
 
 
 @mcp.tool(name="texture_mesh_remote")
-async def texture_mesh_remote(params: TextureRemoteInput) -> str:
-    """Texturiza el mesh en el servidor GPU remoto (via HTTPS API) y recupera los resultados."""
+async def texture_mesh_remote(params: TextureRemoteInput, ctx: Context) -> str:
+    """Inicia texturizado de mesh en Vision3D (non-blocking).
+
+    Sube mesh + imagen y arranca el pipeline de texturizado.
+    Retorna job_id. Usa vision3d_poll para seguir el progreso.
+    """
     try:
         out_dir     = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
         mesh_local  = out_dir / params.mesh_filename
         image_local = out_dir / params.image_filename
 
-        # ── Verificar archivos locales ─────────────────────────────────────
         if not mesh_local.exists():
             return json.dumps({
                 "error": f"Mesh no encontrado: {mesh_local}",
-                "hint":  "Genera primero el mesh con la herramienta de imagen-a-3D."
+                "hint":  "Genera primero el mesh con shape_generate_remote."
             })
         if not image_local.exists():
             return json.dumps({
-                "error":  f"Imagen de referencia no encontrada: {image_local}",
-                "hint":   f"Copia la imagen de referencia como '{params.image_filename}' en {out_dir}"
+                "error":  f"Imagen no encontrada: {image_local}",
+                "hint":   f"Copia la imagen como '{params.image_filename}' en {out_dir}"
             })
 
-        log_lines = []
-        log = lambda msg: log_lines.append(msg)
         client = _get_http_client()
 
-        # ── Paso 1: Subir mesh + imagen al GPU server ─────────────────────
-        log(f"[1/3] Subiendo {params.mesh_filename} y {params.image_filename} a GPU server...")
+        await ctx.info(f"Subiendo {params.mesh_filename} + {params.image_filename} a Vision3D...")
+
         with open(str(mesh_local), "rb") as mf, open(str(image_local), "rb") as imf:
             resp = await client.post(
                 "/api/texture-mesh",
@@ -857,50 +790,133 @@ async def texture_mesh_remote(params: TextureRemoteInput) -> str:
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verifica que el servidor GPU está corriendo: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Verifica Vision3D: curl -k {_GPU_API_URL}/api/health"
             })
 
         job = resp.json()
         job_id = job["job_id"]
-        log(f"[1/3] Job creado: {job_id}")
+        _job_log_cursors[job_id] = 0
 
-        # ── Paso 2: Esperar resultado ─────────────────────────────────────
-        log(f"[2/3] Texturizando mesh (~3-5 min)...")
-        result = await _poll_job(job_id, log_fn=log)
-        log("[2/3] Texturizado completado.")
+        await ctx.info(f"Job de texturizado iniciado: {job_id}")
 
-        # ── Paso 3: Descargar resultados ──────────────────────────────────
-        log("[3/3] Descargando resultados...")
-        results_to_download = ["textured.glb", "mesh_uv.obj", "texture_baked.png"]
+        return json.dumps({
+            "status": "started",
+            "job_id": job_id,
+            "output_subdir": params.output_subdir,
+            "next_step": f"Llama a vision3d_poll(job_id='{job_id}') para seguir el progreso.",
+        }, indent=2)
+
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ── Tools: sondear progreso y descargar ──────────────────────────────────
+
+
+@mcp.tool(name="vision3d_poll")
+async def vision3d_poll(params: Vision3DPollInput, ctx: Context) -> str:
+    """Sondea el estado de un job en Vision3D. Devuelve las líneas de log nuevas
+    desde la última llamada (progreso incremental).
+
+    Llama a este tool repetidamente mientras status sea 'running'.
+    Cuando status sea 'completed', llama a vision3d_download.
+    Cuando status sea 'failed', muestra el error al usuario.
+    """
+    try:
+        client = _get_http_client()
+        resp = await client.get(f"/api/jobs/{params.job_id}")
+
+        if resp.status_code == 404:
+            return json.dumps({"error": f"Job '{params.job_id}' no encontrado en Vision3D."})
+
+        resp.raise_for_status()
+        job = resp.json()
+
+        # Deliver only new log lines since last poll
+        cursor = _job_log_cursors.get(params.job_id, 0)
+        all_log = job.get("log", [])
+        new_lines = all_log[cursor:]
+        _job_log_cursors[params.job_id] = len(all_log)
+
+        # ctx.info for future MCP progress support
+        for line in new_lines:
+            await ctx.info(line)
+
+        elapsed = job.get("elapsed_s", 0)
+        status = job["status"]
+
+        result = {
+            "status": status,
+            "elapsed_s": elapsed,
+            "new_log_lines": new_lines,
+            "total_log_lines": len(all_log),
+        }
+
+        if status == "completed":
+            result["files"] = [f["name"] for f in job.get("files", [])]
+            result["next_step"] = (
+                f"Job completado en {elapsed}s. Llama a vision3d_download("
+                f"job_id='{params.job_id}', output_subdir='...') para descargar los archivos."
+            )
+            # Cleanup cursor
+            _job_log_cursors.pop(params.job_id, None)
+        elif status == "failed":
+            result["error"] = job.get("error", "Error desconocido")
+            _job_log_cursors.pop(params.job_id, None)
+        else:
+            result["next_step"] = (
+                f"Job en progreso ({elapsed}s). Vuelve a llamar a "
+                f"vision3d_poll(job_id='{params.job_id}') para actualizar."
+            )
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool(name="vision3d_download")
+async def vision3d_download(params: Vision3DDownloadInput, ctx: Context) -> str:
+    """Descarga los archivos de un job completado de Vision3D al directorio local.
+
+    Llama a este tool después de que vision3d_poll reporte status='completed'.
+    Descarga los archivos especificados al subdirectorio local de salida.
+    """
+    try:
+        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        await ctx.info(f"Descargando {len(params.files)} archivos de Vision3D...")
+
         downloaded = []
-        failed     = []
+        failed = []
 
-        for fname in results_to_download:
-            ok = await _download_file(job_id, fname, out_dir / fname)
+        for fname in params.files:
+            ok = await _download_file(params.job_id, fname, out_dir / fname)
             if ok:
-                downloaded.append(fname)
+                size_kb = (out_dir / fname).stat().st_size // 1024
+                downloaded.append({"name": fname, "size_kb": size_kb})
+                await ctx.info(f"  {fname} ({size_kb} KB)")
             else:
                 failed.append(fname)
 
-        log(f"[3/3] Descargados: {downloaded}")
-
-        # ── Resultado ──────────────────────────────────────────────────────
         baked_ready = (out_dir / "mesh_uv.obj").exists() and \
                       (out_dir / "texture_baked.png").exists()
+        textured_ready = (out_dir / "textured.glb").exists()
 
         return json.dumps({
-            "status":         "ok",
-            "output_dir":     str(out_dir),
-            "downloaded":     downloaded,
-            "failed":         failed,
-            "USE_BAKED_TEXTURE": baked_ready,
-            "next_step":      (
-                "Ejecuta import_and_setup.py en Maya — detectará "
-                "mesh_uv.obj + texture_baked.png automáticamente (USE_BAKED_TEXTURE=True)."
-                if baked_ready else
-                "Algunos archivos no se descargaron. Verifica el log."
+            "status": "ok",
+            "output_dir": str(out_dir),
+            "downloaded": downloaded,
+            "failed": failed,
+            "textured": textured_ready,
+            "baked_texture": baked_ready,
+            "next_step": (
+                "Archivos descargados. Importa textured.glb en Maya con maya_execute_python, "
+                "o usa mesh_uv.obj + texture_baked.png para control total de UVs."
+                if textured_ready else
+                "Descarga parcial. Revisa 'failed' para ver qué archivos fallaron."
             ),
-            "log_summary":    "\n".join(log_lines)
         }, indent=2)
 
     except Exception as e:
