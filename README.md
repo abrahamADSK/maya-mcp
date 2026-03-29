@@ -341,7 +341,9 @@ claude mcp add maya-mcp -s user -- /path/to/maya-mcp/.venv/bin/python /path/to/m
       "mcp__maya-mcp__maya_execute_python",
       "mcp__maya-mcp__shape_generate_remote",
       "mcp__maya-mcp__shape_generate_text",
-      "mcp__maya-mcp__texture_mesh_remote"
+      "mcp__maya-mcp__texture_mesh_remote",
+      "mcp__maya-mcp__vision3d_poll",
+      "mcp__maya-mcp__vision3d_download"
     ]
   }
 }
