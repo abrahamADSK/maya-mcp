@@ -630,6 +630,47 @@ class Vision3DDownloadInput(BaseModel):
     )
 
 
+# ── Tools: comprobar disponibilidad de Vision3D ─────────────────────────
+
+
+@mcp.tool(name="vision3d_health")
+async def vision3d_health(ctx: Context) -> str:
+    """Comprueba si el servidor Vision3D está disponible y responde.
+
+    Retorna información de GPU, modelos disponibles, y si text-to-3D está activo.
+    Llama a este tool ANTES de ofrecer opciones de generación IA al usuario,
+    para saber si Vision3D está encendido y accesible.
+    """
+    try:
+        client = _get_http_client()
+        await ctx.info("Comprobando disponibilidad de Vision3D...")
+        resp = await client.get("/api/health", timeout=5.0)
+
+        if resp.status_code != 200:
+            return json.dumps({
+                "available": False,
+                "error": f"Vision3D respondió con HTTP {resp.status_code}",
+                "url": _GPU_API_URL,
+            })
+
+        health = resp.json()
+        return json.dumps({
+            "available": True,
+            "url": _GPU_API_URL,
+            "gpu": health.get("gpu", "unknown"),
+            "vram_gb": health.get("vram_gb"),
+            "models": health.get("models", []),
+            "text_to_3d": health.get("text_to_3d", "unknown"),
+        }, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "available": False,
+            "error": f"No se pudo conectar a Vision3D ({_GPU_API_URL}): {e}",
+            "hint": "Verifica que el servidor Vision3D está encendido y accesible desde esta red.",
+        })
+
+
 # ── Tools: iniciar jobs (non-blocking) ───────────────────────────────────
 
 
