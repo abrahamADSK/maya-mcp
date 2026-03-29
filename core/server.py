@@ -529,7 +529,14 @@ async def _download_file(job_id: str, filename: str, dest: Path) -> bool:
 
 
 class ShapeGenerateInput(BaseModel):
-    """Parámetros para la generación de geometría 3D en el servidor GPU remoto."""
+    """Parámetros para la generación de geometría 3D en el servidor GPU remoto.
+
+    Presets de calidad (si no se especifica preset, se usan los valores individuales):
+      - low:    turbo, octree 256, 10 steps, 10k faces   (~1 min, preview rápido)
+      - medium: turbo, octree 384, 20 steps, 50k faces   (~2 min, uso general)
+      - high:   full,  octree 384, 30 steps, 150k faces  (~8 min, detallado)
+      - ultra:  full,  octree 512, 50 steps, sin límite   (~12 min, máximo detalle)
+    """
     model_config = ConfigDict(str_strip_whitespace=True)
 
     image_path: str = Field(
@@ -541,10 +548,39 @@ class ShapeGenerateInput(BaseModel):
         default="0",
         description="Subdirectorio de salida dentro de reference/3d_output/ (ej: '0', 'asset_1478')"
     )
+    preset: str = Field(
+        default="",
+        description="Preset de calidad: 'low', 'medium', 'high', 'ultra'. "
+                    "Si se especifica, rellena model/octree/steps/faces automáticamente. "
+                    "Los parámetros individuales que se pasen sobreescriben al preset."
+    )
+    model: str = Field(
+        default="",
+        description="Modelo de shape: 'turbo' (~1 min, bueno para formas simples) "
+                    "o 'full' (~5 min, mejor detalle en picos, dientes, etc.). "
+                    "Vacío = usa el del preset o 'turbo' por defecto."
+    )
+    octree_resolution: int = Field(
+        default=0,
+        description="Resolución del octree para marching cubes (256/384/512). "
+                    "Mayor = más detalle geométrico. 0 = usa el del preset."
+    )
+    num_inference_steps: int = Field(
+        default=0,
+        description="Pasos de inferencia. turbo: 5-10, full: 30-50. "
+                    "0 = usa el del preset."
+    )
+    target_faces: int = Field(
+        default=50000,
+        description="Número de caras objetivo tras decimación. 0 = sin decimación (máximo detalle)."
+    )
 
 
 class ShapeTextInput(BaseModel):
-    """Parámetros para la generación de geometría 3D desde texto (text-to-3D)."""
+    """Parámetros para la generación de geometría 3D desde texto (text-to-3D).
+
+    Presets de calidad: low, medium, high, ultra (ver ShapeGenerateInput).
+    """
     model_config = ConfigDict(str_strip_whitespace=True)
 
     text_prompt: str = Field(
@@ -555,6 +591,26 @@ class ShapeTextInput(BaseModel):
     output_subdir: str = Field(
         default="0",
         description="Subdirectorio de salida dentro de reference/3d_output/ (ej: '0', 'mailbox_0')"
+    )
+    preset: str = Field(
+        default="",
+        description="Preset de calidad: 'low', 'medium', 'high', 'ultra'."
+    )
+    model: str = Field(
+        default="",
+        description="Modelo de shape: 'turbo' o 'full'. Vacío = usa el del preset."
+    )
+    octree_resolution: int = Field(
+        default=0,
+        description="Resolución del octree (256/384/512). 0 = usa el del preset."
+    )
+    num_inference_steps: int = Field(
+        default=0,
+        description="Pasos de inferencia. 0 = usa el del preset."
+    )
+    target_faces: int = Field(
+        default=0,
+        description="Caras objetivo. 0 = sin decimación."
     )
 
 
@@ -607,16 +663,26 @@ async def shape_generate_remote(params: ShapeGenerateInput) -> str:
         client = _get_http_client()
 
         # ── Paso 1: Subir imagen al GPU server (pipeline completo) ────────
+        quality_desc = params.preset or f"model={params.model or 'turbo'}"
         log(f"[1/4] Subiendo imagen a GPU server ({_GPU_API_URL})...")
-        log(f"       Pipeline: shape + decimación + texturizado")
+        log(f"       Pipeline: shape + decimación + texturizado ({quality_desc})")
+        form_data = {
+            "output_subdir": params.output_subdir,
+            "target_faces": str(params.target_faces),
+        }
+        if params.preset:
+            form_data["preset"] = params.preset
+        if params.model:
+            form_data["model"] = params.model
+        if params.octree_resolution > 0:
+            form_data["octree_resolution"] = str(params.octree_resolution)
+        if params.num_inference_steps > 0:
+            form_data["num_inference_steps"] = str(params.num_inference_steps)
         with open(str(image_local), "rb") as f:
             resp = await client.post(
                 "/api/generate-full",
                 files={"image": (image_local.name, f, "image/png")},
-                data={
-                    "output_subdir": params.output_subdir,
-                    "target_faces": "50000",
-                },
+                data=form_data,
             )
 
         if resp.status_code != 200:
@@ -684,13 +750,25 @@ async def shape_generate_text(params: ShapeTextInput) -> str:
         client = _get_http_client()
 
         # ── Paso 1: Enviar prompt al GPU server ──────────────────────────
-        log(f"[1/3] Enviando prompt a GPU server: '{params.text_prompt}'...")
+        quality_desc = params.preset or f"model={params.model or 'turbo'}"
+        log(f"[1/3] Enviando prompt a GPU server: '{params.text_prompt}' ({quality_desc})...")
+        form_data = {
+            "text_prompt": params.text_prompt,
+            "output_subdir": params.output_subdir,
+        }
+        if params.preset:
+            form_data["preset"] = params.preset
+        if params.model:
+            form_data["model"] = params.model
+        if params.octree_resolution > 0:
+            form_data["octree_resolution"] = str(params.octree_resolution)
+        if params.num_inference_steps > 0:
+            form_data["num_inference_steps"] = str(params.num_inference_steps)
+        if params.target_faces > 0:
+            form_data["target_faces"] = str(params.target_faces)
         resp = await client.post(
             "/api/generate-text",
-            data={
-                "text_prompt": params.text_prompt,
-                "output_subdir": params.output_subdir,
-            },
+            data=form_data,
         )
 
         if resp.status_code != 200:
