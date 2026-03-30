@@ -43,16 +43,9 @@ This project connects three systems:
 ```
 maya-mcp/
 ├── core/                          # MCP Server (Claude ↔ Maya bridge)
-│   ├── server.py                  # FastMCP server — 11 Maya tools
+│   ├── server.py                  # FastMCP server — Maya + Vision3D tools
 │   ├── maya_bridge.py             # TCP socket bridge → Maya Command Port :7001
 │   └── requirements.txt           # fastmcp, pydantic
-│
-├── vision/                        # Image → 3D pipeline scripts
-│   ├── pipeline_runner.py         # Orchestrator — SSH to GPU, runs shape + texture
-│   ├── shape_remote.py            # Shape generation (Hunyuan3D DiT) — runs on GPU server
-│   ├── texture_remote.py          # Texture painting (Hunyuan3D Paint) — runs on GPU server
-│   ├── maya_import_hires.py       # Maya: import mesh_uv.obj, scale, apply texture
-│   └── maya_fix_position_smooth.py # Maya: ground alignment + smooth subdivision
 │
 ├── reference/                     # Input images and pipeline outputs (git-ignored)
 │   ├── reference.jpg              # Default reference image
@@ -174,7 +167,7 @@ snapshot_download('tencent/Hunyuan3D-2', allow_patterns='hunyuan3d-paint-v2-0-tu
 "
 
 # 3. Copy pipeline scripts to the server
-scp vision/shape_remote.py vision/texture_remote.py user@gpu-server:/opt/ai-studio/vision/
+## Vision3D runs as an independent server — see the vision3d repo for setup.
 ```
 
 ---
@@ -420,10 +413,10 @@ The texture extraction fallback may not have triggered. Use `textured.glb` direc
 Freeze transformations on your base mesh before running the pipeline: `Modify → Freeze Transformations` in Maya.
 
 **GPU API connection refused / timeout**
-Check that both services are running on the GPU server: `systemctl status gpu-server caddy`. Verify from Mac: `curl -k $GPU_API_URL/api/health`. Common causes: wrong `GPU_API_URL` hostname, firewall blocking port 9443, or Caddy not running.
+Check that Vision3D is running on the GPU server: `systemctl status vision3d`. Verify from Mac: `curl $GPU_API_URL/api/health`. Common causes: wrong `GPU_API_URL` hostname, firewall blocking port 8000, or Vision3D service not started.
 
 **401 Unauthorized from GPU API**
-The API key in `GPU_API_KEY` doesn't match the one on the server. Check the server's key: `cat ~/ai-studio/vision/.api_key` and update `~/.claude.json` accordingly.
+The API key in `GPU_API_KEY` doesn't match the one on the server. Check the server's key and update `~/.claude.json` accordingly.
 
 **Maya Command Port not responding**
 Confirm port 7001 is open: in Maya's Script Editor run `cmds.commandPort(':7001', query=True)`. If `False`, run the `open_command_port()` snippet above.
