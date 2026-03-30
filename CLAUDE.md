@@ -14,7 +14,7 @@
    - Usa `maya_bridge.py` (socket bridge) para ejecutar comandos MEL/Python
 
 2. **Orquestar Vision3D** (servidor GPU remoto)
-   - Se comunica via **REST API HTTP** con Vision3D (LAN directa, sin Caddy/HTTPS)
+   - Se comunica via **REST API HTTP** con Vision3D (LAN directa, puerto 8000)
    - Soporta generación 3D desde imagen (shape generation + texturizado)
    - Soporta generación desde texto (text-to-3D)
    - Soporta texturizado de meshes existentes
@@ -55,12 +55,12 @@
 MAYA_HOST=localhost          # Host donde corre Maya (default: localhost)
 MAYA_PORT=7001              # Puerto Command Port (default: 7001)
 
-# Vision3D (GPU remoto — HTTP directo, sin Caddy)
+# Vision3D (GPU remoto — HTTP directo, puerto 8000)
 GPU_API_URL=http://glorfindel:8000       # HTTP endpoint del GPU server
 GPU_API_KEY=                              # Dejar vacío si acceso abierto en LAN
 ```
 
-**Nota**: La variable `GPU_API_URL` también se configura en `~/.claude.json` vía `claude mcp add`. No se necesita Caddy ni HTTPS para acceso LAN.
+**Nota**: La variable `GPU_API_URL` también se configura en `~/.claude.json` vía `claude mcp add`.
 
 ### Requisitos
 - **macOS Ventura+** con Apple Silicon (soporte Intel)
@@ -267,7 +267,7 @@ class Vision3DDownloadInput(BaseModel):
 
 ### Los tres repos (maya-mcp, vision3d, fpt-mcp)
 - Ubicados en `~/Claude_projects/` en el Mac local
-- Se comunican vía HTTP REST API (no SSH directo, no HTTPS/Caddy)
+- Se comunican vía HTTP REST API (no SSH directo)
 - **Importante**: NUNCA mezclar comandos de Mac y glorfindel en el mismo bloque de código
 
 ---
