@@ -14,7 +14,7 @@
    - Usa `maya_bridge.py` (socket bridge) para ejecutar comandos MEL/Python
 
 2. **Orquestar Vision3D** (servidor GPU remoto)
-   - Se comunica via **REST API HTTPS** con Vision3D
+   - Se comunica via **REST API HTTP** con Vision3D (LAN directa, sin Caddy/HTTPS)
    - Soporta generación 3D desde imagen (shape generation + texturizado)
    - Soporta generación desde texto (text-to-3D)
    - Soporta texturizado de meshes existentes
@@ -30,7 +30,7 @@
 ├────────────────────────────────────────┤
 │  Maya Bridge (TCP)     Vision3D REST   │
 └────┬───────────────────────┬──────────┘
-     │ :7001 Command Port    │ HTTPS
+     │ :7001 Command Port    │ HTTP :8000
      │                       │
 ┌────▼──────────────┐   ┌───▼──────────────────┐
 │ Autodesk Maya     │   │ Vision3D GPU Server  │
@@ -44,7 +44,7 @@
 ## 2. Entorno de Ejecución
 
 ### Ubicación
-- **Repositorio**: `~/Developer/Claude_projects/maya-mcp/` (Mac local)
+- **Repositorio**: `~/Claude_projects/maya-mcp-project/` (Mac local)
 - **Servidor MCP**: corre con `python core/server.py` (stdio transport estándar MCP)
 - **Configuración MCP**: `~/.claude.json` (vía `claude mcp add -s user`)
 - **Permisos de tools**: `~/.claude/settings.json`
@@ -54,17 +54,13 @@
 # Maya Local
 MAYA_HOST=localhost          # Host donde corre Maya (default: localhost)
 MAYA_PORT=7001              # Puerto Command Port (default: 7001)
-MAYA_APP="Maya"             # Nombre app macOS (default: "Maya")
-MAYA_BASE_DIR=~/Developer/Maya_projects  # Raíz para outputs 3D
 
-# Vision3D (GPU remoto)
-GPU_API_URL=https://glorfindel:9443     # HTTPS endpoint del GPU server
-GPU_API_KEY=<api-key>                    # API key para autenticación
-GPU_VERIFY_TLS=false                     # Desactivar SSL en dev (default: false)
-
-# Output
-# Directorio base para outputs 3D: ~/Developer/Maya_projects/reference/3d_output/
+# Vision3D (GPU remoto — HTTP directo, sin Caddy)
+GPU_API_URL=http://glorfindel:8000       # HTTP endpoint del GPU server
+GPU_API_KEY=                              # Dejar vacío si acceso abierto en LAN
 ```
+
+**Nota**: La variable `GPU_API_URL` también se configura en `~/.claude.json` vía `claude mcp add`. No se necesita Caddy ni HTTPS para acceso LAN.
 
 ### Requisitos
 - **macOS Ventura+** con Apple Silicon (soporte Intel)
@@ -256,20 +252,22 @@ class Vision3DDownloadInput(BaseModel):
 ## 7. Relación con Otros Proyectos
 
 ### vision3d (GitHub: abrahamADSK/vision3d)
-- **Ubicación**: Servidor GPU remoto (`glorfindel`)
+- **Ubicación**: Servidor GPU remoto (`glorfindel`), directorio `/home/flame/ai-studio/vision3d/`
 - **Función**: Genera formas 3D y texturas vía Hunyuan3D-2
-- **Interfaz**: REST API HTTPS
+- **Interfaz**: REST API HTTP (puerto 8000)
 - **Consumido por**: `maya-mcp` vía `shape_generate_remote`, `shape_generate_text`, `texture_mesh_remote`
+- **Text-to-3D**: Pipeline completo de 3 fases (HunyuanDiT → rembg → shape → paint)
+- **Web UI**: `http://glorfindel:8000/` con tabs Image→3D, Text→3D + visor 3D orbit
 
 ### fpt-mcp
-- **Ubicación**: `~/Developer/Claude_projects/fpt-mcp/`
+- **Ubicación**: `~/Claude_projects/fpt-mcp/`
 - **Función**: Consola Qt que orquesta `maya-mcp` + otras herramientas vía Claude Code CLI
 - **System prompt**: Define el workflow completo (qué herramientas llamar, cuándo, en qué orden)
 - **Relación**: `fpt-mcp` es el "director", `maya-mcp` es una "pieza de la orquesta"
 
 ### Los tres repos (maya-mcp, vision3d, fpt-mcp)
-- Ubicados en `~/Developer/Claude_projects/` en el Mac local
-- Se comunican vía HTTPS + REST API (no SSH directo)
+- Ubicados en `~/Claude_projects/` en el Mac local
+- Se comunican vía HTTP REST API (no SSH directo, no HTTPS/Caddy)
 - **Importante**: NUNCA mezclar comandos de Mac y glorfindel en el mismo bloque de código
 
 ---
@@ -321,7 +319,7 @@ class Vision3DDownloadInput(BaseModel):
 
 ## 9. Checklist de Configuración Inicial
 
-- [ ] Clonar `maya-mcp` en `~/Developer/Claude_projects/maya-mcp/`
+- [ ] Clonar `maya-mcp` en `~/Claude_projects/maya-mcp-project/`
 - [ ] Copiar `.env.example` → `.env` y configurar variables
 - [ ] Instalar dependencias: `pip install -r core/requirements.txt`
 - [ ] Verificar que Maya tiene Command Port en `userSetup.py`

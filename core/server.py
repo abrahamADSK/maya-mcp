@@ -12,8 +12,8 @@ Uso:
 Variables de entorno (ver .env.example):
     MAYA_HOST          — host donde corre Maya (default: localhost)
     MAYA_PORT          — puerto Command Port de Maya (default: 7001)
-    GPU_API_URL        — URL del servidor GPU API (ej: https://your-gpu-host:9443)
-    GPU_API_KEY        — API key para autenticación con el servidor GPU
+    GPU_API_URL        — URL del servidor GPU API (ej: http://your-gpu-host:8000)
+    GPU_API_KEY        — API key para autenticación (vacío si acceso abierto en LAN)
 """
 
 import asyncio
