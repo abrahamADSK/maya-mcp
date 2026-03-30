@@ -256,7 +256,7 @@ class Vision3DDownloadInput(BaseModel):
 - **Función**: Genera formas 3D y texturas vía Hunyuan3D-2
 - **Interfaz**: REST API HTTP (puerto 8000)
 - **Consumido por**: `maya-mcp` vía `shape_generate_remote`, `shape_generate_text`, `texture_mesh_remote`
-- **Text-to-3D**: Pipeline completo de 3 fases (Flux.1-schnell → rembg → shape → paint)
+- **Text-to-3D**: Pipeline completo de 3 fases (SDXL Turbo → rembg → shape → paint)
 - **Web UI**: `http://glorfindel:8000/` con tabs Image→3D, Text→3D + visor 3D orbit
 
 ### fpt-mcp
