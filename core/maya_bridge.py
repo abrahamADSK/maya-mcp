@@ -4,6 +4,12 @@ maya_bridge.py — Capa de comunicación con Maya via Command Port.
 Gestiona la conexión TCP con Maya, envío de comandos MEL/Python,
 y recepción de resultados. Es el módulo compartido que usan todos
 los tools del MCP server.
+
+Features:
+  - Patrón de doble conexión Palmer (execute + read result)
+  - Namespace scoping: todas las variables internas usan prefijo _mcp_
+  - Undo chunk wrapper: agrupa operaciones en un solo Ctrl+Z
+  - Batch execution: múltiples bloques de código en una sola conexión
 """
 
 import socket
@@ -106,7 +112,9 @@ class MayaBridge:
         import tempfile
         import os
 
-        # Envolver el código del usuario para capturar resultado
+        # Envolver el código del usuario para capturar resultado.
+        # Todas las variables internas usan prefijo _mcp_ para evitar
+        # colisiones con variables del usuario en el Script Editor.
         wrapper = (
             "import maya.cmds as cmds\n"
             "import json\n"
@@ -187,6 +195,84 @@ class MayaBridge:
             except json.JSONDecodeError:
                 return raw
         return raw
+
+    def execute_in_undo(self, code: str, chunk_name: str = "mcp_operation",
+                        as_json: bool = False) -> Any:
+        """
+        Ejecuta código Python en Maya envuelto en un undo chunk.
+
+        Todas las operaciones dentro del chunk se agrupan en un solo
+        Ctrl+Z, para que el usuario pueda deshacer todo lo que hizo
+        un tool con un solo undo.
+
+        Args:
+            code: Código Python a ejecutar.
+            chunk_name: Nombre descriptivo del chunk (visible en undo history).
+            as_json: Si True, parsear resultado como JSON.
+        """
+        wrapped = (
+            "import maya.cmds as cmds\n"
+            f"cmds.undoInfo(openChunk=True, chunkName='{chunk_name}')\n"
+            "try:\n"
+        )
+        # Indent user code inside the try block
+        for line in code.split("\n"):
+            wrapped += f"    {line}\n"
+        wrapped += (
+            "except Exception as _mcp_undo_err:\n"
+            "    result = {'error': str(_mcp_undo_err)}\n"
+            "finally:\n"
+            "    cmds.undoInfo(closeChunk=True)\n"
+        )
+        return self.execute(wrapped, as_json=as_json)
+
+    def execute_batch(self, code_blocks: list, chunk_name: str = "mcp_batch") -> list:
+        """
+        Ejecuta múltiples bloques de código en una sola conexión TCP.
+
+        Reduce latencia significativamente cuando hay muchas operaciones
+        seguidas (ej: crear 10 objetos, importar + ajustar + material).
+
+        Todos los bloques se agrupan en un solo undo chunk.
+
+        Args:
+            code_blocks: Lista de strings de código Python.
+            chunk_name: Nombre del undo chunk.
+
+        Returns:
+            Lista de resultados (uno por bloque).
+        """
+        if not code_blocks:
+            return []
+
+        # Build a single mega-script that captures results per block
+        parts = [
+            "import maya.cmds as cmds",
+            "import json",
+            f"cmds.undoInfo(openChunk=True, chunkName='{chunk_name}')",
+            "_mcp_batch_results = []",
+            "try:",
+        ]
+        for i, block in enumerate(code_blocks):
+            parts.append(f"    # --- Block {i} ---")
+            parts.append("    try:")
+            for line in block.split("\n"):
+                if line.strip():
+                    parts.append(f"        {line}")
+            parts.append(f"        _mcp_batch_results.append(result if 'result' in dir() else 'OK')")
+            parts.append("    except Exception as _mcp_blk_err:")
+            parts.append(f"        _mcp_batch_results.append({{'error': str(_mcp_blk_err)}})")
+        parts.append("finally:")
+        parts.append("    cmds.undoInfo(closeChunk=True)")
+        parts.append("result = _mcp_batch_results")
+
+        combined = "\n".join(parts)
+        raw = self.execute(combined)
+
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return [raw]
 
     def ping(self) -> dict:
         """

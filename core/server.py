@@ -463,6 +463,344 @@ else:
 
 
 # ─────────────────────────────────────────────
+# Nuevos modelos de entrada (P2-P5, A-E)
+# ─────────────────────────────────────────────
+
+class MeshOperationType(str, Enum):
+    EXTRUDE = "extrude"
+    BEVEL = "bevel"
+    BOOLEAN_UNION = "boolean_union"
+    BOOLEAN_DIFFERENCE = "boolean_difference"
+    BOOLEAN_INTERSECTION = "boolean_intersection"
+    COMBINE = "combine"
+    SEPARATE = "separate"
+    SMOOTH = "smooth"
+
+
+class MeshOperationInput(BaseModel):
+    """Parámetros para operaciones de mesh."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    object_name: str = Field(..., description="Nombre del objeto mesh")
+    operation: MeshOperationType = Field(..., description="Tipo de operación")
+    second_object: Optional[str] = Field(default=None, description="Segundo objeto (requerido para boolean y combine)")
+    faces: Optional[str] = Field(default=None, description="Componentes de cara (ej: 'pCube1.f[0:3]') para extrude/bevel")
+    offset: float = Field(default=0.2, description="Offset/distancia para extrude o bevel", ge=0.0)
+    divisions: int = Field(default=1, description="Divisiones para smooth o segments para bevel", ge=1, le=10)
+
+
+class KeyframeInput(BaseModel):
+    """Parámetros para crear keyframes de animación."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    object_name: str = Field(..., description="Nombre del objeto a animar")
+    attribute: str = Field(default="translateX", description="Atributo a animar (translateX/Y/Z, rotateX/Y/Z, scaleX/Y/Z, visibility)")
+    value: float = Field(..., description="Valor del keyframe")
+    frame: float = Field(..., description="Frame en el que insertar el keyframe")
+    in_tangent: str = Field(default="auto", description="Tangente de entrada: auto, linear, flat, spline, step")
+    out_tangent: str = Field(default="auto", description="Tangente de salida: auto, linear, flat, spline, step")
+
+
+class ImportFileInput(BaseModel):
+    """Parámetros para importar archivos 3D."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    file_path: str = Field(..., description="Ruta absoluta al archivo a importar (.obj, .fbx, .glb, .abc, .ma, .mb)")
+    namespace: Optional[str] = Field(default=None, description="Namespace para evitar colisiones de nombres")
+    group_under: Optional[str] = Field(default=None, description="Nombre del grupo padre (se crea si no existe)")
+    scale_factor: Optional[float] = Field(default=None, description="Factor de escala al importar (ej: 0.01 para cm→m)")
+
+
+class ViewportCaptureInput(BaseModel):
+    """Parámetros para capturar el viewport de Maya."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    output_path: str = Field(default="/tmp/maya_viewport.png", description="Ruta de salida para la imagen (.png/.jpg)")
+    width: int = Field(default=1920, description="Ancho de la captura en píxeles", ge=100, le=8192)
+    height: int = Field(default=1080, description="Alto de la captura en píxeles", ge=100, le=8192)
+    camera: Optional[str] = Field(default=None, description="Cámara a usar (default: panel activo)")
+    frame: Optional[float] = Field(default=None, description="Frame a capturar (default: frame actual)")
+
+
+class ShelfButtonInput(BaseModel):
+    """Parámetros para crear un botón en la shelf de Maya."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    label: str = Field(..., description="Etiqueta del botón (texto corto)")
+    command: str = Field(..., description="Código Python que ejecuta el botón al hacer click")
+    tooltip: str = Field(default="", description="Texto de ayuda al pasar el ratón")
+    shelf_name: str = Field(default="Custom", description="Nombre de la shelf donde crear el botón")
+    icon_label: str = Field(default="MCP", description="Texto superpuesto en el icono (max 4 chars)")
+
+
+# ─────────────────────────────────────────────
+# Nuevos Tools (P2-P6, A-E)
+# ─────────────────────────────────────────────
+
+
+@mcp.tool(name="maya_mesh_operation")
+async def maya_mesh_operation(params: MeshOperationInput) -> str:
+    """Ejecuta operaciones de mesh: extrude, bevel, boolean (union/difference/intersection), combine, separate, smooth."""
+    try:
+        op = params.operation.value
+
+        if op == "extrude":
+            faces = params.faces or f"{params.object_name}.f[:]"
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_extrude')
+try:
+    result_faces = cmds.polyExtrudeFacet('{faces}', localTranslateZ={params.offset}, divisions={params.divisions})
+    result = {{'operation': 'extrude', 'faces': '{faces}', 'offset': {params.offset}, 'result': str(result_faces)}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        elif op == "bevel":
+            faces = params.faces or f"{params.object_name}.e[:]"
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_bevel')
+try:
+    result_edges = cmds.polyBevel3('{faces}', offset={params.offset}, segments={params.divisions})
+    result = {{'operation': 'bevel', 'target': '{faces}', 'offset': {params.offset}, 'result': str(result_edges)}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        elif op.startswith("boolean_"):
+            if not params.second_object:
+                return json.dumps({"error": "Boolean requiere 'second_object'"})
+            bool_op = {"boolean_union": 1, "boolean_difference": 2, "boolean_intersection": 3}[op]
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_boolean')
+try:
+    result_node = cmds.polyCBoolOp('{params.object_name}', '{params.second_object}', op={bool_op}, ch=False)
+    result = {{'operation': '{op}', 'objects': ['{params.object_name}', '{params.second_object}'], 'result': str(result_node[0])}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        elif op == "combine":
+            if not params.second_object:
+                return json.dumps({"error": "Combine requiere 'second_object'"})
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_combine')
+try:
+    combined = cmds.polyUnite('{params.object_name}', '{params.second_object}', ch=False)
+    result = {{'operation': 'combine', 'result': str(combined[0])}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        elif op == "separate":
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_separate')
+try:
+    separated = cmds.polySeparate('{params.object_name}', ch=False)
+    result = {{'operation': 'separate', 'parts': [str(s) for s in separated]}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        elif op == "smooth":
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_smooth')
+try:
+    cmds.polySmooth('{params.object_name}', divisions={params.divisions})
+    verts = cmds.polyEvaluate('{params.object_name}', vertex=True)
+    faces = cmds.polyEvaluate('{params.object_name}', face=True)
+    result = {{'operation': 'smooth', 'object': '{params.object_name}', 'divisions': {params.divisions}, 'vertices': verts, 'faces': faces}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        else:
+            return json.dumps({"error": f"Operación desconocida: {op}"})
+
+        return await asyncio.to_thread(bridge.execute, code)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(name="maya_set_keyframe")
+async def maya_set_keyframe(params: KeyframeInput) -> str:
+    """Crea un keyframe de animación en un objeto. Permite animar translate, rotate, scale y visibility por frame."""
+    try:
+        code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_keyframe')
+try:
+    cmds.setKeyframe('{params.object_name}', attribute='{params.attribute}',
+                     value={params.value}, time={params.frame},
+                     inTangentType='{params.in_tangent}', outTangentType='{params.out_tangent}')
+    result = {{'object': '{params.object_name}', 'attribute': '{params.attribute}',
+              'value': {params.value}, 'frame': {params.frame}}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        return await asyncio.to_thread(bridge.execute, code)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(name="maya_import_file")
+async def maya_import_file(params: ImportFileInput) -> str:
+    """Importa archivos 3D en Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. Con opciones de namespace, grupo padre y escala."""
+    try:
+        ext = params.file_path.rsplit(".", 1)[-1].lower() if "." in params.file_path else ""
+        ns_opt = f", namespace='{params.namespace}'" if params.namespace else ""
+        group_code = ""
+        if params.group_under:
+            group_code = f"""
+if not cmds.objExists('{params.group_under}'):
+    cmds.group(empty=True, name='{params.group_under}')
+"""
+        scale_code = ""
+        if params.scale_factor:
+            scale_code = f"""
+for _mcp_obj in _mcp_imported:
+    if cmds.objectType(_mcp_obj) == 'transform':
+        cmds.scale({params.scale_factor}, {params.scale_factor}, {params.scale_factor}, _mcp_obj)
+"""
+        # Build file type string
+        file_types = {
+            "obj": "OBJ", "fbx": "FBX", "abc": "Alembic",
+            "glb": "glTF", "gltf": "glTF", "ma": "mayaAscii", "mb": "mayaBinary",
+        }
+        ftype = file_types.get(ext, "")
+        type_opt = f", type='{ftype}'" if ftype else ""
+
+        code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_import')
+try:
+    _mcp_before = set(cmds.ls(transforms=True))
+    {group_code}
+    cmds.file('{params.file_path}', i=True, ignoreVersion=True,
+              mergeNamespacesOnClash=False, returnNewNodes=True{ns_opt}{type_opt})
+    _mcp_after = set(cmds.ls(transforms=True))
+    _mcp_imported = list(_mcp_after - _mcp_before)
+    {scale_code}
+    result = {{'imported': len(_mcp_imported), 'objects': _mcp_imported[:20],
+              'file': '{params.file_path}'}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+        return await asyncio.to_thread(bridge.execute, code)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(name="maya_viewport_capture")
+async def maya_viewport_capture(params: ViewportCaptureInput) -> str:
+    """Captura el viewport de Maya como imagen PNG/JPG. No hace render Arnold — es un grab instantáneo del viewport (<1s). Útil para verificar visualmente el estado de la escena."""
+    try:
+        camera_opt = ""
+        if params.camera:
+            camera_opt = f"""
+# Set camera for the active panel
+_mcp_panel = cmds.getPanel(withFocus=True)
+if cmds.getPanel(typeOf=_mcp_panel) == 'modelPanel':
+    cmds.modelPanel(_mcp_panel, edit=True, camera='{params.camera}')
+"""
+        frame_opt = f", frame=[{params.frame}]" if params.frame is not None else ""
+        fmt = "png" if params.output_path.endswith(".png") else "jpg"
+
+        code = f"""
+import maya.cmds as cmds
+import os
+cmds.undoInfo(stateWithoutFlush=False)
+try:
+    {camera_opt}
+    _mcp_img = cmds.playblast(
+        completeFilename='{params.output_path}',
+        format='image', compression='{fmt}',
+        width={params.width}, height={params.height},
+        showOrnaments=False, viewer=False,
+        offScreen=True, percent=100{frame_opt}
+    )
+    _mcp_size = os.path.getsize('{params.output_path}') // 1024
+    result = {{'captured': '{params.output_path}', 'size_kb': _mcp_size,
+              'resolution': '{params.width}x{params.height}'}}
+finally:
+    cmds.undoInfo(stateWithoutFlush=True)
+"""
+        return await asyncio.to_thread(bridge.execute, code)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(name="maya_scene_snapshot")
+async def maya_scene_snapshot() -> str:
+    """Devuelve un snapshot completo del estado de la escena: archivo, modificada, frame, objetos por tipo, renderer, plugins, resolución de render. Útil para tomar decisiones informadas antes de operaciones."""
+    try:
+        code = """
+import maya.cmds as cmds
+_mcp_meshes = cmds.ls(type='mesh') or []
+_mcp_lights = cmds.ls(lights=True) or []
+_mcp_cameras = cmds.ls(cameras=True) or []
+_mcp_curves = cmds.ls(type='nurbsCurve') or []
+_mcp_transforms = cmds.ls(transforms=True) or []
+_mcp_plugins = cmds.pluginInfo(query=True, listPlugins=True) or []
+
+result = {
+    'file': cmds.file(q=True, sceneName=True) or 'untitled',
+    'modified': cmds.file(q=True, modified=True),
+    'current_frame': cmds.currentTime(q=True),
+    'frame_range': [cmds.playbackOptions(q=True, min=True), cmds.playbackOptions(q=True, max=True)],
+    'renderer': cmds.getAttr('defaultRenderGlobals.currentRenderer'),
+    'render_resolution': [
+        cmds.getAttr('defaultResolution.width'),
+        cmds.getAttr('defaultResolution.height')
+    ],
+    'counts': {
+        'transforms': len(_mcp_transforms),
+        'meshes': len(_mcp_meshes),
+        'lights': len(_mcp_lights),
+        'cameras': len(_mcp_cameras),
+        'curves': len(_mcp_curves),
+    },
+    'loaded_plugins': _mcp_plugins[:20],
+    'up_axis': cmds.upAxis(q=True, axis=True),
+    'units': cmds.currentUnit(q=True, linear=True),
+}
+"""
+        return await asyncio.to_thread(bridge.execute, code)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(name="maya_shelf_button")
+async def maya_shelf_button(params: ShelfButtonInput) -> str:
+    """Crea un botón personalizado en la shelf de Maya con código Python asociado. Permite que Claude deje herramientas reutilizables en la interfaz."""
+    try:
+        # Escape the command for embedding in Python string
+        safe_command = params.command.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        code = f"""
+import maya.cmds as cmds
+import maya.mel as mel
+
+# Crear o encontrar la shelf
+_mcp_shelf = '{params.shelf_name}'
+if not cmds.shelfLayout(_mcp_shelf, exists=True):
+    mel.eval('addNewShelfTab "{params.shelf_name}"')
+
+_mcp_btn = cmds.shelfButton(
+    parent=_mcp_shelf,
+    label='{params.label}',
+    annotation='{params.tooltip}',
+    imageOverlayLabel='{params.icon_label[:4]}',
+    image='pythonFamily.png',
+    command='{safe_command}',
+    sourceType='python'
+)
+result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': '{params.label}'}}
+"""
+        return await asyncio.to_thread(bridge.execute, code)
+    except Exception as e:
+        return _handle_error(e)
+
+
+# ─────────────────────────────────────────────
 # GPU remoto — Vision3D API REST (Hunyuan3D-2)
 # ─────────────────────────────────────────────
 

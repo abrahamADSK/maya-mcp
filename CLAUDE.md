@@ -261,9 +261,37 @@ class Vision3DDownloadInput(BaseModel):
 
 ### fpt-mcp
 - **Ubicación**: `~/Claude_projects/fpt-mcp/`
-- **Función**: Consola Qt que orquesta `maya-mcp` + otras herramientas vía Claude Code CLI
+- **Función**: ShotGrid API + Toolkit publish + Consola Qt que orquesta `maya-mcp` + otras herramientas vía Claude Code CLI
 - **System prompt**: Define el workflow completo (qué herramientas llamar, cuándo, en qué orden)
 - **Relación**: `fpt-mcp` es el "director", `maya-mcp` es una "pieza de la orquesta"
+- **Toolkit**: `tk_config.py` descubre dinámicamente la PipelineConfiguration del proyecto para resolver publish paths. Soporta dos modos: discovery automático (Advanced Setup) y fallback (templates estándar tk-config-default2)
+
+### Pipeline de publicación (cross-MCP: maya-mcp + fpt-mcp)
+
+Flujo típico para publicar geometría generada por Vision3D:
+
+```
+1. fpt-mcp: sg_find → buscar Asset y referencias en ShotGrid
+2. fpt-mcp: sg_download → descargar imagen de referencia
+3. maya-mcp: shape_generate_remote → generar 3D en Vision3D (GPU)
+4. maya-mcp: vision3d_poll → monitorizar progreso
+5. maya-mcp: vision3d_download → descargar GLB, OBJ, texturas
+6. maya-mcp: maya_execute_python → importar en Maya, normalizar geometría
+7. maya-mcp: maya_save_scene → guardar escena .ma/.mb
+8. fpt-mcp: tk_publish → resolver path Toolkit + copiar + registrar PublishedFile
+```
+
+**Tipos de publicación soportados** (fase prototipo):
+
+| Tipo | Template Asset | Template Shot |
+|------|---------------|---------------|
+| Maya Scene | `maya_asset_publish` | `maya_shot_publish` |
+| USD Scene | `usd_asset_publish` | `usd_shot_publish` |
+| FBX Model | `fbx_asset_publish` | `fbx_shot_publish` |
+| Texture | `texture_asset_publish` | — |
+| Review MOV | `review_asset_mov` | `review_shot_mov` |
+
+Los templates de USD, FBX, textures y review son "derived templates" inyectados por `tk_config.py`. Si el proyecto tiene config custom con estos templates ya definidos, se usan los del proyecto.
 
 ### Los tres repos (maya-mcp, vision3d, fpt-mcp)
 - Ubicados en `~/Claude_projects/` en el Mac local
