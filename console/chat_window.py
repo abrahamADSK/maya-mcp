@@ -238,7 +238,7 @@ class ChatWindow(QMainWindow):
         header_layout.addWidget(title)
 
         # Context badges
-        ctx_text = "Sin contexto"
+        ctx_text = "No context"
         ctx_active = False
         if self._context.get("entity_type") and self._context.get("entity_id"):
             ctx_text = f"{self._context['entity_type']} #{self._context['entity_id']}"

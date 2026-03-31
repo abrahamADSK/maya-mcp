@@ -1,52 +1,162 @@
 #!/usr/bin/env python3
+"""Maya MCP Core Server — MCP server for controlling Autodesk Maya.
+
+Core module: scene operations, objects, transforms, materials, modeling,
+animation, I/O, viewport capture, and Vision3D integration.
+Communicates with Maya via Command Port (TCP) using maya_bridge.
+
+Features:
+    - 24 Maya tools (primitives, transforms, modeling, animation, I/O, rendering)
+    - 6 Vision3D tools (image-to-3D, text-to-3D, texturing)
+    - 3 RAG tools (search_maya_docs, learn_pattern, session_stats)
+    - Dangerous pattern detection (safety.py)
+    - Hybrid search: ChromaDB + BM25 + HyDE + RRF fusion
+    - Token tracking with RAG savings measurement
+    - Model trust gates for self-learning
+
+Usage:
+    python server.py                    # stdio transport (MCP standard)
+    python server.py --transport http   # HTTP transport (dev/debug)
+
+Environment variables (see .env.example):
+    MAYA_HOST          — host where Maya is running (default: localhost)
+    MAYA_PORT          — Maya Command Port (default: 7001)
+    GPU_API_URL        — GPU API server URL (e.g. http://your-gpu-host:8000)
+    GPU_API_KEY        — API key for authentication (empty for open LAN access)
 """
-Maya MCP Core Server — Servidor MCP para controlar Autodesk Maya.
 
-Módulo Core: operaciones básicas de escena, objetos, transformaciones y materiales.
-Se comunica con Maya via Command Port (TCP) usando maya_bridge.
-
-Uso:
-    python server.py                    # stdio transport (MCP estándar)
-    python server.py --transport http   # HTTP transport (desarrollo/debug)
-
-Variables de entorno (ver .env.example):
-    MAYA_HOST          — host donde corre Maya (default: localhost)
-    MAYA_PORT          — puerto Command Port de Maya (default: 7001)
-    GPU_API_URL        — URL del servidor GPU API (ej: http://your-gpu-host:8000)
-    GPU_API_KEY        — API key para autenticación (vacío si acceso abierto en LAN)
-"""
+from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import os
 import sys
-from typing import Optional, List
+from typing import Optional, List, Any
 from enum import Enum
 from pathlib import Path
 
-# Asegurar que el directorio de este archivo está en el path
-# para que maya_bridge se encuentre sin importar desde dónde se lance
+# Ensure this file's directory is on the path so maya_bridge
+# can be found regardless of where the server is launched from
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
 
 from maya_bridge import MayaBridge, MayaBridgeError
+from safety import check_dangerous
 
-# ─────────────────────────────────────────────
-# Configuración
-# ─────────────────────────────────────────────
+_SERVER_DIR = Path(__file__).parent
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
 MAYA_HOST = os.environ.get("MAYA_HOST", "localhost")
 MAYA_PORT = int(os.environ.get("MAYA_PORT", "7001"))
 MAYA_APP  = os.environ.get("MAYA_APP", "Maya")  # macOS app name for `open -a`
 
-mcp = FastMCP("maya_mcp")
+# ---------------------------------------------------------------------------
+# Token tracking (mirrors fpt-mcp / flame-mcp architecture)
+# ---------------------------------------------------------------------------
+
+_FULL_DOC_TOKENS = 14000  # combined size of all indexed docs
+
+_stats = {
+    "exec_calls": 0,       # total tool calls
+    "tokens_in": 0,        # tokens in parameters
+    "tokens_out": 0,       # tokens in responses
+    "rag_calls": 0,        # search_maya_docs calls
+    "tokens_saved": 0,     # tokens saved by RAG vs loading full doc
+    "patterns_learned": 0, # patterns added to docs
+    "patterns_staged": 0,  # candidates staged by non-trusted models
+    "safety_blocks": 0,    # dangerous pattern detections
+    "cache_hits": 0,       # RAG cache hits
+}
+_stats_reset_at = datetime.datetime.now()
+
+# RAG state
+_last_rag_score: int = 100
+_rag_called_this_session: bool = False
+
+
+def _tok(text: str) -> int:
+    """Rough token estimate: 1 token ~ 3 characters."""
+    return max(1, len(text) // 3)
+
+
+def _rating(tokens: int) -> str:
+    if tokens < 500:
+        return "low"
+    elif tokens < 2000:
+        return "medium"
+    return "high"
+
+
+# ---------------------------------------------------------------------------
+# Model trust gates (C5 — from fpt-mcp / flame-mcp)
+# ---------------------------------------------------------------------------
+
+WRITE_ALLOWED_MODELS = {
+    "claude-opus", "claude-sonnet", "claude-sonnet-4",
+    "claude-sonnet-4-6", "claude-opus-4-5", "claude-opus-4-6",
+}
+
+
+def _get_config() -> dict:
+    try:
+        return json.loads((_SERVER_DIR / "config.json").read_text())
+    except Exception:
+        return {}
+
+
+def _get_current_model() -> str:
+    return _get_config().get("model", "unknown")
+
+
+def _model_can_write() -> bool:
+    model = _get_current_model().lower()
+    cfg_list = _get_config().get("write_allowed_models")
+    if cfg_list:
+        return any(allowed.lower() in model for allowed in cfg_list)
+    return any(allowed in model for allowed in WRITE_ALLOWED_MODELS)
+
+
+# ---------------------------------------------------------------------------
+# Server
+# ---------------------------------------------------------------------------
+
+mcp = FastMCP(
+    "maya_mcp",
+    instructions="""You are controlling Autodesk Maya via the maya-mcp server.
+
+## MANDATORY WORKFLOW
+
+1. For any Maya Python command you're unsure about — flag names, return values,
+   correct syntax — call search_maya_docs FIRST.
+   NEVER guess flag names, command syntax, or return value types.
+
+2. The safety module will warn you about dangerous patterns. Heed its warnings.
+
+3. Common hallucinations to avoid:
+   - cmds.polyCube() returns a LIST [transform, shape], NOT a string
+   - cmds.setAttr for compound types REQUIRES type= parameter
+   - cmds.file(import=True) is WRONG — use i=True (import is a Python keyword)
+   - Flag names use SHORT form: w= not width=, r= not radius=
+
+4. When a working pattern succeeds and search_maya_docs returned < 60% relevance,
+   call learn_pattern to save the validated pattern for future sessions.
+
+5. Call session_stats at the end of multi-step tasks to report token efficiency.
+
+6. Always wrap operations in undo chunks for safe rollback.
+""",
+)
 bridge = MayaBridge(host=MAYA_HOST, port=MAYA_PORT)
 
 
 # ─────────────────────────────────────────────
-# Modelos de entrada (Pydantic)
+# Input Models (Pydantic)
 # ─────────────────────────────────────────────
 
 class PrimitiveType(str, Enum):
@@ -59,78 +169,78 @@ class PrimitiveType(str, Enum):
 
 
 class CreatePrimitiveInput(BaseModel):
-    """Parámetros para crear una primitiva 3D."""
+    """Parameters for creating a 3D primitive."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    primitive_type: PrimitiveType = Field(..., description="Tipo de primitiva: cube, sphere, cylinder, cone, plane, torus")
-    name: Optional[str] = Field(default=None, description="Nombre del objeto (Maya genera uno si se omite)")
-    position: Optional[List[float]] = Field(default=None, description="Posición [x, y, z] en world space", min_length=3, max_length=3)
-    scale: Optional[List[float]] = Field(default=None, description="Escala [x, y, z]", min_length=3, max_length=3)
-    rotation: Optional[List[float]] = Field(default=None, description="Rotación [x, y, z] en grados", min_length=3, max_length=3)
+    primitive_type: PrimitiveType = Field(..., description="Primitive type: cube, sphere, cylinder, cone, plane, torus")
+    name: Optional[str] = Field(default=None, description="Object name (Maya generates one if omitted)")
+    position: Optional[List[float]] = Field(default=None, description="Position [x, y, z] in world space", min_length=3, max_length=3)
+    scale: Optional[List[float]] = Field(default=None, description="Scale [x, y, z]", min_length=3, max_length=3)
+    rotation: Optional[List[float]] = Field(default=None, description="Rotation [x, y, z] in degrees", min_length=3, max_length=3)
 
 
 class MaterialInput(BaseModel):
-    """Parámetros para crear y asignar un material."""
+    """Parameters for creating and assigning a material."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    object_name: str = Field(..., description="Nombre del objeto al que asignar el material")
-    material_name: Optional[str] = Field(default=None, description="Nombre del material (se genera si se omite)")
-    color: List[float] = Field(..., description="Color RGB normalizado [r, g, b] (0.0-1.0)", min_length=3, max_length=3)
-    material_type: str = Field(default="lambert", description="Tipo de shader: lambert, blinn, phong, aiStandardSurface")
+    object_name: str = Field(..., description="Name of the object to assign the material to")
+    material_name: Optional[str] = Field(default=None, description="Material name (generated if omitted)")
+    color: List[float] = Field(..., description="Normalized RGB color [r, g, b] (0.0-1.0)", min_length=3, max_length=3)
+    material_type: str = Field(default="lambert", description="Shader type: lambert, blinn, phong, aiStandardSurface")
 
 
 class TransformInput(BaseModel):
-    """Parámetros para transformar un objeto."""
+    """Parameters for transforming an object."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    object_name: str = Field(..., description="Nombre del objeto a transformar")
-    position: Optional[List[float]] = Field(default=None, description="Nueva posición [x, y, z]", min_length=3, max_length=3)
-    rotation: Optional[List[float]] = Field(default=None, description="Nueva rotación [x, y, z] en grados", min_length=3, max_length=3)
-    scale: Optional[List[float]] = Field(default=None, description="Nueva escala [x, y, z]", min_length=3, max_length=3)
-    relative: bool = Field(default=False, description="Si True, transforma relativo a la posición actual")
+    object_name: str = Field(..., description="Name of the object to transform")
+    position: Optional[List[float]] = Field(default=None, description="New position [x, y, z]", min_length=3, max_length=3)
+    rotation: Optional[List[float]] = Field(default=None, description="New rotation [x, y, z] in degrees", min_length=3, max_length=3)
+    scale: Optional[List[float]] = Field(default=None, description="New scale [x, y, z]", min_length=3, max_length=3)
+    relative: bool = Field(default=False, description="If True, transform relative to current position")
 
 
 class SceneQueryInput(BaseModel):
-    """Parámetros para consultar la escena."""
+    """Parameters for querying the scene."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    object_type: Optional[str] = Field(default=None, description="Filtrar por tipo: mesh, light, camera, transform, etc.")
-    name_filter: Optional[str] = Field(default=None, description="Filtrar por nombre (soporta wildcards: *sphere*)")
+    object_type: Optional[str] = Field(default=None, description="Filter by type: mesh, light, camera, transform, etc.")
+    name_filter: Optional[str] = Field(default=None, description="Filter by name (supports wildcards: *sphere*)")
 
 
 class ExecutePythonInput(BaseModel):
-    """Ejecutar código Python arbitrario en Maya."""
+    """Execute arbitrary Python code in Maya."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    code: str = Field(..., description="Código Python a ejecutar en Maya. Asignar resultado a variable 'result'.")
+    code: str = Field(..., description="Python code to execute in Maya. Assign result to variable 'result'.")
 
 
 class DeleteObjectInput(BaseModel):
-    """Parámetros para eliminar objetos."""
+    """Parameters for deleting objects."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    object_name: str = Field(..., description="Nombre del objeto a eliminar (soporta wildcards)")
+    object_name: str = Field(..., description="Name of the object to delete (supports wildcards)")
 
 
 class LightInput(BaseModel):
-    """Parámetros para crear una luz."""
+    """Parameters for creating a light."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    light_type: str = Field(default="directional", description="Tipo: directional, point, spot, area, ambient")
-    name: Optional[str] = Field(default=None, description="Nombre de la luz")
-    intensity: float = Field(default=1.0, description="Intensidad de la luz", ge=0.0)
-    color: Optional[List[float]] = Field(default=None, description="Color RGB [r, g, b] (0.0-1.0)", min_length=3, max_length=3)
-    position: Optional[List[float]] = Field(default=None, description="Posición [x, y, z]", min_length=3, max_length=3)
+    light_type: str = Field(default="directional", description="Type: directional, point, spot, area, ambient")
+    name: Optional[str] = Field(default=None, description="Light name")
+    intensity: float = Field(default=1.0, description="Light intensity", ge=0.0)
+    color: Optional[List[float]] = Field(default=None, description="RGB color [r, g, b] (0.0-1.0)", min_length=3, max_length=3)
+    position: Optional[List[float]] = Field(default=None, description="Position [x, y, z]", min_length=3, max_length=3)
 
 
 class CameraInput(BaseModel):
-    """Parámetros para crear una cámara."""
+    """Parameters for creating a camera."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    name: Optional[str] = Field(default=None, description="Nombre de la cámara")
-    position: Optional[List[float]] = Field(default=None, description="Posición [x, y, z]", min_length=3, max_length=3)
-    look_at: Optional[List[float]] = Field(default=None, description="Punto al que mira [x, y, z]", min_length=3, max_length=3)
-    focal_length: float = Field(default=35.0, description="Distancia focal en mm", ge=1.0, le=500.0)
+    name: Optional[str] = Field(default=None, description="Camera name")
+    position: Optional[List[float]] = Field(default=None, description="Position [x, y, z]", min_length=3, max_length=3)
+    look_at: Optional[List[float]] = Field(default=None, description="Look at point [x, y, z]", min_length=3, max_length=3)
+    focal_length: float = Field(default=35.0, description="Focal length in mm", ge=1.0, le=500.0)
 
 
 # ─────────────────────────────────────────────
@@ -138,7 +248,7 @@ class CameraInput(BaseModel):
 # ─────────────────────────────────────────────
 
 async def _run_cmd(cmd: List[str], timeout: int = 60) -> tuple:
-    """Ejecuta un comando local async y devuelve (returncode, stdout, stderr)."""
+    """Execute a local async command and return (returncode, stdout, stderr)."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -148,20 +258,20 @@ async def _run_cmd(cmd: List[str], timeout: int = 60) -> tuple:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
-        return -1, "", f"Timeout después de {timeout}s"
+        return -1, "", f"Timeout after {timeout}s"
     return proc.returncode, stdout.decode(), stderr.decode()
 
 
 def _handle_error(e: Exception) -> str:
-    """Formateo consistente de errores."""
+    """Consistent error formatting."""
     if isinstance(e, MayaBridgeError):
-        return f"Error Maya: {e}"
-    return f"Error inesperado: {type(e).__name__}: {e}"
+        return f"Maya error: {e}"
+    return f"Unexpected error: {type(e).__name__}: {e}"
 
 
 @mcp.tool(name="maya_ping")
 async def maya_ping() -> str:
-    """Verifica la conexión con Maya y devuelve info del entorno (versión, escena actual, renderer)."""
+    """Check connection to Maya and return environment info (version, current scene, renderer)."""
     try:
         info = bridge.ping()
         return json.dumps(info, indent=2, ensure_ascii=False)
@@ -171,30 +281,30 @@ async def maya_ping() -> str:
 
 @mcp.tool(name="maya_launch")
 async def maya_launch() -> str:
-    """Abre Maya y espera a que el Command Port responda."""
+    """Open Maya and wait for the Command Port to respond."""
     import socket
     import time
 
-    # 1. Comprobar si ya está conectado
+    # 1. Check if already connected
     try:
         info = bridge.ping()
         return json.dumps({
             "status": "already_running",
             "version": info.get("version", "unknown"),
-            "message": "Maya ya está abierto y el Command Port responde."
+            "message": "Maya is already open and Command Port is responding."
         }, ensure_ascii=False)
     except Exception:
-        pass  # No está corriendo o no responde — lo abrimos
+        pass  # Not running or not responding — open it
 
-    # 2. Lanzar Maya
+    # 2. Launch Maya
     rc, _, err = await _run_cmd(["open", "-a", MAYA_APP], timeout=10)
     if rc != 0:
         return json.dumps({
-            "error": f"No se pudo abrir Maya ({MAYA_APP}): {err.strip()}",
-            "hint": "Verifica que Maya está instalado. Configura MAYA_APP en .env si el nombre es distinto."
+            "error": f"Could not open Maya ({MAYA_APP}): {err.strip()}",
+            "hint": "Verify that Maya is installed. Configure MAYA_APP in .env if the name is different."
         }, ensure_ascii=False)
 
-    # 3. Esperar a que el Command Port esté listo (max 90s)
+    # 3. Wait for Command Port to be ready (max 90s)
     max_wait = 90
     poll_interval = 3
     waited = 0
@@ -207,29 +317,29 @@ async def maya_launch() -> str:
             sock.settimeout(2)
             sock.connect((MAYA_HOST, MAYA_PORT))
             sock.close()
-            # Puerto abierto — intentar ping real
+            # Port open — try real ping
             try:
                 info = bridge.ping()
                 return json.dumps({
                     "status": "launched",
                     "waited_seconds": waited,
                     "version": info.get("version", "unknown"),
-                    "message": f"Maya abierto y Command Port listo ({waited}s)."
+                    "message": f"Maya open and Command Port ready ({waited}s)."
                 }, ensure_ascii=False)
             except Exception:
-                continue  # Puerto abierto pero Maya aún cargando
+                continue  # Port open but Maya still loading
         except (ConnectionRefusedError, socket.timeout, OSError):
-            continue  # Puerto aún no disponible
+            continue  # Port not yet available
 
     return json.dumps({
-        "error": f"Maya se abrió pero el Command Port no respondió en {max_wait}s.",
-        "hint": "Verifica que tienes el Command Port en userSetup.py: cmds.commandPort(name=':7001', sourceType='mel')"
+        "error": f"Maya opened but Command Port did not respond in {max_wait}s.",
+        "hint": "Verify that you have Command Port in userSetup.py: cmds.commandPort(name=':7001', sourceType='mel')"
     }, ensure_ascii=False)
 
 
 @mcp.tool(name="maya_create_primitive")
 async def maya_create_primitive(params: CreatePrimitiveInput) -> str:
-    """Crea una primitiva 3D en Maya (cubo, esfera, cilindro, cono, plano, torus) con posición, escala y rotación opcionales."""
+    """Create a 3D primitive in Maya (cube, sphere, cylinder, cone, plane, torus) with optional position, scale, and rotation."""
     try:
         create_funcs = {
             "cube": "cmds.polyCube",
@@ -262,7 +372,7 @@ obj = {func}({name_arg})[0]
 
 @mcp.tool(name="maya_assign_material")
 async def maya_assign_material(params: MaterialInput) -> str:
-    """Crea un material (lambert, blinn, phong, aiStandardSurface) con color RGB y lo asigna a un objeto."""
+    """Create a material (lambert, blinn, phong, aiStandardSurface) with RGB color and assign it to an object."""
     try:
         mat_name = params.material_name or f"{params.object_name}_mat"
         r, g, b = params.color
@@ -284,7 +394,7 @@ result = {{'material': mat, 'shading_group': sg, 'assigned_to': '{params.object_
 
 @mcp.tool(name="maya_transform")
 async def maya_transform(params: TransformInput) -> str:
-    """Mueve, rota o escala un objeto en la escena de Maya."""
+    """Move, rotate, or scale an object in the Maya scene."""
     try:
         ws = "False" if params.relative else "True"
         rel = "True" if params.relative else "False"
@@ -310,7 +420,7 @@ result = {{'object': '{params.object_name}', 'position': pos, 'rotation': rot, '
 
 @mcp.tool(name="maya_list_scene")
 async def maya_list_scene(params: SceneQueryInput) -> str:
-    """Lista objetos de la escena de Maya, con filtros opcionales por tipo o nombre."""
+    """List objects in the Maya scene, with optional filters by type or name."""
     try:
         filters = []
         if params.object_type:
@@ -333,7 +443,15 @@ result = {{'count': len(objects), 'objects': objects}}
 
 @mcp.tool(name="maya_delete")
 async def maya_delete(params: DeleteObjectInput) -> str:
-    """Elimina un objeto de la escena de Maya por nombre (soporta wildcards como *sphere*)."""
+    """Delete an object from the Maya scene by name (supports wildcards like *sphere*)."""
+    _stats["exec_calls"] += 1
+
+    # Safety check
+    warning = check_dangerous(f'cmds.delete("{params.object_name}")')
+    if warning:
+        _stats["safety_blocks"] += 1
+        return json.dumps({"safety_warning": warning})
+
     try:
         code = f"""
 import maya.cmds as cmds
@@ -342,16 +460,18 @@ if targets:
     cmds.delete(targets)
     result = {{'deleted': targets}}
 else:
-    result = {{'error': 'No se encontró: {params.object_name}'}}
+    result = {{'error': 'Not found: {params.object_name}'}}
 """
-        return bridge.execute(code)
+        response = bridge.execute(code)
+        _stats["tokens_out"] += _tok(response)
+        return response
     except Exception as e:
         return _handle_error(e)
 
 
 @mcp.tool(name="maya_create_light")
 async def maya_create_light(params: LightInput) -> str:
-    """Crea una luz en Maya (directional, point, spot, area, ambient) con intensidad y color configurables."""
+    """Create a light in Maya (directional, point, spot, area, ambient) with configurable intensity and color."""
     try:
         light_funcs = {
             "directional": "cmds.directionalLight",
@@ -396,7 +516,7 @@ cmds.xform(parent, translation={params.position}, worldSpace=True)
 
 @mcp.tool(name="maya_create_camera")
 async def maya_create_camera(params: CameraInput) -> str:
-    """Crea una cámara en Maya con posición, punto de mira y focal length configurables."""
+    """Create a camera in Maya with configurable position, look-at point, and focal length."""
     try:
         name_arg = f", name='{params.name}'" if params.name else ""
         code = f"""
@@ -423,16 +543,27 @@ cmds.delete(aim)
 
 @mcp.tool(name="maya_execute_python")
 async def maya_execute_python(params: ExecutePythonInput) -> str:
-    """Ejecuta código Python arbitrario en Maya. El código debe asignar su resultado a la variable 'result'. Útil para operaciones avanzadas no cubiertas por otros tools."""
+    """Execute arbitrary Python code in Maya. Code must assign its result to a 'result' variable. Useful for advanced operations not covered by other tools."""
+    _stats["exec_calls"] += 1
+    _stats["tokens_in"] += _tok(params.code)
+
+    # Safety check on code
+    warning = check_dangerous(params.code)
+    if warning:
+        _stats["safety_blocks"] += 1
+        return json.dumps({"safety_warning": warning})
+
     try:
-        return bridge.execute(params.code)
+        response = bridge.execute(params.code)
+        _stats["tokens_out"] += _tok(response)
+        return response
     except Exception as e:
         return _handle_error(e)
 
 
 @mcp.tool(name="maya_new_scene")
 async def maya_new_scene() -> str:
-    """Crea una nueva escena vacía en Maya (descarta la escena actual sin guardar)."""
+    """Create a new empty scene in Maya (discards current scene without saving)."""
     try:
         code = """
 import maya.cmds as cmds
@@ -446,7 +577,7 @@ result = {'status': 'new_scene_created'}
 
 @mcp.tool(name="maya_save_scene")
 async def maya_save_scene() -> str:
-    """Guarda la escena actual de Maya."""
+    """Save the current Maya scene."""
     try:
         code = """
 import maya.cmds as cmds
@@ -455,7 +586,7 @@ if scene:
     cmds.file(save=True)
     result = {'saved': scene}
 else:
-    result = {'error': 'Escena sin nombre. Usa maya_execute_python para hacer file(rename=...)'}
+    result = {'error': 'Unnamed scene. Use maya_execute_python to do file(rename=...)'}
 """
         return bridge.execute(code)
     except Exception as e:
@@ -463,7 +594,7 @@ else:
 
 
 # ─────────────────────────────────────────────
-# Nuevos modelos de entrada (P2-P5, A-E)
+# New Input Models (P2-P5, A-E)
 # ─────────────────────────────────────────────
 
 class MeshOperationType(str, Enum):
@@ -478,69 +609,69 @@ class MeshOperationType(str, Enum):
 
 
 class MeshOperationInput(BaseModel):
-    """Parámetros para operaciones de mesh."""
+    """Parameters for mesh operations."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    object_name: str = Field(..., description="Nombre del objeto mesh")
-    operation: MeshOperationType = Field(..., description="Tipo de operación")
-    second_object: Optional[str] = Field(default=None, description="Segundo objeto (requerido para boolean y combine)")
-    faces: Optional[str] = Field(default=None, description="Componentes de cara (ej: 'pCube1.f[0:3]') para extrude/bevel")
-    offset: float = Field(default=0.2, description="Offset/distancia para extrude o bevel", ge=0.0)
-    divisions: int = Field(default=1, description="Divisiones para smooth o segments para bevel", ge=1, le=10)
+    object_name: str = Field(..., description="Name of the mesh object")
+    operation: MeshOperationType = Field(..., description="Type of operation")
+    second_object: Optional[str] = Field(default=None, description="Second object (required for boolean and combine)")
+    faces: Optional[str] = Field(default=None, description="Face components (e.g., 'pCube1.f[0:3]') for extrude/bevel")
+    offset: float = Field(default=0.2, description="Offset/distance for extrude or bevel", ge=0.0)
+    divisions: int = Field(default=1, description="Divisions for smooth or segments for bevel", ge=1, le=10)
 
 
 class KeyframeInput(BaseModel):
-    """Parámetros para crear keyframes de animación."""
+    """Parameters for creating animation keyframes."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    object_name: str = Field(..., description="Nombre del objeto a animar")
-    attribute: str = Field(default="translateX", description="Atributo a animar (translateX/Y/Z, rotateX/Y/Z, scaleX/Y/Z, visibility)")
-    value: float = Field(..., description="Valor del keyframe")
-    frame: float = Field(..., description="Frame en el que insertar el keyframe")
-    in_tangent: str = Field(default="auto", description="Tangente de entrada: auto, linear, flat, spline, step")
-    out_tangent: str = Field(default="auto", description="Tangente de salida: auto, linear, flat, spline, step")
+    object_name: str = Field(..., description="Name of the object to animate")
+    attribute: str = Field(default="translateX", description="Attribute to animate (translateX/Y/Z, rotateX/Y/Z, scaleX/Y/Z, visibility)")
+    value: float = Field(..., description="Keyframe value")
+    frame: float = Field(..., description="Frame to insert the keyframe on")
+    in_tangent: str = Field(default="auto", description="In-tangent: auto, linear, flat, spline, step")
+    out_tangent: str = Field(default="auto", description="Out-tangent: auto, linear, flat, spline, step")
 
 
 class ImportFileInput(BaseModel):
-    """Parámetros para importar archivos 3D."""
+    """Parameters for importing 3D files."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    file_path: str = Field(..., description="Ruta absoluta al archivo a importar (.obj, .fbx, .glb, .abc, .ma, .mb)")
-    namespace: Optional[str] = Field(default=None, description="Namespace para evitar colisiones de nombres")
-    group_under: Optional[str] = Field(default=None, description="Nombre del grupo padre (se crea si no existe)")
-    scale_factor: Optional[float] = Field(default=None, description="Factor de escala al importar (ej: 0.01 para cm→m)")
+    file_path: str = Field(..., description="Absolute path to file to import (.obj, .fbx, .glb, .abc, .ma, .mb)")
+    namespace: Optional[str] = Field(default=None, description="Namespace to avoid name collisions")
+    group_under: Optional[str] = Field(default=None, description="Parent group name (created if it doesn't exist)")
+    scale_factor: Optional[float] = Field(default=None, description="Scale factor on import (e.g., 0.01 for cm to m)")
 
 
 class ViewportCaptureInput(BaseModel):
-    """Parámetros para capturar el viewport de Maya."""
+    """Parameters for capturing the Maya viewport."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    output_path: str = Field(default="/tmp/maya_viewport.png", description="Ruta de salida para la imagen (.png/.jpg)")
-    width: int = Field(default=1920, description="Ancho de la captura en píxeles", ge=100, le=8192)
-    height: int = Field(default=1080, description="Alto de la captura en píxeles", ge=100, le=8192)
-    camera: Optional[str] = Field(default=None, description="Cámara a usar (default: panel activo)")
-    frame: Optional[float] = Field(default=None, description="Frame a capturar (default: frame actual)")
+    output_path: str = Field(default="/tmp/maya_viewport.png", description="Output path for image (.png/.jpg)")
+    width: int = Field(default=1920, description="Capture width in pixels", ge=100, le=8192)
+    height: int = Field(default=1080, description="Capture height in pixels", ge=100, le=8192)
+    camera: Optional[str] = Field(default=None, description="Camera to use (default: active panel)")
+    frame: Optional[float] = Field(default=None, description="Frame to capture (default: current frame)")
 
 
 class ShelfButtonInput(BaseModel):
-    """Parámetros para crear un botón en la shelf de Maya."""
+    """Parameters for creating a button on the Maya shelf."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    label: str = Field(..., description="Etiqueta del botón (texto corto)")
-    command: str = Field(..., description="Código Python que ejecuta el botón al hacer click")
-    tooltip: str = Field(default="", description="Texto de ayuda al pasar el ratón")
-    shelf_name: str = Field(default="Custom", description="Nombre de la shelf donde crear el botón")
-    icon_label: str = Field(default="MCP", description="Texto superpuesto en el icono (max 4 chars)")
+    label: str = Field(..., description="Button label (short text)")
+    command: str = Field(..., description="Python code that executes when button is clicked")
+    tooltip: str = Field(default="", description="Help text on mouseover")
+    shelf_name: str = Field(default="Custom", description="Name of the shelf to create the button in")
+    icon_label: str = Field(default="MCP", description="Text overlaid on icon (max 4 chars)")
 
 
 # ─────────────────────────────────────────────
-# Nuevos Tools (P2-P6, A-E)
+# New Tools (P2-P6, A-E)
 # ─────────────────────────────────────────────
 
 
 @mcp.tool(name="maya_mesh_operation")
 async def maya_mesh_operation(params: MeshOperationInput) -> str:
-    """Ejecuta operaciones de mesh: extrude, bevel, boolean (union/difference/intersection), combine, separate, smooth."""
+    """Execute mesh operations: extrude, bevel, boolean (union/difference/intersection), combine, separate, smooth."""
     try:
         op = params.operation.value
 
@@ -568,7 +699,7 @@ finally:
 """
         elif op.startswith("boolean_"):
             if not params.second_object:
-                return json.dumps({"error": "Boolean requiere 'second_object'"})
+                return json.dumps({"error": "Boolean requires 'second_object'"})
             bool_op = {"boolean_union": 1, "boolean_difference": 2, "boolean_intersection": 3}[op]
             code = f"""
 import maya.cmds as cmds
@@ -581,7 +712,7 @@ finally:
 """
         elif op == "combine":
             if not params.second_object:
-                return json.dumps({"error": "Combine requiere 'second_object'"})
+                return json.dumps({"error": "Combine requires 'second_object'"})
             code = f"""
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_combine')
@@ -614,7 +745,7 @@ finally:
     cmds.undoInfo(closeChunk=True)
 """
         else:
-            return json.dumps({"error": f"Operación desconocida: {op}"})
+            return json.dumps({"error": f"Unknown operation: {op}"})
 
         return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
@@ -623,7 +754,7 @@ finally:
 
 @mcp.tool(name="maya_set_keyframe")
 async def maya_set_keyframe(params: KeyframeInput) -> str:
-    """Crea un keyframe de animación en un objeto. Permite animar translate, rotate, scale y visibility por frame."""
+    """Create an animation keyframe on an object. Allows animating translate, rotate, scale, and visibility per frame."""
     try:
         code = f"""
 import maya.cmds as cmds
@@ -644,7 +775,7 @@ finally:
 
 @mcp.tool(name="maya_import_file")
 async def maya_import_file(params: ImportFileInput) -> str:
-    """Importa archivos 3D en Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. Con opciones de namespace, grupo padre y escala."""
+    """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. With namespace, parent group, and scale options."""
     try:
         ext = params.file_path.rsplit(".", 1)[-1].lower() if "." in params.file_path else ""
         ns_opt = f", namespace='{params.namespace}'" if params.namespace else ""
@@ -692,7 +823,7 @@ finally:
 
 @mcp.tool(name="maya_viewport_capture")
 async def maya_viewport_capture(params: ViewportCaptureInput) -> str:
-    """Captura el viewport de Maya como imagen PNG/JPG. No hace render Arnold — es un grab instantáneo del viewport (<1s). Útil para verificar visualmente el estado de la escena."""
+    """Capture the Maya viewport as PNG/JPG image. Does not do Arnold render — it is an instant viewport grab (<1s). Useful for visually verifying scene state."""
     try:
         camera_opt = ""
         if params.camera:
@@ -731,7 +862,7 @@ finally:
 
 @mcp.tool(name="maya_scene_snapshot")
 async def maya_scene_snapshot() -> str:
-    """Devuelve un snapshot completo del estado de la escena: archivo, modificada, frame, objetos por tipo, renderer, plugins, resolución de render. Útil para tomar decisiones informadas antes de operaciones."""
+    """Return a complete snapshot of scene state: file, modified, frame, objects by type, renderer, plugins, render resolution. Useful for informed decisions before operations."""
     try:
         code = """
 import maya.cmds as cmds
@@ -771,7 +902,7 @@ result = {
 
 @mcp.tool(name="maya_shelf_button")
 async def maya_shelf_button(params: ShelfButtonInput) -> str:
-    """Crea un botón personalizado en la shelf de Maya con código Python asociado. Permite que Claude deje herramientas reutilizables en la interfaz."""
+    """Create a custom button on the Maya shelf with associated Python code. Allows Claude to leave reusable tools in the interface."""
     try:
         # Escape the command for embedding in Python string
         safe_command = params.command.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
@@ -779,7 +910,7 @@ async def maya_shelf_button(params: ShelfButtonInput) -> str:
 import maya.cmds as cmds
 import maya.mel as mel
 
-# Crear o encontrar la shelf
+# Create or find the shelf
 _mcp_shelf = '{params.shelf_name}'
 if not cmds.shelfLayout(_mcp_shelf, exists=True):
     mel.eval('addNewShelfTab "{params.shelf_name}"')
@@ -801,17 +932,17 @@ result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': '{params.label}'}}
 
 
 # ─────────────────────────────────────────────
-# GPU remoto — Vision3D API REST (Hunyuan3D-2)
+# Remote GPU — Vision3D REST API (Hunyuan3D-2)
 # ─────────────────────────────────────────────
 
 from mcp.server.fastmcp import Context
 
-# Configuración via variables de entorno
+# Configuration via environment variables
 _GPU_API_URL  = os.environ.get("GPU_API_URL",  "http://localhost:8000").rstrip("/")
 _GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")
 _GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "false").lower() in ("true", "1", "yes")
 _MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
-                                str(Path(__file__).parent.parent))           # raíz del proyecto en Mac
+                                str(Path(__file__).parent.parent))           # project root on Mac
 
 # Lazy httpx client
 _http_client = None
@@ -870,124 +1001,124 @@ def _build_quality_form_data(params) -> dict:
 
 
 class ShapeGenerateInput(BaseModel):
-    """Parámetros para iniciar generación 3D desde imagen en Vision3D.
+    """Parameters for initiating 3D generation from image in Vision3D.
 
-    Presets de calidad:
-      - low:    turbo, octree 256, 10 steps, 10k faces   (~1 min, preview rápido)
-      - medium: turbo, octree 384, 20 steps, 50k faces   (~2 min, uso general)
-      - high:   full,  octree 384, 30 steps, 150k faces  (~8 min, detallado)
-      - ultra:  full,  octree 512, 50 steps, sin límite   (~12 min, máximo detalle)
+    Quality presets:
+      - low:    turbo, octree 256, 10 steps, 10k faces   (~1 min, fast preview)
+      - medium: turbo, octree 384, 20 steps, 50k faces   (~2 min, general use)
+      - high:   full,  octree 384, 30 steps, 150k faces  (~8 min, detailed)
+      - ultra:  full,  octree 512, 50 steps, no limit    (~12 min, maximum detail)
     """
     model_config = ConfigDict(str_strip_whitespace=True)
 
     image_path: str = Field(
         ...,
-        description="Ruta local absoluta a la imagen de referencia (.jpg/.png)."
+        description="Absolute local path to reference image (.jpg/.png)."
     )
     output_subdir: str = Field(
         default="0",
-        description="Subdirectorio de salida dentro de reference/3d_output/ (ej: '0', 'asset_1478')"
+        description="Output subdirectory within reference/3d_output/ (e.g., '0', 'asset_1478')"
     )
     preset: str = Field(
         default="",
-        description="Preset de calidad: 'low', 'medium', 'high', 'ultra'. "
-                    "Los parámetros individuales sobreescriben al preset."
+        description="Quality preset: 'low', 'medium', 'high', 'ultra'. "
+                    "Individual parameters override the preset."
     )
     model: str = Field(
         default="",
-        description="Modelo de shape: 'turbo' (~1 min) o 'full' (~5 min, más detalle). "
-                    "Vacío = usa el del preset o 'turbo' por defecto."
+        description="Shape model: 'turbo' (~1 min) or 'full' (~5 min, more detail). "
+                    "Empty = use preset's or 'turbo' by default."
     )
     octree_resolution: int = Field(
         default=0,
-        description="Resolución octree (256/384/512). 0 = usa el del preset."
+        description="Octree resolution (256/384/512). 0 = use preset's."
     )
     num_inference_steps: int = Field(
         default=0,
-        description="Pasos de inferencia. turbo: 5-10, full: 30-50. 0 = usa el del preset."
+        description="Inference steps. turbo: 5-10, full: 30-50. 0 = use preset's."
     )
     target_faces: int = Field(
         default=50000,
-        description="Caras objetivo tras decimación. 0 = sin decimación."
+        description="Target faces after decimation. 0 = no decimation."
     )
 
 
 class ShapeTextInput(BaseModel):
-    """Parámetros para iniciar generación 3D desde texto en Vision3D."""
+    """Parameters for initiating 3D generation from text in Vision3D."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
     text_prompt: str = Field(
         ...,
-        description="Descripción en inglés del objeto 3D a generar."
+        description="English description of the 3D object to generate."
     )
     output_subdir: str = Field(
         default="0",
-        description="Subdirectorio de salida (ej: '0', 'mailbox_0')"
+        description="Output subdirectory (e.g., '0', 'mailbox_0')"
     )
     preset: str = Field(default="", description="Preset: 'low', 'medium', 'high', 'ultra'.")
-    model: str = Field(default="", description="'turbo' o 'full'. Vacío = preset.")
+    model: str = Field(default="", description="'turbo' or 'full'. Empty = preset.")
     octree_resolution: int = Field(default=0, description="256/384/512. 0 = preset.")
-    num_inference_steps: int = Field(default=0, description="Pasos. 0 = preset.")
-    target_faces: int = Field(default=0, description="Caras objetivo. 0 = sin decimación.")
+    num_inference_steps: int = Field(default=0, description="Steps. 0 = preset.")
+    target_faces: int = Field(default=0, description="Target faces. 0 = no decimation.")
 
 
 class TextureRemoteInput(BaseModel):
-    """Parámetros para iniciar texturizado en Vision3D."""
+    """Parameters for initiating texturing in Vision3D."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
     output_subdir: str = Field(
         ...,
-        description="Subdirectorio dentro de reference/3d_output/"
+        description="Subdirectory within reference/3d_output/"
     )
     mesh_filename: str = Field(
         default="mesh.glb",
-        description="Nombre del mesh dentro de output_subdir"
+        description="Mesh filename within output_subdir"
     )
     image_filename: str = Field(
         default="input.png",
-        description="Nombre de la imagen de referencia dentro de output_subdir"
+        description="Reference image filename within output_subdir"
     )
 
 
 class Vision3DPollInput(BaseModel):
-    """Parámetros para sondear el estado de un job en Vision3D."""
+    """Parameters for polling job status in Vision3D."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    job_id: str = Field(..., description="ID del job devuelto por shape_generate_remote/text/texture.")
+    job_id: str = Field(..., description="Job ID returned by shape_generate_remote/text/texture.")
 
 
 class Vision3DDownloadInput(BaseModel):
-    """Parámetros para descargar los resultados de un job completado."""
+    """Parameters for downloading results from a completed job."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    job_id: str = Field(..., description="ID del job completado.")
-    output_subdir: str = Field(..., description="Subdirectorio local de salida (el mismo usado al crear el job).")
+    job_id: str = Field(..., description="Completed job ID.")
+    output_subdir: str = Field(..., description="Local output subdirectory (same as used when creating the job).")
     files: List[str] = Field(
         default_factory=lambda: ["textured.glb", "mesh_uv.obj", "texture_baked.png", "mesh.glb"],
-        description="Lista de archivos a descargar. Por defecto descarga todos los del pipeline completo."
+        description="List of files to download. By default downloads all from the complete pipeline."
     )
 
 
-# ── Tools: comprobar disponibilidad de Vision3D ─────────────────────────
+# ── Tools: check Vision3D availability ─────────────────────────
 
 
 @mcp.tool(name="vision3d_health")
 async def vision3d_health(ctx: Context) -> str:
-    """Comprueba si el servidor Vision3D está disponible y responde.
+    """Check if Vision3D server is available and responding.
 
-    Retorna información de GPU, modelos disponibles, y si text-to-3D está activo.
-    Llama a este tool ANTES de ofrecer opciones de generación IA al usuario,
-    para saber si Vision3D está encendido y accesible.
+    Returns GPU information, available models, and text-to-3D status.
+    Call this tool BEFORE offering AI generation options to the user,
+    to know if Vision3D is running and accessible.
     """
     try:
         client = _get_http_client()
-        await ctx.info("Comprobando disponibilidad de Vision3D...")
+        await ctx.info("Checking Vision3D availability...")
         resp = await client.get("/api/health", timeout=5.0)
 
         if resp.status_code != 200:
             return json.dumps({
                 "available": False,
-                "error": f"Vision3D respondió con HTTP {resp.status_code}",
+                "error": f"Vision3D responded with HTTP {resp.status_code}",
                 "url": _GPU_API_URL,
             })
 
@@ -1004,21 +1135,21 @@ async def vision3d_health(ctx: Context) -> str:
     except Exception as e:
         return json.dumps({
             "available": False,
-            "error": f"No se pudo conectar a Vision3D ({_GPU_API_URL}): {e}",
-            "hint": "Verifica que el servidor Vision3D está encendido y accesible desde esta red.",
+            "error": f"Could not connect to Vision3D ({_GPU_API_URL}): {e}",
+            "hint": "Verify that Vision3D server is running and accessible from this network.",
         })
 
 
-# ── Tools: iniciar jobs (non-blocking) ───────────────────────────────────
+# ── Tools: start jobs (non-blocking) ───────────────────────────────────
 
 
 @mcp.tool(name="shape_generate_remote")
 async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str:
-    """Inicia generación 3D texturizada desde imagen en Vision3D (non-blocking).
+    """Start textured 3D generation from image in Vision3D (non-blocking).
 
-    Sube la imagen y arranca el pipeline completo (shape + decimación + texturizado).
-    Retorna un job_id inmediatamente. Usa vision3d_poll para seguir el progreso
-    y vision3d_download para descargar los resultados cuando termine.
+    Uploads the image and starts the complete pipeline (shape + decimation + texturing).
+    Returns a job_id immediately. Use vision3d_poll to follow progress
+    and vision3d_download to download results when finished.
     """
     try:
         image_local = Path(params.image_path)
@@ -1026,13 +1157,13 @@ async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str
 
         if not image_local.exists():
             return json.dumps({
-                "error": f"Imagen no encontrada: {image_local}",
-                "hint": "Descarga primero la imagen con sg_download de fpt-mcp."
+                "error": f"Image not found: {image_local}",
+                "hint": "Download the image first with sg_download from fpt-mcp."
             })
 
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copiar imagen al directorio de salida como input.png
+        # Copy image to output directory as input.png
         import shutil
         input_copy = out_dir / "input.png"
         shutil.copy2(str(image_local), str(input_copy))
@@ -1040,7 +1171,7 @@ async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str
         client = _get_http_client()
         quality_desc = params.preset or f"model={params.model or 'turbo'}"
 
-        await ctx.info(f"Subiendo imagen a Vision3D ({quality_desc})...")
+        await ctx.info(f"Uploading image to Vision3D ({quality_desc})...")
 
         form_data = {"output_subdir": params.output_subdir}
         form_data.update(_build_quality_form_data(params))
@@ -1055,14 +1186,14 @@ async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verifica que Vision3D está corriendo: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Verify Vision3D is running: curl -k {_GPU_API_URL}/api/health"
             })
 
         job = resp.json()
         job_id = job["job_id"]
         _job_log_cursors[job_id] = 0
 
-        await ctx.info(f"Job iniciado: {job_id}")
+        await ctx.info(f"Job started: {job_id}")
 
         return json.dumps({
             "status": "started",
@@ -1071,8 +1202,8 @@ async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str
             "output_dir": str(out_dir),
             "quality": quality_desc,
             "image_copy": str(input_copy),
-            "next_step": f"Llama a vision3d_poll(job_id='{job_id}') para ver el progreso. "
-                         f"Cuando status sea 'completed', llama a vision3d_download(job_id='{job_id}', "
+            "next_step": f"Call vision3d_poll(job_id='{job_id}') to see progress. "
+                         f"When status is 'completed', call vision3d_download(job_id='{job_id}', "
                          f"output_subdir='{params.output_subdir}').",
         }, indent=2)
 
@@ -1082,10 +1213,10 @@ async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str
 
 @mcp.tool(name="shape_generate_text")
 async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
-    """Inicia generación 3D desde texto en Vision3D (non-blocking).
+    """Start 3D generation from text in Vision3D (non-blocking).
 
-    Envía el prompt y arranca el pipeline text-to-3D.
-    Retorna job_id. Usa vision3d_poll para seguir el progreso.
+    Sends the prompt and starts the text-to-3D pipeline.
+    Returns job_id. Use vision3d_poll to follow progress.
     """
     try:
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
@@ -1094,7 +1225,7 @@ async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
         client = _get_http_client()
         quality_desc = params.preset or f"model={params.model or 'turbo'}"
 
-        await ctx.info(f"Enviando prompt a Vision3D: '{params.text_prompt}' ({quality_desc})...")
+        await ctx.info(f"Sending prompt to Vision3D: '{params.text_prompt}' ({quality_desc})...")
 
         form_data = {
             "text_prompt": params.text_prompt,
@@ -1107,14 +1238,14 @@ async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verifica que Vision3D está corriendo: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Verify Vision3D is running: curl -k {_GPU_API_URL}/api/health"
             })
 
         job = resp.json()
         job_id = job["job_id"]
         _job_log_cursors[job_id] = 0
 
-        await ctx.info(f"Job iniciado: {job_id}")
+        await ctx.info(f"Job started: {job_id}")
 
         return json.dumps({
             "status": "started",
@@ -1122,7 +1253,7 @@ async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
             "output_subdir": params.output_subdir,
             "output_dir": str(out_dir),
             "quality": quality_desc,
-            "next_step": f"Llama a vision3d_poll(job_id='{job_id}') para seguir el progreso.",
+            "next_step": f"Call vision3d_poll(job_id='{job_id}') to follow progress.",
         }, indent=2)
 
     except Exception as e:
@@ -1131,10 +1262,10 @@ async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
 
 @mcp.tool(name="texture_mesh_remote")
 async def texture_mesh_remote(params: TextureRemoteInput, ctx: Context) -> str:
-    """Inicia texturizado de mesh en Vision3D (non-blocking).
+    """Start mesh texturing in Vision3D (non-blocking).
 
-    Sube mesh + imagen y arranca el pipeline de texturizado.
-    Retorna job_id. Usa vision3d_poll para seguir el progreso.
+    Uploads mesh + image and starts the texturing pipeline.
+    Returns job_id. Use vision3d_poll to follow progress.
     """
     try:
         out_dir     = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
@@ -1143,18 +1274,18 @@ async def texture_mesh_remote(params: TextureRemoteInput, ctx: Context) -> str:
 
         if not mesh_local.exists():
             return json.dumps({
-                "error": f"Mesh no encontrado: {mesh_local}",
-                "hint":  "Genera primero el mesh con shape_generate_remote."
+                "error": f"Mesh not found: {mesh_local}",
+                "hint":  "Generate the mesh first with shape_generate_remote."
             })
         if not image_local.exists():
             return json.dumps({
-                "error":  f"Imagen no encontrada: {image_local}",
-                "hint":   f"Copia la imagen como '{params.image_filename}' en {out_dir}"
+                "error":  f"Image not found: {image_local}",
+                "hint":   f"Copy the image as '{params.image_filename}' in {out_dir}"
             })
 
         client = _get_http_client()
 
-        await ctx.info(f"Subiendo {params.mesh_filename} + {params.image_filename} a Vision3D...")
+        await ctx.info(f"Uploading {params.mesh_filename} + {params.image_filename} to Vision3D...")
 
         with open(str(mesh_local), "rb") as mf, open(str(image_local), "rb") as imf:
             resp = await client.post(
@@ -1169,44 +1300,43 @@ async def texture_mesh_remote(params: TextureRemoteInput, ctx: Context) -> str:
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verifica Vision3D: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Check Vision3D: curl -k {_GPU_API_URL}/api/health"
             })
 
         job = resp.json()
         job_id = job["job_id"]
         _job_log_cursors[job_id] = 0
 
-        await ctx.info(f"Job de texturizado iniciado: {job_id}")
+        await ctx.info(f"Texturing job started: {job_id}")
 
         return json.dumps({
             "status": "started",
             "job_id": job_id,
             "output_subdir": params.output_subdir,
-            "next_step": f"Llama a vision3d_poll(job_id='{job_id}') para seguir el progreso.",
+            "next_step": f"Call vision3d_poll(job_id='{job_id}') to follow progress.",
         }, indent=2)
 
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
-# ── Tools: sondear progreso y descargar ──────────────────────────────────
+# ── Tools: poll progress and download ──────────────────────────────────
 
 
 @mcp.tool(name="vision3d_poll")
 async def vision3d_poll(params: Vision3DPollInput, ctx: Context) -> str:
-    """Sondea el estado de un job en Vision3D. Devuelve las líneas de log nuevas
-    desde la última llamada (progreso incremental).
+    """Poll job status in Vision3D. Returns new log lines since last call (incremental progress).
 
-    Llama a este tool repetidamente mientras status sea 'running'.
-    Cuando status sea 'completed', llama a vision3d_download.
-    Cuando status sea 'failed', muestra el error al usuario.
+    Call this tool repeatedly while status is 'running'.
+    When status is 'completed', call vision3d_download.
+    When status is 'failed', show the error to the user.
     """
     try:
         client = _get_http_client()
         resp = await client.get(f"/api/jobs/{params.job_id}")
 
         if resp.status_code == 404:
-            return json.dumps({"error": f"Job '{params.job_id}' no encontrado en Vision3D."})
+            return json.dumps({"error": f"Job '{params.job_id}' not found in Vision3D."})
 
         resp.raise_for_status()
         job = resp.json()
@@ -1234,18 +1364,18 @@ async def vision3d_poll(params: Vision3DPollInput, ctx: Context) -> str:
         if status == "completed":
             result["files"] = [f["name"] for f in job.get("files", [])]
             result["next_step"] = (
-                f"Job completado en {elapsed}s. Llama a vision3d_download("
-                f"job_id='{params.job_id}', output_subdir='...') para descargar los archivos."
+                f"Job completed in {elapsed}s. Call vision3d_download("
+                f"job_id='{params.job_id}', output_subdir='...') to download files."
             )
             # Cleanup cursor
             _job_log_cursors.pop(params.job_id, None)
         elif status == "failed":
-            result["error"] = job.get("error", "Error desconocido")
+            result["error"] = job.get("error", "Unknown error")
             _job_log_cursors.pop(params.job_id, None)
         else:
             result["next_step"] = (
-                f"Job en progreso ({elapsed}s). Vuelve a llamar a "
-                f"vision3d_poll(job_id='{params.job_id}') para actualizar."
+                f"Job in progress ({elapsed}s). Call "
+                f"vision3d_poll(job_id='{params.job_id}') again to update."
             )
 
         return json.dumps(result, indent=2)
@@ -1256,16 +1386,16 @@ async def vision3d_poll(params: Vision3DPollInput, ctx: Context) -> str:
 
 @mcp.tool(name="vision3d_download")
 async def vision3d_download(params: Vision3DDownloadInput, ctx: Context) -> str:
-    """Descarga los archivos de un job completado de Vision3D al directorio local.
+    """Download files from a completed Vision3D job to local directory.
 
-    Llama a este tool después de que vision3d_poll reporte status='completed'.
-    Descarga los archivos especificados al subdirectorio local de salida.
+    Call this tool after vision3d_poll reports status='completed'.
+    Downloads specified files to local output subdirectory.
     """
     try:
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        await ctx.info(f"Descargando {len(params.files)} archivos de Vision3D...")
+        await ctx.info(f"Downloading {len(params.files)} files from Vision3D...")
 
         downloaded = []
         failed = []
@@ -1291,10 +1421,10 @@ async def vision3d_download(params: Vision3DDownloadInput, ctx: Context) -> str:
             "textured": textured_ready,
             "baked_texture": baked_ready,
             "next_step": (
-                "Archivos descargados. Importa textured.glb en Maya con maya_execute_python, "
-                "o usa mesh_uv.obj + texture_baked.png para control total de UVs."
+                "Files downloaded. Import textured.glb in Maya with maya_execute_python, "
+                "or use mesh_uv.obj + texture_baked.png for full UV control."
                 if textured_ready else
-                "Descarga parcial. Revisa 'failed' para ver qué archivos fallaron."
+                "Partial download. Check 'failed' to see which files failed."
             ),
         }, indent=2)
 
@@ -1302,9 +1432,194 @@ async def vision3d_download(params: Vision3DDownloadInput, ctx: Context) -> str:
         return json.dumps({"error": str(e)})
 
 
-# ─────────────────────────────────────────────
-# Punto de entrada
-# ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# RAG Tools (mirrors fpt-mcp architecture)
+# ---------------------------------------------------------------------------
+
+class SearchMayaDocsInput(BaseModel):
+    """Parameters for searching Maya API documentation."""
+    query: str = Field(
+        description=(
+            "Natural language query about Maya Python API. Examples: "
+            "'how to set keyframe tangents', 'arnold AOV setup', "
+            "'polyBevel flags', 'USD export with materials'."
+        ),
+    )
+    n_results: int = Field(
+        default=5,
+        description="Number of documentation chunks to return (1-10).",
+        ge=1,
+        le=10,
+    )
+
+
+@mcp.tool(name="search_maya_docs")
+async def search_maya_docs_tool(params: SearchMayaDocsInput) -> str:
+    """Search Maya API documentation using hybrid RAG (semantic + BM25).
+
+    Call this BEFORE writing complex Maya commands, using unfamiliar flags,
+    or when unsure about command names, return values, or syntax.
+    Returns the most relevant documentation chunks with relevance scores.
+
+    Covers: maya.cmds, PyMEL, Arnold/mtoa, Maya-USD, and common anti-patterns.
+    Uses HyDE query expansion + Reciprocal Rank Fusion for high precision.
+    """
+    global _last_rag_score, _rag_called_this_session
+
+    try:
+        from rag.search import search
+        text, relevance = search(params.query, n_results=params.n_results)
+    except ImportError:
+        return json.dumps({
+            "error": "RAG dependencies not installed. Run: pip install chromadb sentence-transformers rank-bm25",
+            "fallback": "Proceed with caution — no documentation verification available.",
+        })
+    except Exception as e:
+        return json.dumps({"error": f"RAG search failed: {e}"})
+
+    _stats["rag_calls"] += 1
+    _stats["tokens_saved"] += _FULL_DOC_TOKENS - _tok(text)
+    _last_rag_score = relevance
+    _rag_called_this_session = True
+
+    result = {
+        "documentation": text,
+        "max_relevance": relevance,
+        "chunks_returned": params.n_results,
+    }
+
+    if relevance < 60:
+        result["warning"] = (
+            f"Low relevance ({relevance}%) — this query may cover an undocumented area. "
+            "Proceed carefully. If your approach works, call learn_pattern to save it."
+        )
+
+    return json.dumps(result, default=str)
+
+
+class LearnPatternInput(BaseModel):
+    """Parameters for saving a validated working pattern."""
+    description: str = Field(
+        description="Short description of what the pattern does (e.g. 'set Arnold AOV via Python').",
+    )
+    code: str = Field(
+        description="The working code/command pattern to remember.",
+    )
+    api: str = Field(
+        default="maya_cmds",
+        description="Which API this pattern belongs to: 'maya_cmds', 'pymel', 'arnold', 'usd', or 'anti_patterns'.",
+    )
+
+
+@mcp.tool(name="learn_pattern")
+async def learn_pattern_tool(params: LearnPatternInput) -> str:
+    """Save a validated working pattern to the RAG knowledge base.
+
+    Call this after a successful operation when search_maya_docs returned
+    low relevance (< 60%), indicating the pattern was not well-documented.
+    The pattern will be available in future sessions.
+
+    Model trust gates: only Sonnet/Opus can write directly.
+    Other models stage candidates for review.
+    """
+    if _model_can_write():
+        # Direct write to docs
+        api_file_map = {
+            "maya_cmds": "CMDS_API.md",
+            "pymel": "PYMEL_API.md",
+            "arnold": "ARNOLD_API.md",
+            "usd": "USD_API.md",
+            "anti_patterns": "ANTI_PATTERNS.md",
+        }
+        doc_file = api_file_map.get(params.api, "CMDS_API.md")
+        doc_path = _SERVER_DIR / "docs" / doc_file
+
+        try:
+            entry = (
+                f"\n\n## Learned: {params.description}\n\n"
+                f"```python\n{params.code}\n```\n"
+            )
+            with open(doc_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+            _stats["patterns_learned"] += 1
+
+            # Clear RAG cache so new pattern is found on next search
+            try:
+                from rag.search import clear_cache
+                clear_cache()
+            except ImportError:
+                pass
+
+            return json.dumps({
+                "status": "learned",
+                "description": params.description,
+                "file": doc_file,
+                "note": "Pattern appended to docs. Run build_index to include in RAG.",
+            })
+        except Exception as e:
+            return json.dumps({"error": f"Failed to write pattern: {e}"})
+    else:
+        # Stage candidate for review
+        candidates_path = _SERVER_DIR / "rag" / "candidates.json"
+        try:
+            candidates = json.loads(candidates_path.read_text()) if candidates_path.exists() else []
+        except Exception:
+            candidates = []
+
+        candidates.append({
+            "description": params.description,
+            "code": params.code,
+            "api": params.api,
+            "model": _get_current_model(),
+            "timestamp": datetime.datetime.now().isoformat(),
+        })
+
+        try:
+            candidates_path.parent.mkdir(parents=True, exist_ok=True)
+            candidates_path.write_text(json.dumps(candidates, indent=2, ensure_ascii=False))
+        except Exception:
+            pass
+
+        _stats["patterns_staged"] += 1
+
+        return json.dumps({
+            "status": "staged",
+            "description": params.description,
+            "note": f"Model '{_get_current_model()}' is read-only. Pattern staged for review.",
+        })
+
+
+@mcp.tool(name="session_stats")
+async def session_stats_tool() -> str:
+    """Show session efficiency statistics: token usage, RAG savings, patterns learned.
+
+    Call at the end of multi-step tasks or when asked about efficiency.
+    Shows how much context was saved by RAG vs loading full documentation.
+    """
+    used = _stats["tokens_in"] + _stats["tokens_out"]
+    saved = _stats["tokens_saved"]
+    total = used + saved
+    ratio = f"{saved / total * 100:.0f}%" if total > 0 else "—"
+    uptime = str(datetime.datetime.now() - _stats_reset_at).split(".")[0]
+
+    return json.dumps({
+        "session_duration": uptime,
+        "tool_calls": _stats["exec_calls"],
+        "rag_calls": _stats["rag_calls"],
+        "tokens_used": used,
+        "tokens_saved_by_rag": saved,
+        "token_efficiency": ratio,
+        "patterns_learned": _stats["patterns_learned"],
+        "patterns_staged": _stats["patterns_staged"],
+        "safety_blocks": _stats["safety_blocks"],
+        "cache_hits": _stats["cache_hits"],
+        "full_doc_baseline": _FULL_DOC_TOKENS,
+    }, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     mcp.run()

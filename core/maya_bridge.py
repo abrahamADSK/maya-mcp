@@ -1,15 +1,15 @@
 """
-maya_bridge.py — Capa de comunicación con Maya via Command Port.
+maya_bridge.py — Communication layer with Maya via Command Port.
 
-Gestiona la conexión TCP con Maya, envío de comandos MEL/Python,
-y recepción de resultados. Es el módulo compartido que usan todos
-los tools del MCP server.
+Manages TCP connection with Maya, sending MEL/Python commands,
+and receiving results. It is the shared module used by all
+MCP server tools.
 
 Features:
-  - Patrón de doble conexión Palmer (execute + read result)
-  - Namespace scoping: todas las variables internas usan prefijo _mcp_
-  - Undo chunk wrapper: agrupa operaciones en un solo Ctrl+Z
-  - Batch execution: múltiples bloques de código en una sola conexión
+  - Palmer dual connection pattern (execute + read result)
+  - Namespace scoping: all internal variables use _mcp_ prefix
+  - Undo chunk wrapper: groups operations into a single Ctrl+Z
+  - Batch execution: multiple code blocks in a single connection
 """
 
 import socket
@@ -19,34 +19,34 @@ from typing import Any, Optional
 
 logger = logging.getLogger("maya_mcp.bridge")
 
-# Configuración por defecto
+# Default configuration
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 7001
 DEFAULT_TIMEOUT = 10.0
 
 
 class MayaBridgeError(Exception):
-    """Error base para problemas de comunicación con Maya."""
+    """Base error for Maya communication problems."""
     pass
 
 
 class MayaConnectionError(MayaBridgeError):
-    """No se puede conectar a Maya."""
+    """Cannot connect to Maya."""
     pass
 
 
 class MayaExecutionError(MayaBridgeError):
-    """Maya devolvió un error al ejecutar el comando."""
+    """Maya returned an error when executing the command."""
     pass
 
 
 class MayaBridge:
     """
-    Puente de comunicación con Maya via Command Port (TCP).
+    Communication bridge with Maya via Command Port (TCP).
 
-    Envía comandos MEL o Python a Maya y recoge las respuestas.
-    Usa el patrón de doble conexión de Palmer: una para ejecutar
-    y guardar resultado, otra para recuperarlo.
+    Sends MEL or Python commands to Maya and collects responses.
+    Uses Palmer's dual connection pattern: one to execute
+    and save result, another to retrieve it.
     """
 
     def __init__(
@@ -60,7 +60,7 @@ class MayaBridge:
         self.timeout = timeout
 
     def _send_raw(self, command: str) -> str:
-        """Envía un comando MEL crudo a Maya y devuelve la respuesta."""
+        """Sends a raw MEL command to Maya and returns the response."""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(self.timeout)
@@ -81,40 +81,40 @@ class MayaBridge:
 
         except ConnectionRefusedError:
             raise MayaConnectionError(
-                f"No se puede conectar a Maya en {self.host}:{self.port}. "
-                "Verifica que Maya está abierto y el Command Port activo."
+                f"Cannot connect to Maya at {self.host}:{self.port}. "
+                "Verify that Maya is open and the Command Port is active."
             )
         except socket.timeout:
             raise MayaConnectionError(
-                f"Timeout conectando a Maya ({self.timeout}s). "
-                "Maya podría estar ocupado o el puerto incorrecto."
+                f"Timeout connecting to Maya ({self.timeout}s). "
+                "Maya might be busy or the port is incorrect."
             )
 
     def send_mel(self, command: str) -> str:
-        """Ejecuta un comando MEL en Maya."""
+        """Executes a MEL command in Maya."""
         logger.debug(f"MEL: {command}")
         result = self._send_raw(command)
-        logger.debug(f"Resultado: {result[:200]}")
+        logger.debug(f"Result: {result[:200]}")
         return result
 
     def send_python(self, code: str) -> str:
         """
-        Ejecuta código Python en Maya.
+        Executes Python code in Maya.
 
-        Usa el patrón de archivo temporal + doble conexión:
-        1. Escribe el código Python a un archivo temporal en /tmp
-        2. Envía a Maya un comando MEL simple que ejecuta ese archivo
-        3. Recupera _mcp_result en segunda conexión
+        Uses the temporary file + dual connection pattern:
+        1. Writes the Python code to a temporary file in /tmp
+        2. Sends Maya a simple MEL command that executes that file
+        3. Retrieves _mcp_result in second connection
 
-        Este enfoque evita todos los problemas de escape de comillas,
-        llaves y caracteres especiales al pasar código inline via MEL.
+        This approach avoids all quote escaping, brace,
+        and special character problems when passing code inline via MEL.
         """
         import tempfile
         import os
 
-        # Envolver el código del usuario para capturar resultado.
-        # Todas las variables internas usan prefijo _mcp_ para evitar
-        # colisiones con variables del usuario en el Script Editor.
+        # Wrap the user code to capture result.
+        # All internal variables use _mcp_ prefix to avoid
+        # collisions with user variables in the Script Editor.
         wrapper = (
             "import maya.cmds as cmds\n"
             "import json\n"
@@ -131,11 +131,11 @@ class MayaBridge:
             "    _mcp_result = f'ERROR: {type(e).__name__}: {e}'\n"
         )
 
-        # Escribir código del usuario a archivo temporal
+        # Write user code to temporary file
         tmp_user = None
         tmp_wrapper = None
         try:
-            # Archivo con el código del usuario
+            # File with the user code
             tmp_user = tempfile.NamedTemporaryFile(
                 mode='w', suffix='.py', prefix='_mcp_user_',
                 dir='/tmp', delete=False
@@ -143,7 +143,7 @@ class MayaBridge:
             tmp_user.write(code)
             tmp_user.close()
 
-            # Archivo con el wrapper que ejecuta el código del usuario
+            # File with the wrapper that executes the user code
             tmp_wrapper = tempfile.NamedTemporaryFile(
                 mode='w', suffix='.py', prefix='_mcp_wrap_',
                 dir='/tmp', delete=False
@@ -152,11 +152,11 @@ class MayaBridge:
             tmp_wrapper.write(wrapper)
             tmp_wrapper.close()
 
-            # Conexión 1: ejecutar el wrapper (comando MEL simple, sin escaping)
+            # Connection 1: execute the wrapper (simple MEL command, no escaping)
             mel_cmd = f'python("exec(open(\'{tmp_wrapper.name}\').read())")'
             self._send_raw(mel_cmd)
 
-            # Conexión 2: recuperar resultado
+            # Connection 2: retrieve result
             result = self._send_raw('python("print(_mcp_result)")')
 
             if result.startswith("ERROR:"):
@@ -165,7 +165,7 @@ class MayaBridge:
             return result
 
         finally:
-            # Limpiar archivos temporales
+            # Clean up temporary files
             if tmp_user and os.path.exists(tmp_user.name):
                 os.unlink(tmp_user.name)
             if tmp_wrapper and os.path.exists(tmp_wrapper.name):
@@ -173,15 +173,15 @@ class MayaBridge:
 
     def execute(self, code: str, as_json: bool = False) -> Any:
         """
-        Ejecuta código Python en Maya con opción de parsear JSON.
+        Executes Python code in Maya with option to parse JSON.
 
         Args:
-            code: Código Python a ejecutar en Maya.
-                  Debe asignar su resultado a la variable 'result'.
-            as_json: Si True, intenta parsear la respuesta como JSON.
+            code: Python code to execute in Maya.
+                  Must assign its result to the 'result' variable.
+            as_json: If True, attempts to parse the response as JSON.
 
         Returns:
-            String con el resultado, o dict/list si as_json=True.
+            String with the result, or dict/list if as_json=True.
 
         Example:
             bridge.execute("result = cmds.ls(type='mesh')", as_json=True)
@@ -199,16 +199,15 @@ class MayaBridge:
     def execute_in_undo(self, code: str, chunk_name: str = "mcp_operation",
                         as_json: bool = False) -> Any:
         """
-        Ejecuta código Python en Maya envuelto en un undo chunk.
+        Executes Python code in Maya wrapped in an undo chunk.
 
-        Todas las operaciones dentro del chunk se agrupan en un solo
-        Ctrl+Z, para que el usuario pueda deshacer todo lo que hizo
-        un tool con un solo undo.
+        All operations within the chunk are grouped into a single
+        Ctrl+Z, so the user can undo everything a tool did with one undo.
 
         Args:
-            code: Código Python a ejecutar.
-            chunk_name: Nombre descriptivo del chunk (visible en undo history).
-            as_json: Si True, parsear resultado como JSON.
+            code: Python code to execute.
+            chunk_name: Descriptive name of the chunk (visible in undo history).
+            as_json: If True, parse result as JSON.
         """
         wrapped = (
             "import maya.cmds as cmds\n"
@@ -228,19 +227,19 @@ class MayaBridge:
 
     def execute_batch(self, code_blocks: list, chunk_name: str = "mcp_batch") -> list:
         """
-        Ejecuta múltiples bloques de código en una sola conexión TCP.
+        Executes multiple code blocks in a single TCP connection.
 
-        Reduce latencia significativamente cuando hay muchas operaciones
-        seguidas (ej: crear 10 objetos, importar + ajustar + material).
+        Significantly reduces latency when there are many consecutive
+        operations (e.g., create 10 objects, import + adjust + material).
 
-        Todos los bloques se agrupan en un solo undo chunk.
+        All blocks are grouped in a single undo chunk.
 
         Args:
-            code_blocks: Lista de strings de código Python.
-            chunk_name: Nombre del undo chunk.
+            code_blocks: List of Python code strings.
+            chunk_name: Name of the undo chunk.
 
         Returns:
-            Lista de resultados (uno por bloque).
+            List of results (one per block).
         """
         if not code_blocks:
             return []
@@ -276,10 +275,10 @@ class MayaBridge:
 
     def ping(self) -> dict:
         """
-        Verifica la conexión con Maya y devuelve info del entorno.
+        Checks the connection with Maya and returns environment info.
 
         Returns:
-            dict con version, platform, scene_objects, etc.
+            dict with version, platform, scene_objects, etc.
         """
         version = self.send_mel("about -v")
         os_info = self.send_mel("about -os")

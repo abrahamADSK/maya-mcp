@@ -1,362 +1,238 @@
-# maya-mcp — Contexto Crítico para Claude
+# maya-mcp — Critical Context for Claude
 
-> **Última actualización**: 2026-03-30
-> Este documento persiste entre sesiones de Claude Code. Consulta aquí para entender la arquitectura, configuración y flujos de trabajo de maya-mcp.
+> **Last updated**: 2026-03-31
+> This document persists across Claude Code sessions. Consult here to understand the architecture, configuration, and workflows of maya-mcp.
 
 ---
 
-## 1. Arquitectura
+## 1. Architecture
 
-**maya-mcp** es un servidor **MCP (Model Context Protocol)** basado en **FastMCP** que expone herramientas para:
+**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **27 tools** organized in three layers:
 
-1. **Controlar Autodesk Maya** (local, macOS)
-   - Se comunica con Maya via **TCP Command Port** (puerto 7001 por defecto)
-   - Usa `maya_bridge.py` (socket bridge) para ejecutar comandos MEL/Python
+1. **Maya Control** (18 tools) — Scene manipulation, modeling, animation, I/O, rendering
+   - Communicates with Maya via **TCP Command Port** (default port 7001)
+   - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
+   - All operations use undo chunks for safe rollback
 
-2. **Orquestar Vision3D** (servidor GPU remoto)
-   - Se comunica via **REST API HTTP** con Vision3D (LAN directa, puerto 8000)
-   - Soporta generación 3D desde imagen (shape generation + texturizado)
-   - Soporta generación desde texto (text-to-3D)
-   - Soporta texturizado de meshes existentes
+2. **Vision3D Integration** (6 tools) — AI-powered 3D generation on remote GPU
+   - Communicates via **HTTP REST API** with Vision3D (port 8000)
+   - Supports image-to-3D, text-to-3D, and texture painting
+   - Non-blocking async pattern: submit → poll → download
+
+3. **RAG & Intelligence** (3 tools) — Documentation search, self-learning, analytics
+   - Hybrid search: ChromaDB semantic + BM25 lexical, fused via RRF
+   - HyDE adaptive query expansion for 5 Maya API domains
+   - Anti-hallucination safety layer (14+ dangerous patterns)
+   - Model trust gates for self-learning patterns
+   - Token tracking with efficiency reporting
 
 ```
 ┌──────────────────┐
 │   Claude Code    │
 └────────┬─────────┘
-         │ (MCP Protocol)
-┌────────▼──────────────────────────────┐
-│   maya-mcp FastMCP Server             │
-│  (core/server.py: 13 tools)           │
-├────────────────────────────────────────┤
-│  Maya Bridge (TCP)     Vision3D REST   │
-└────┬───────────────────────┬──────────┘
+         │ (MCP Protocol — stdio)
+┌────────▼──────────────────────────────────────────┐
+│   maya-mcp FastMCP Server (27 tools)              │
+│                                                    │
+│  ┌─────────┐ ┌─────────┐ ┌──────────────────────┐│
+│  │ RAG     │ │ Safety  │ │ Token Tracking       ││
+│  │ Engine  │ │ Module  │ │ + Model Trust Gates  ││
+│  └────┬────┘ └────┬────┘ └──────────────────────┘│
+│       │           │                                │
+├───────┼───────────┼────────────────────────────────┤
+│  Maya Bridge (TCP)     Vision3D REST Client        │
+└────┬───────────────────────┬──────────────────────┘
      │ :7001 Command Port    │ HTTP :8000
      │                       │
 ┌────▼──────────────┐   ┌───▼──────────────────┐
 │ Autodesk Maya     │   │ Vision3D GPU Server  │
-│ (local Mac)       │   │ (glorfindel)         │
-└───────────────────┘   │ Hunyuan3D-2          │
-                        └──────────────────────┘
+│ (local Mac)       │   │ Hunyuan3D-2          │
+└───────────────────┘   └──────────────────────┘
 ```
 
 ---
 
-## 2. Entorno de Ejecución
+## 2. Key Differentiators (vs Other Maya MCP Servers)
 
-### Ubicación
-- **Repositorio**: `~/Claude_projects/maya-mcp-project/` (Mac local)
-- **Servidor MCP**: corre con `python core/server.py` (stdio transport estándar MCP)
-- **Configuración MCP**: `~/.claude.json` (vía `claude mcp add -s user`)
-- **Permisos de tools**: `~/.claude/settings.json`
+### RAG-Powered Documentation Search
+`search_maya_docs` provides hybrid search across 5 curated corpora (maya.cmds, PyMEL, Arnold/mtoa, Maya-USD, anti-patterns). Uses ChromaDB for semantic similarity + BM25 for exact API name matching, fused via Reciprocal Rank Fusion. The LLM should call this BEFORE writing any unfamiliar Maya commands.
 
-### Variables de Entorno (`.env`)
+### HyDE (Hypothetical Document Embedding)
+Short queries like "set keyframe tangent" are automatically expanded with domain-specific code templates before embedding. The system detects which Maya API domain the query targets (cmds, PyMEL, Arnold, USD, MEL) and uses the appropriate template.
+
+### Anti-Hallucination Safety Layer
+`safety.py` scans code for 14+ dangerous patterns before execution: bulk deletes, undo tampering, filesystem operations, plugin deregistration, namespace force-deletion, etc. Each pattern includes an explanation and safe alternative. Integrated into `maya_execute_python`, `maya_delete`, and other mutation tools.
+
+### Self-Learning Patterns
+`learn_pattern` saves validated working patterns to the docs corpus. Model trust gates: only Sonnet/Opus write directly; other models stage candidates for review in `rag/candidates.json`.
+
+### Token Efficiency Tracking
+`session_stats` reports tokens used vs saved by RAG, safety blocks, patterns learned, cache hits, and full-doc baseline comparison.
+
+---
+
+## 3. Execution Environment
+
+### Location
+- **Repository**: `~/Claude_projects/maya-mcp-project/` (local Mac)
+- **MCP Server**: runs with `python core/server.py` (standard MCP stdio transport)
+- **MCP Configuration**: `~/.claude.json` (via `claude mcp add -s user`)
+- **Tool Permissions**: `~/.claude/settings.json`
+
+### Environment Variables (`.env`)
 ```bash
-# Maya Local
-MAYA_HOST=localhost          # Host donde corre Maya (default: localhost)
-MAYA_PORT=7001              # Puerto Command Port (default: 7001)
-
-# Vision3D (GPU remoto — HTTP directo, puerto 8000)
-GPU_API_URL=http://glorfindel:8000       # HTTP endpoint del GPU server
-GPU_API_KEY=                              # Dejar vacío si acceso abierto en LAN
+MAYA_HOST=localhost          # Host where Maya is running
+MAYA_PORT=7001              # Command Port
+GPU_API_URL=http://gpu-host:8000  # Vision3D HTTP endpoint
+GPU_API_KEY=                      # Leave empty for open LAN access
 ```
 
-**Nota**: La variable `GPU_API_URL` también se configura en `~/.claude.json` vía `claude mcp add`.
-
-### Requisitos
-- **macOS Ventura+** con Apple Silicon (soporte Intel)
-- **Autodesk Maya 2023+** (testeado en 2026)
-- **Arnold** (`mtoa` plugin, incluido con Maya)
-- **Command Port habilitado** en `userSetup.py` de Maya:
-  ```python
-  cmds.commandPort(name=':7001', sourceType='mel')
-  ```
-- **Python 3.10+** para ejecutar `core/server.py`
+### Requirements
+- **macOS Ventura+** with Apple Silicon (Intel support available)
+- **Autodesk Maya 2023+** (tested on 2026)
+- **Arnold** (`mtoa` plugin, included with Maya)
+- **Python 3.10+** to run `core/server.py`
+- **RAG dependencies**: `chromadb`, `sentence-transformers`, `rank-bm25` (optional but recommended)
+- **Command Port enabled** in Maya's `userSetup.py`
 
 ---
 
-## 3. Tools Disponibles
+## 4. Available Tools (27 total)
 
-### Maya Tools (11 herramientas)
+### Maya Tools (18 tools)
 
-| Tool | Descripción |
+| Tool | Description |
 |------|-------------|
-| `maya_launch` | Abre Maya y espera a que el Command Port responda (max 90s) |
-| `maya_ping` | Verifica conexión con Maya, devuelve versión, escena actual, renderer |
-| `maya_create_primitive` | Crea primitivas 3D (cube, sphere, cylinder, cone, plane, torus) con pos/rot/scale |
-| `maya_assign_material` | Crea y asigna material (lambert, blinn, phong, aiStandardSurface) con color RGB |
-| `maya_transform` | Mueve, rota, escala objetos en world space o relative |
-| `maya_list_scene` | Lista objetos de escena con filtros por tipo o nombre (wildcards) |
-| `maya_delete` | Elimina objetos por nombre (soporta wildcards como `*sphere*`) |
-| `maya_execute_python` | Ejecuta código Python arbitrario en Maya (result variable) |
-| `maya_new_scene` | Crea nueva escena vacía (descarta sin guardar) |
-| `maya_save_scene` | Guarda escena actual (requiere nombre previo) |
-| `maya_create_light` | Crea luces (directional, point, spot, area, ambient) con intensidad/color/posición |
-| `maya_create_camera` | Crea cámara con posición, look_at point, focal length configurables |
+| `maya_launch` | Opens Maya and waits for Command Port to respond (max 90s) |
+| `maya_ping` | Verifies connection, returns version, current scene, renderer |
+| `maya_create_primitive` | Creates 3D primitives (cube, sphere, cylinder, cone, plane, torus) |
+| `maya_assign_material` | Creates and assigns material (lambert, blinn, phong, aiStandardSurface) |
+| `maya_transform` | Moves, rotates, scales objects in world/object space |
+| `maya_list_scene` | Lists scene objects with filters by type or name |
+| `maya_delete` | Deletes objects (with safety checks on wildcards) |
+| `maya_create_light` | Creates lights (directional, point, spot, area, ambient) |
+| `maya_create_camera` | Creates camera with focal length and look-at target |
+| `maya_execute_python` | Executes arbitrary Python in Maya (with safety scanning) |
+| `maya_new_scene` | Creates new empty scene |
+| `maya_save_scene` | Saves current scene |
+| `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
+| `maya_set_keyframe` | Keyframe any attribute with tangent control |
+| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale |
+| `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
+| `maya_scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
+| `maya_shelf_button` | Create shelf buttons with custom Python commands |
 
-### Vision3D Tools (6 herramientas)
+### Vision3D Tools (6 tools)
 
-| Tool | Descripción |
+| Tool | Description |
 |------|-------------|
-| `vision3d_health` | Verifica si el servidor Vision3D está disponible, GPU, modelos, text-to-3D |
-| `shape_generate_remote` | Inicia generación 3D texturizada desde imagen (non-blocking, retorna job_id) |
-| `shape_generate_text` | Inicia generación 3D desde prompt de texto (non-blocking, retorna job_id) |
-| `texture_mesh_remote` | Inicia texturizado de mesh existente (non-blocking, retorna job_id) |
-| `vision3d_poll` | Sondea estado del job, devuelve líneas de log nuevas (progreso incremental) |
-| `vision3d_download` | Descarga archivos de job completado al directorio local |
+| `vision3d_health` | Checks GPU server availability, models, text-to-3D status |
+| `shape_generate_remote` | Image-to-3D generation (non-blocking, returns job_id) |
+| `shape_generate_text` | Text-to-3D generation (non-blocking, returns job_id) |
+| `texture_mesh_remote` | Texture existing mesh (non-blocking, returns job_id) |
+| `vision3d_poll` | Poll job status with incremental log lines |
+| `vision3d_download` | Download completed results to local directory |
+
+### RAG & Intelligence Tools (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `search_maya_docs` | Hybrid RAG search across 5 Maya API corpora (semantic + BM25 + HyDE + RRF) |
+| `learn_pattern` | Save validated patterns to docs (with model trust gates) |
+| `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned |
 
 ---
 
-## 4. Flujo Granular Vision3D (Non-Blocking)
+## 5. RAG System Architecture
 
-Vision3D opera con un **patrón non-blocking de 3 pasos**:
+### Documentation Corpora (core/docs/)
+- `CMDS_API.md` — maya.cmds reference: 15+ sections covering scene management, primitives, transforms, selection, hierarchy, attributes, modeling, UVs, materials, lights, cameras, animation, rendering, plugins, deformers, constraints, joints, namespaces, undo, viewport
+- `PYMEL_API.md` — PyMEL object-oriented API: nodes, attributes, connections, transforms, data types, mesh components, key differences from cmds
+- `ARNOLD_API.md` — Arnold/mtoa: shaders (aiStandardSurface attributes), lights, render settings, AOVs, textures, PBR setup pattern
+- `USD_API.md` — Maya-USD: import/export commands, proxy shapes, pxr Python API, layers, composition, workflow patterns
+- `ANTI_PATTERNS.md` — Common hallucinations: wrong command names, wrong flag names, wrong setAttr syntax, wrong return value assumptions, deprecated commands, dangerous patterns, common misconceptions
 
-### Paso 1: Iniciar Job (Retorna job_id inmediatamente)
-```python
-# Ejemplo con shape_generate_remote
-response = shape_generate_remote(
-    image_path="/path/to/reference.png",
-    output_subdir="asset_001",
-    preset="medium"  # low/medium/high/ultra
-)
-# Respuesta: {"status": "started", "job_id": "abc123", ...}
+### Search Pipeline
+1. Query arrives at `search_maya_docs`
+2. HyDE expands query with domain-specific code template (detects cmds/PyMEL/Arnold/USD/MEL)
+3. ChromaDB semantic search with HyDE-expanded query (BGE-large-en-v1.5)
+4. BM25 lexical search on same query (exact API name matching)
+5. Reciprocal Rank Fusion combines both ranked lists (k=60)
+6. Top-N results returned with relevance scores (0-100%)
+
+### Building the Index
+```bash
+cd maya-mcp-project
+python -m core.rag.build_index
 ```
-
-### Paso 2: Sondear Progreso (Llamar repetidamente)
-```python
-# Mientras status sea 'running', llamar vision3d_poll
-response = vision3d_poll(job_id="abc123")
-# Respuesta:
-# {
-#   "status": "running",
-#   "elapsed_s": 45,
-#   "new_log_lines": ["[Shape] Generating...", "[Shape] Done."],
-#   "total_log_lines": 12,
-#   "next_step": "Vuelve a llamar a vision3d_poll..."
-# }
-```
-
-**Clave**: `_job_log_cursors` es un dict que trackea la posición de lectura de logs por `job_id`, permitiendo entrega **incremental** de nuevas líneas en cada poll.
-
-### Paso 3: Descargar Resultados (Cuando status='completed')
-```python
-response = vision3d_download(
-    job_id="abc123",
-    output_subdir="asset_001",
-    files=["textured.glb", "mesh_uv.obj", "texture_baked.png", "mesh.glb"]
-)
-# Respuesta:
-# {
-#   "status": "ok",
-#   "output_dir": "/path/to/3d_output/asset_001",
-#   "downloaded": [{"name": "textured.glb", "size_kb": 2048}, ...],
-#   "failed": [],
-#   "textured": true,
-#   "baked_texture": true
-# }
-```
-
-### Pre-requisito: Verificar disponibilidad Vision3D
-**ANTES de ofrecer opciones de IA al usuario**, siempre llama:
-```python
-health = vision3d_health()
-# Respuesta: {"available": true, "gpu": "NVIDIA RTX 4090", "vram_gb": 24, "text_to_3d": "enabled", ...}
-```
+First run downloads embedding model (~570 MB, cached). Index stored in `core/rag/index/`.
 
 ---
 
-## 5. Modelos Pydantic de Entrada
+## 6. Safety Module
 
-### ShapeGenerateInput
-```python
-class ShapeGenerateInput(BaseModel):
-    image_path: str              # Ruta local absoluta a imagen (.jpg/.png)
-    output_subdir: str = "0"     # Subdirectorio en reference/3d_output/
-    preset: str = ""             # "low" | "medium" | "high" | "ultra"
-    model: str = ""              # "turbo" (~1 min) | "full" (~5 min)
-    octree_resolution: int = 0   # 256/384/512 (0 = usa preset)
-    num_inference_steps: int = 0 # turbo: 5-10, full: 30-50
-    target_faces: int = 50000    # Caras tras decimación (0 = sin decimación)
+`core/safety.py` checks for 14+ dangerous patterns:
+- Bulk deletes without specific targets
+- Undo system tampering (stateWithoutFlush=False)
+- Direct filesystem deletion (os.remove, shutil.rmtree)
+- Path traversal (../)
+- Plugin deregistration while nodes exist
+- Namespace deletion with content
+- Polygon reduction on referenced geometry
+- MEL source injection from untrusted paths
+- Critical node unlocking
+- Reference removal without user confirmation
+- Renderer changes in production scenes
+
+Integrated into: `maya_execute_python`, `maya_delete`. Returns explanation + safe alternative.
+
+---
+
+## 7. Vision3D Flow (Non-Blocking)
+
+```
+Step 1: vision3d_health() → verify GPU server
+Step 2: shape_generate_remote(image_path=...) → returns job_id
+Step 3: vision3d_poll(job_id=...) → poll until completed
+Step 4: vision3d_download(job_id=...) → download GLB, OBJ, textures
+Step 5: maya_execute_python(...) → import into Maya
 ```
 
-**Presets de calidad**:
-- `low`: turbo, octree 256, 10 steps, 10k faces (~1 min, preview rápido)
-- `medium`: turbo, octree 384, 20 steps, 50k faces (~2 min, general)
-- `high`: full, octree 384, 30 steps, 150k faces (~8 min, detallado)
-- `ultra`: full, octree 512, 50 steps, sin límite (~12 min, máximo detalle)
+Quality presets: `low` (~1 min), `medium` (~2 min), `high` (~8 min), `ultra` (~12 min).
 
-### ShapeTextInput
-```python
-class ShapeTextInput(BaseModel):
-    text_prompt: str             # Descripción en inglés
-    output_subdir: str = "0"
-    preset: str = ""
-    model: str = ""
-    octree_resolution: int = 0
-    num_inference_steps: int = 0
-    target_faces: int = 0
+---
+
+## 8. Cross-MCP Pipeline (maya-mcp + fpt-mcp)
+
+All three MCP servers (maya-mcp, fpt-mcp, flame-mcp) share the same architecture: hybrid RAG, HyDE, safety layer, self-learning, token tracking, model trust gates.
+
+Typical publish workflow:
 ```
-
-### TextureRemoteInput
-```python
-class TextureRemoteInput(BaseModel):
-    output_subdir: str           # Subdirectorio de salida
-    mesh_filename: str = "mesh.glb"
-    image_filename: str = "input.png"
-```
-
-### Vision3DPollInput
-```python
-class Vision3DPollInput(BaseModel):
-    job_id: str  # ID retornado por shape_generate_remote/text/texture
-```
-
-### Vision3DDownloadInput
-```python
-class Vision3DDownloadInput(BaseModel):
-    job_id: str                  # ID del job completado
-    output_subdir: str           # Subdirectorio local
-    files: List[str] = [...]     # Archivos a descargar
+1. fpt-mcp: sg_find → search for Asset in ShotGrid
+2. fpt-mcp: sg_download → download reference image
+3. maya-mcp: shape_generate_remote → generate 3D on Vision3D
+4. maya-mcp: vision3d_poll → monitor progress
+5. maya-mcp: vision3d_download → download results
+6. maya-mcp: maya_execute_python → import in Maya
+7. maya-mcp: maya_save_scene → save scene
+8. fpt-mcp: tk_publish → register PublishedFile in ShotGrid
 ```
 
 ---
 
-## 6. Bugs Conocidos & Historial
+## 9. MANDATORY WORKFLOW for Claude
 
-### Maya Command Port: Conexión rechazada
-**Problema**: `maya-mcp` a veces no puede ejecutar comandos en Maya (error: "Connection refused")
-
-**Causa**: Command Port no está habilitado en `userSetup.py` de Maya
-
-**Solución**:
-1. En Maya Script Editor, ejecutar:
-   ```mel
-   commandPort -name ":7001" -sourceType mel;
-   ```
-2. O añadir permanentemente a `~/Library/Preferences/Autodesk/maya/<version>/scripts/userSetup.py`:
-   ```python
-   import maya.cmds as cmds
-   try:
-       cmds.commandPort(name=':7001', sourceType='mel')
-   except:
-       pass
-   ```
-3. Reiniciar Maya
-
-### Reinicio del servidor MCP
-**PENDIENTE**: Verificar si hay que reiniciar `maya-mcp` después de cambios en `server.py`.
-- Depende de cómo se lance (stdio vs. persistent process)
-- Si usa Claude Code CLI con `mcp run`, probablemente requiere reinicio manual
+1. **ALWAYS call `search_maya_docs` first** when unsure about Maya API syntax, flag names, return values, or command names. NEVER guess.
+2. **Heed safety warnings** — the safety module blocks dangerous patterns for a reason.
+3. **Common hallucinations to avoid**:
+   - `cmds.polyCube()` returns a LIST, not a string → use `[0]` for transform name
+   - `cmds.setAttr` for compound types REQUIRES `type=` parameter
+   - `cmds.file(import=True)` is WRONG → use `i=True` (import is a Python keyword)
+   - Flag names use SHORT form: `w=` not `width=`, `r=` not `radius=`
+4. **Call `learn_pattern`** when search_maya_docs returned < 60% relevance but the operation worked.
+5. **Call `session_stats`** at the end of multi-step tasks.
+6. **Always wrap operations in undo chunks** for safe rollback.
 
 ---
 
-## 7. Relación con Otros Proyectos
-
-### vision3d (GitHub: abrahamADSK/vision3d)
-- **Ubicación**: Servidor GPU remoto (`glorfindel`), directorio `/home/flame/ai-studio/vision3d/`
-- **Función**: Genera formas 3D y texturas vía Hunyuan3D-2
-- **Interfaz**: REST API HTTP (puerto 8000)
-- **Consumido por**: `maya-mcp` vía `shape_generate_remote`, `shape_generate_text`, `texture_mesh_remote`
-- **Text-to-3D**: Pipeline completo de 3 fases (SDXL Turbo → rembg → shape → paint)
-- **Web UI**: `http://glorfindel:8000/` con tabs Image→3D, Text→3D + visor 3D orbit
-
-### fpt-mcp
-- **Ubicación**: `~/Claude_projects/fpt-mcp/`
-- **Función**: ShotGrid API + Toolkit publish + Consola Qt que orquesta `maya-mcp` + otras herramientas vía Claude Code CLI
-- **System prompt**: Define el workflow completo (qué herramientas llamar, cuándo, en qué orden)
-- **Relación**: `fpt-mcp` es el "director", `maya-mcp` es una "pieza de la orquesta"
-- **Toolkit**: `tk_config.py` descubre dinámicamente la PipelineConfiguration del proyecto para resolver publish paths. Soporta dos modos: discovery automático (Advanced Setup) y fallback (templates estándar tk-config-default2)
-
-### Pipeline de publicación (cross-MCP: maya-mcp + fpt-mcp)
-
-Flujo típico para publicar geometría generada por Vision3D:
-
-```
-1. fpt-mcp: sg_find → buscar Asset y referencias en ShotGrid
-2. fpt-mcp: sg_download → descargar imagen de referencia
-3. maya-mcp: shape_generate_remote → generar 3D en Vision3D (GPU)
-4. maya-mcp: vision3d_poll → monitorizar progreso
-5. maya-mcp: vision3d_download → descargar GLB, OBJ, texturas
-6. maya-mcp: maya_execute_python → importar en Maya, normalizar geometría
-7. maya-mcp: maya_save_scene → guardar escena .ma/.mb
-8. fpt-mcp: tk_publish → resolver path Toolkit + copiar + registrar PublishedFile
-```
-
-**Tipos de publicación soportados** (fase prototipo):
-
-| Tipo | Template Asset | Template Shot |
-|------|---------------|---------------|
-| Maya Scene | `maya_asset_publish` | `maya_shot_publish` |
-| USD Scene | `usd_asset_publish` | `usd_shot_publish` |
-| FBX Model | `fbx_asset_publish` | `fbx_shot_publish` |
-| Texture | `texture_asset_publish` | — |
-| Review MOV | `review_asset_mov` | `review_shot_mov` |
-
-Los templates de USD, FBX, textures y review son "derived templates" inyectados por `tk_config.py`. Si el proyecto tiene config custom con estos templates ya definidos, se usan los del proyecto.
-
-### Los tres repos (maya-mcp, vision3d, fpt-mcp)
-- Ubicados en `~/Claude_projects/` en el Mac local
-- Se comunican vía HTTP REST API (no SSH directo)
-- **Importante**: NUNCA mezclar comandos de Mac y glorfindel en el mismo bloque de código
-
----
-
-## 8. Notas para Desarrollo
-
-### Cambios en server.py
-- Después de editar `core/server.py`, **hay que reiniciar el servidor MCP**
-- Si usa Claude Code CLI, requiere un nuevo comando `mcp run`
-
-### Añadir nuevos tools
-1. Definir modelo Pydantic de entrada (en `server.py`)
-2. Implementar función con decorador `@mcp.tool(name="nombre_tool")`
-3. Añadir permisos en `~/.claude/settings.json`:
-   ```json
-   {
-     "mcp_tools": [
-       { "name": "nombre_tool", "enabled": true }
-     ]
-   }
-   ```
-4. Reiniciar servidor MCP
-
-### Context parameter (`ctx: Context`)
-- Se importa de `mcp.server.fastmcp`
-- Se usa para `ctx.info(mensaje)` para logging/progreso
-- **Future-proofing**: Cuando MCP soporte progreso nativo, estos `ctx.info()` se mostrarán automáticamente en Claude
-
-### Estructura de logs incremental
-- `_job_log_cursors: dict[str, int]` trackea la posición de lectura de logs por `job_id`
-- En `vision3d_poll()`, devuelve solo líneas nuevas desde el último poll
-- Permite UI responsiva y no repetir logs
-
-### Directorio de salida 3D (MacOS)
-```
-~/Developer/Maya_projects/reference/3d_output/
-├── 0/              # Default output_subdir
-│   ├── input.png          # Copia de imagen de entrada
-│   ├── mesh.glb           # Shape generada (decimada)
-│   ├── mesh_uv.obj        # Mesh con UVs para texturizado
-│   ├── texture_baked.png  # Mapa de textura baked
-│   └── textured.glb       # GLB final con textura embebida
-├── asset_001/
-├── asset_002/
-└── ...
-```
-
----
-
-## 9. Checklist de Configuración Inicial
-
-- [ ] Clonar `maya-mcp` en `~/Claude_projects/maya-mcp-project/`
-- [ ] Copiar `.env.example` → `.env` y configurar variables
-- [ ] Instalar dependencias: `pip install -r core/requirements.txt`
-- [ ] Verificar que Maya tiene Command Port en `userSetup.py`
-- [ ] Lanzar servidor: `python core/server.py`
-- [ ] Configurar en `~/.claude.json`: `claude mcp add -s user`
-- [ ] Verificar permisos en `~/.claude/settings.json`
-- [ ] Probar connection: `maya_ping()`
-- [ ] Probar Vision3D: `vision3d_health()`
-
----
-
-**Mantén este archivo actualizado cuando cambies la arquitectura, agregues tools nuevos, o encuentres bugs.**
+**Keep this file updated when architecture, tools, or workflows change.**
