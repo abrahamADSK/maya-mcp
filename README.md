@@ -1,12 +1,10 @@
 # maya-mcp
 
-> **The most advanced MCP server for Autodesk Maya** — 27 production-ready tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and AI-driven 3D generation via [Vision3D](https://github.com/abrahamADSK/vision3d).
+> MCP server for Autodesk Maya — 27 tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
 
 ---
 
-## What Makes maya-mcp Different
-
-Most Maya MCP servers offer basic scene manipulation (create a cube, move an object). maya-mcp goes far beyond that with a production-grade architecture designed for real VFX/animation workflows:
+## Features
 
 ### RAG-Powered Documentation Search
 LLMs hallucinate Maya API details constantly — wrong flag names (`width=` instead of `w=`), nonexistent commands (`cmds.usdExport` instead of `cmds.mayaUSDExport`), incorrect return types. maya-mcp includes a **hybrid RAG engine** (ChromaDB semantic + BM25 lexical, fused via Reciprocal Rank Fusion) with 5 curated documentation corpora covering maya.cmds, PyMEL, Arnold/mtoa, Maya-USD, and a comprehensive anti-patterns database. The LLM calls `search_maya_docs` before writing any unfamiliar code, getting verified syntax with relevance scores.
@@ -26,11 +24,11 @@ Every tool call tracks tokens in/out. The `session_stats` tool reports how much 
 ### Production Maya Operations
 Beyond primitives, maya-mcp handles real production tasks: polygon modeling (extrude, bevel, boolean, combine, smooth), animation keyframing with tangent control, multi-format I/O (OBJ, FBX, GLTF, Alembic, USD, MA/MB), viewport capture/playblast, full scene snapshots, and shelf button creation. All operations use undo chunks for safe rollback.
 
-### AI-Powered 3D Generation
-Integrated with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. Non-blocking async workflow: submit job → poll status → download results → import into Maya. Runs on a remote GPU server so your local machine stays responsive.
+### AI-Powered 3D Generation (optional addon)
+Optionally integrates with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. Non-blocking async workflow: submit job → poll status → download results → import into Maya. Runs on a remote GPU server so your local machine stays responsive. Vision3D is **not required** — maya-mcp works fully without it.
 
 ### Cross-MCP Orchestration
-Designed to work alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow Production Tracking) and flame-mcp. Claude can query ShotGrid for an asset, generate a 3D model, import it into Maya, and register the publish — all from one conversation. Consistent architecture across all three servers.
+Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow Production Tracking) and [flame-mcp](https://github.com/abrahamADSK/flame-mcp) (Autodesk Flame). When multiple servers are configured, Claude can orchestrate end-to-end VFX workflows across applications. Consistent architecture across all three servers.
 
 ---
 
@@ -78,7 +76,7 @@ FastMCP server (core/server.py) — 27 tools
 | `maya_scene_snapshot` | Full scene state: file, renderer, object counts, plugins, units |
 | `maya_shelf_button` | Create reusable shelf buttons with custom Python commands |
 
-### Vision3D Integration (6 tools)
+### Vision3D Integration (6 tools — optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
 | Tool | Description |
 |------|-------------|
 | `vision3d_health` | Check GPU server availability and model status |
@@ -210,9 +208,9 @@ Or for Claude Desktop, add to `~/Library/Application Support/Claude/claude_deskt
 }
 ```
 
-### 6. GPU server (optional, for 3D generation)
+### 6. Vision3D addon (optional — for AI 3D generation)
 
-maya-mcp uses [Vision3D](https://github.com/abrahamADSK/vision3d) for AI 3D generation. Follow the Vision3D README to install and run, then set `GPU_API_URL` and `GPU_API_KEY` in your environment.
+maya-mcp can optionally integrate with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. This is **not required** for core Maya functionality. If you want it, follow the Vision3D README to install and run, then set `GPU_API_URL` and `GPU_API_KEY` in your environment.
 
 ---
 

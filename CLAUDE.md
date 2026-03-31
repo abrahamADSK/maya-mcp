@@ -14,10 +14,11 @@
    - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
    - All operations use undo chunks for safe rollback
 
-2. **Vision3D Integration** (6 tools) — AI-powered 3D generation on remote GPU
+2. **Vision3D Integration** (6 tools) — Optional addon for AI-powered 3D generation via [Vision3D](https://github.com/abrahamADSK/vision3d)
    - Communicates via **HTTP REST API** with Vision3D (port 8000)
    - Supports image-to-3D, text-to-3D, and texture painting
    - Non-blocking async pattern: submit → poll → download
+   - **Not required** — maya-mcp works fully without Vision3D
 
 3. **RAG & Intelligence** (3 tools) — Documentation search, self-learning, analytics
    - Hybrid search: ChromaDB semantic + BM25 lexical, fused via RRF
@@ -52,7 +53,7 @@
 
 ---
 
-## 2. Key Differentiators (vs Other Maya MCP Servers)
+## 2. Key Features
 
 ### RAG-Powered Documentation Search
 `search_maya_docs` provides hybrid search across 5 curated corpora (maya.cmds, PyMEL, Arnold/mtoa, Maya-USD, anti-patterns). Uses ChromaDB for semantic similarity + BM25 for exact API name matching, fused via Reciprocal Rank Fusion. The LLM should call this BEFORE writing any unfamiliar Maya commands.
@@ -122,7 +123,7 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 | `maya_scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
 | `maya_shelf_button` | Create shelf buttons with custom Python commands |
 
-### Vision3D Tools (6 tools)
+### Vision3D Tools (6 tools — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
 
 | Tool | Description |
 |------|-------------|
@@ -188,7 +189,7 @@ Integrated into: `maya_execute_python`, `maya_delete`. Returns explanation + saf
 
 ---
 
-## 7. Vision3D Flow (Non-Blocking)
+## 7. Vision3D Flow (Optional Addon — Non-Blocking)
 
 ```
 Step 1: vision3d_health() → verify GPU server
