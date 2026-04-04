@@ -104,14 +104,19 @@ _panel_installed = False  # track per-session so we only inject once
 def _ensure_panel_installed():
     """Inject the MCP Pipeline menu into Maya if not already present.
 
-    Called automatically on the first successful maya_ping.  Sends Python
-    code through the Command Port that:
+    Called automatically on first successful maya_ping or on server startup
+    (via _startup_panel_install background thread).  Sends Python code
+    through the Command Port that:
       1. Adds the maya-mcp repo root to sys.path (so `from console…` works)
-      2. Calls install_menu() to create the MCP Pipeline top-level menu
-      3. Calls show() to open/restore the dockable console panel
+      2. Calls install_menu() if the menu doesn't exist yet
+      3. Calls show() ONLY if the workspaceControl doesn't exist yet
+         (respects user closing the panel — won't force-reopen it)
 
-    Idempotent — safe to call multiple times.  Uses maya.utils.executeDeferred
-    to ensure UI is ready.
+    Safe for cross-MCP usage: when maya-mcp is started from fpt-mcp or
+    flame-mcp consoles, the code still executes inside Maya via TCP.
+
+    Idempotent — guarded by _panel_installed flag + Maya-side exists() checks.
+    Uses maya.utils.executeDeferred to ensure UI is ready.
     """
     global _panel_installed
     if _panel_installed:
@@ -126,10 +131,12 @@ if _mcp_root not in sys.path:
 
 def _mcp_auto_setup():
     try:
-        from console.maya_panel import install_menu, show
+        from console.maya_panel import install_menu, show, PANEL_NAME
         if not cmds.menu("mcpPipelineMenu", exists=True):
             install_menu()
-        show()
+        # Only open panel on first install — respect user if they closed it
+        if not cmds.workspaceControl(PANEL_NAME, exists=True):
+            show()
     except Exception as exc:
         cmds.warning("[MCP] Auto-setup: " + str(exc))
 
@@ -1674,5 +1681,30 @@ async def session_stats_tool() -> str:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _startup_panel_install():
+    """Background thread: wait for Maya Command Port, then install panel.
+
+    Runs once when server.py starts.  Retries every 5s for up to 120s.
+    If Maya isn't running or Command Port isn't open, gives up silently.
+    """
+    import time
+    import socket as _sock
+
+    for _ in range(24):  # 24 × 5s = 120s max
+        time.sleep(5)
+        try:
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+            s.settimeout(2)
+            s.connect((MAYA_HOST, MAYA_PORT))
+            s.close()
+            _ensure_panel_installed()
+            return
+        except Exception:
+            continue
+
+
 if __name__ == "__main__":
+    import threading
+    t = threading.Thread(target=_startup_panel_install, daemon=True)
+    t.start()
     mcp.run()
