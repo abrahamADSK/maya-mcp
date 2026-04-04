@@ -93,66 +93,6 @@ def _rating(tokens: int) -> str:
     return "high"
 
 
-# ---------------------------------------------------------------------------
-# Auto-setup: install MCP Pipeline menu & panel inside Maya on first connect
-# ---------------------------------------------------------------------------
-
-_PROJECT_ROOT = str(Path(__file__).parent.parent)
-_panel_installed = False  # track per-session so we only inject once
-
-
-def _ensure_panel_installed():
-    """Inject the MCP Pipeline menu into Maya if not already present.
-
-    Called automatically on first successful maya_ping or on server startup
-    (via _startup_panel_install background thread).  Sends Python code
-    through the Command Port that:
-      1. Adds the maya-mcp repo root to sys.path (so `from console…` works)
-      2. Calls install_menu() if the menu doesn't exist yet
-      3. Calls show() ONLY if the workspaceControl doesn't exist yet
-         (respects user closing the panel — won't force-reopen it)
-
-    Safe for cross-MCP usage: when maya-mcp is started from fpt-mcp or
-    flame-mcp consoles, the code still executes inside Maya via TCP.
-
-    Idempotent — guarded by _panel_installed flag + Maya-side exists() checks.
-    Uses maya.utils.executeDeferred to ensure UI is ready.
-    """
-    global _panel_installed
-    if _panel_installed:
-        return
-    try:
-        setup_code = f'''
-import sys, maya.cmds as cmds, maya.utils
-
-_mcp_root = r"{_PROJECT_ROOT}"
-if _mcp_root not in sys.path:
-    sys.path.insert(0, _mcp_root)
-
-def _mcp_auto_setup():
-    try:
-        from console.maya_panel import install_menu, show, PANEL_NAME
-        # Menu: always ensure it exists (lightweight, idempotent)
-        if not cmds.menu("mcpPipelineMenu", exists=True):
-            install_menu()
-        # Panel: show if it doesn't exist yet OR exists but isn't visible
-        # (retain=True keeps metadata even when closed, so exists can be
-        # True while the panel is hidden — we must check visible too)
-        if not cmds.workspaceControl(PANEL_NAME, exists=True):
-            show()
-        elif not cmds.workspaceControl(PANEL_NAME, q=True, visible=True):
-            cmds.workspaceControl(PANEL_NAME, e=True, visible=True, restore=True)
-    except Exception as exc:
-        cmds.warning("[MCP] Auto-setup: " + str(exc))
-
-maya.utils.executeDeferred(_mcp_auto_setup)
-result = "panel_setup_queued"
-'''
-        bridge.execute(setup_code)
-        _panel_installed = True
-    except Exception:
-        pass  # Non-critical — don't block ping
-
 
 # ---------------------------------------------------------------------------
 # Model trust gates (C5 — from fpt-mcp / flame-mcp)
@@ -335,8 +275,7 @@ async def maya_ping() -> str:
     """Check connection to Maya and return environment info (version, current scene, renderer)."""
     try:
         info = bridge.ping()
-        # Auto-install MCP Pipeline menu & panel on first successful connection
-        _ensure_panel_installed()
+        _setup_maya_panel()
         return json.dumps(info, indent=2, ensure_ascii=False)
     except Exception as e:
         return _handle_error(e)
@@ -351,7 +290,7 @@ async def maya_launch() -> str:
     # 1. Check if already connected
     try:
         info = bridge.ping()
-        _ensure_panel_installed()
+        _setup_maya_panel()
         return json.dumps({
             "status": "already_running",
             "version": info.get("version", "unknown"),
@@ -384,7 +323,7 @@ async def maya_launch() -> str:
             # Port open — try real ping
             try:
                 info = bridge.ping()
-                _ensure_panel_installed()
+                _setup_maya_panel()
                 return json.dumps({
                     "status": "launched",
                     "waited_seconds": waited,
@@ -1686,23 +1625,157 @@ async def session_stats_tool() -> str:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _startup_panel_install():
-    """Background thread: wait for Maya Command Port, then install panel.
+# ---------------------------------------------------------------------------
+# Maya panel auto-setup — inject userSetup.py + menu + panel on first connect
+# ---------------------------------------------------------------------------
 
-    Runs once when server.py starts.  Retries every 5s for up to 120s.
-    If Maya isn't running or Command Port isn't open, gives up silently.
+_PROJECT_ROOT = str(Path(__file__).parent.parent)
+_panel_setup_done = False
+
+
+def _setup_maya_panel():
+    """Install MCP Pipeline menu & panel inside Maya.
+
+    Strategy:
+      1. Add project root to sys.path (current session)
+      2. Inject a guarded block into Maya's userSetup.py so the path
+         persists across restarts — standard VFX industry approach
+      3. Install "MCP Pipeline" menu if missing
+      4. Open the console panel
+
+    The userSetup.py injection is the key: Maya executes userSetup.py on
+    every startup, so ``from console.maya_panel import ...`` works BEFORE
+    the MCP server connects.  This fixes the retain=True workspaceControl
+    restore problem that .mod files failed to solve in Maya 2026.
+
+    Safe for cross-MCP usage (fpt-mcp/flame-mcp): code executes inside
+    Maya via TCP regardless of which console started the server.
     """
+    global _panel_setup_done
+    if _panel_setup_done:
+        return
+    try:
+        setup_code = f'''
+import sys, os, maya.cmds as cmds, maya.utils
+
+_mcp_root = r"{_PROJECT_ROOT}"
+
+# 1. Current session: add to sys.path now
+if _mcp_root not in sys.path:
+    sys.path.insert(0, _mcp_root)
+
+# 2. Persistent: inject into userSetup.py for future restarts
+_SENTINEL = "# --- MCP Pipeline Console auto-setup ---"
+_END_SENTINEL = "# --- end MCP Pipeline Console ---"
+NL = chr(10)
+
+def _inject_user_setup():
+    maya_ver = cmds.about(version=True)
+    candidates = [
+        os.path.expanduser("~/Library/Preferences/Autodesk/maya/" + maya_ver + "/scripts"),
+        os.path.expanduser("~/maya/" + maya_ver + "/scripts"),
+        os.path.expanduser("~/Library/Preferences/Autodesk/maya/scripts"),
+        os.path.expanduser("~/maya/scripts"),
+    ]
+    target_dir = None
+    for d in candidates:
+        if os.path.isdir(d):
+            target_dir = d
+            break
+        parent = os.path.dirname(d)
+        if os.path.isdir(parent):
+            os.makedirs(d, exist_ok=True)
+            target_dir = d
+            break
+    if not target_dir:
+        cmds.warning("[MCP] No Maya scripts dir found for userSetup.py")
+        return False
+
+    us_path = os.path.join(target_dir, "userSetup.py")
+
+    snippet_lines = [
+        _SENTINEL,
+        "import sys as _mcp_sys",
+        '_mcp_root = r"' + _mcp_root + '"',
+        "if _mcp_root not in _mcp_sys.path:",
+        "    _mcp_sys.path.insert(0, _mcp_root)",
+        "import maya.utils as _mcp_utils",
+        "def _mcp_menu_startup():",
+        "    try:",
+        "        from console.maya_panel import install_menu",
+        "        import maya.cmds as _mc",
+        '        if not _mc.menu("mcpPipelineMenu", exists=True):',
+        "            install_menu()",
+        "    except Exception:",
+        "        pass",
+        "_mcp_utils.executeDeferred(_mcp_menu_startup)",
+        _END_SENTINEL,
+    ]
+    snippet = NL.join(snippet_lines) + NL
+
+    existing = ""
+    if os.path.isfile(us_path):
+        with open(us_path) as f:
+            existing = f.read()
+
+    if _SENTINEL in existing:
+        before = existing[:existing.index(_SENTINEL)]
+        if _END_SENTINEL in existing:
+            after = existing[existing.index(_END_SENTINEL) + len(_END_SENTINEL):]
+            after = after.lstrip(NL)
+        else:
+            after = ""
+        existing = before.rstrip(NL)
+        if existing:
+            existing += NL + NL
+        existing += after
+
+    if existing and not existing.endswith(NL):
+        existing += NL + NL
+    new_content = existing + snippet
+
+    with open(us_path, "w") as f:
+        f.write(new_content)
+
+    cmds.warning("[MCP] userSetup.py updated: " + us_path)
+    return True
+
+_inject_user_setup()
+
+# 3. Deferred: install menu + panel after UI is ready
+def _mcp_deferred_setup():
+    try:
+        from console.maya_panel import install_menu, show, PANEL_NAME
+        if not cmds.menu("mcpPipelineMenu", exists=True):
+            install_menu()
+        if not cmds.workspaceControl(PANEL_NAME, exists=True):
+            show()
+        elif not cmds.workspaceControl(PANEL_NAME, q=True, visible=True):
+            show()
+    except Exception as exc:
+        cmds.warning("[MCP] Panel setup: " + str(exc))
+
+maya.utils.executeDeferred(_mcp_deferred_setup)
+result = "panel_setup_ok"
+'''
+        bridge.execute(setup_code)
+        _panel_setup_done = True
+    except Exception:
+        pass  # Non-critical — don't block tools
+
+
+def _bg_panel_install():
+    """Background thread: poll Maya port, install panel when ready."""
     import time
     import socket as _sock
-
-    for _ in range(24):  # 24 × 5s = 120s max
+    for _ in range(24):
         time.sleep(5)
         try:
             s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
             s.settimeout(2)
             s.connect((MAYA_HOST, MAYA_PORT))
             s.close()
-            _ensure_panel_installed()
+            _setup_maya_panel()
             return
         except Exception:
             continue
@@ -1710,6 +1783,5 @@ def _startup_panel_install():
 
 if __name__ == "__main__":
     import threading
-    t = threading.Thread(target=_startup_panel_install, daemon=True)
-    t.start()
+    threading.Thread(target=_bg_panel_install, daemon=True).start()
     mcp.run()
