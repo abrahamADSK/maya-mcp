@@ -23,14 +23,21 @@ automatic menu registration and panel restore on Maya startup.
 
 from __future__ import annotations
 
+import os
 import maya.cmds as cmds
 import maya.OpenMayaUI as omui
 
+from pathlib import Path
 from .qt_compat import QtWidgets, wrapInstance
 
 # Panel identifiers
 PANEL_NAME = "mcpPipelineConsole"
 PANEL_LABEL = "MCP Pipeline Console"
+
+# Project root — needed so uiScript/closeCommand can set up sys.path
+# when Maya restores a retained workspaceControl on startup (before
+# the MCP server has connected and injected the path).
+_PROJECT_ROOT = str(Path(__file__).parent.parent)
 
 # Module-level reference to keep the widget alive
 _widget_instance = None
@@ -46,6 +53,14 @@ _callback_ids = []
 def show():
     """Create or show the MCP Pipeline Console panel in Maya."""
     if cmds.workspaceControl(PANEL_NAME, exists=True):
+        # Update uiScript in case it was created with old code (without
+        # sys.path setup).  This ensures Maya can restore the panel on
+        # future restarts even before the MCP server connects.
+        cmds.workspaceControl(
+            PANEL_NAME, e=True,
+            uiScript=_ui_script(),
+            closeCommand=_close_script(),
+        )
         cmds.workspaceControl(PANEL_NAME, e=True, visible=True, restore=True)
         return
 
@@ -63,13 +78,26 @@ def show():
 
 
 def _ui_script() -> str:
-    """Python command Maya runs to build the panel contents."""
-    return "from console.maya_panel import _build_panel; _build_panel()"
+    """Python command Maya runs to build the panel contents.
+
+    Must be self-contained: includes sys.path setup so the import
+    works even on Maya restart (before MCP server connects).
+    The path is baked into the string at creation time.
+    """
+    return (
+        f"import sys; _r = r'{_PROJECT_ROOT}'; "
+        f"sys.path.insert(0, _r) if _r not in sys.path else None; "
+        "from console.maya_panel import _build_panel; _build_panel()"
+    )
 
 
 def _close_script() -> str:
     """Python command Maya runs when the panel is closed."""
-    return "from console.maya_panel import _on_close; _on_close()"
+    return (
+        f"import sys; _r = r'{_PROJECT_ROOT}'; "
+        f"sys.path.insert(0, _r) if _r not in sys.path else None; "
+        "from console.maya_panel import _on_close; _on_close()"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -276,10 +304,14 @@ def install_menu():
         parent="MayaWindow",
         tearOff=False,
     )
+    _path_setup = (
+        f"import sys; _r = r'{_PROJECT_ROOT}'; "
+        f"sys.path.insert(0, _r) if _r not in sys.path else None; "
+    )
     cmds.menuItem(
         label="Open Console",
         annotation="Open MCP Pipeline Console panel",
-        command="from console.maya_panel import show; show()",
+        command=_path_setup + "from console.maya_panel import show; show()",
         sourceType="python",
         parent=_MENU_NAME,
     )
@@ -287,7 +319,7 @@ def install_menu():
     cmds.menuItem(
         label="Add Shelf Button",
         annotation="Add MCP button to the current shelf",
-        command="from console.maya_panel import install_shelf_button; install_shelf_button()",
+        command=_path_setup + "from console.maya_panel import install_shelf_button; install_shelf_button()",
         sourceType="python",
         parent=_MENU_NAME,
     )
