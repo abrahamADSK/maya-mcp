@@ -36,14 +36,22 @@ def _get_shell_env() -> dict:
     """
     import glob as _glob
 
-    # Try to get the real shell env
-    for shell in ["/bin/zsh", "/bin/bash"]:
+    # Try to get the real shell env.
+    # Use ``-i`` (interactive) so .zshrc is sourced — that's where nvm,
+    # NODE_EXTRA_CA_CERTS, proxy settings, and other critical vars live.
+    # Fall through on failure to the manual augmentation below.
+    for shell, flags in [
+        ("/bin/zsh", ["-i", "-l", "-c"]),    # interactive + login
+        ("/bin/zsh", ["-l", "-c"]),           # login only (fallback)
+        ("/bin/bash", ["-l", "-c"]),
+    ]:
         if not os.path.isfile(shell):
             continue
         try:
             result = subprocess.run(
-                [shell, "-l", "-c", "env"],
+                [shell] + flags + ["env"],
                 capture_output=True, text=True, timeout=5,
+                stdin=subprocess.DEVNULL,      # prevent interactive hang
             )
             if result.returncode == 0 and result.stdout.strip():
                 env = {}
