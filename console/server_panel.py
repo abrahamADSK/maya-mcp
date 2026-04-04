@@ -376,7 +376,7 @@ QLabel#serverTag {
 class ServerStatusBar(QWidget):
     """Compact horizontal server status dots for embedding in headers.
 
-    Shows: ●maya ●fpt ●flame ●v3d  with coloured dots.
+    Shows: ●maya-mcp ●fpt-mcp ●flame-mcp ●vision3d  with coloured dots.
     """
 
     def __init__(self, parent=None):
@@ -402,23 +402,32 @@ class ServerStatusBar(QWidget):
                 item.widget().deleteLater()
         self._dots.clear()
 
-        short_names = {
-            "maya-mcp": "maya",
-            "fpt-mcp": "fpt",
-            "flame-mcp": "flame",
-        }
-
         for name in servers:
             dot = QLabel()
             dot.setObjectName("dotYellow")
             dot.setFixedSize(8, 8)
             self._lay.addWidget(dot)
 
-            tag = QLabel(short_names.get(name, name[:6]))
+            tag = QLabel(name)
             tag.setObjectName("serverTag")
             self._lay.addWidget(tag)
 
             self._dots[name] = dot
+
+        # Vision3D — shown as separate indicator if maya-mcp has GPU_API_URL
+        maya_cfg = servers.get("maya-mcp", {})
+        gpu_url = maya_cfg.get("env", {}).get("GPU_API_URL", "")
+        if gpu_url:
+            dot = QLabel()
+            dot.setObjectName("dotYellow")
+            dot.setFixedSize(8, 8)
+            self._lay.addWidget(dot)
+
+            tag = QLabel("vision3d")
+            tag.setObjectName("serverTag")
+            self._lay.addWidget(tag)
+
+            self._dots["_vision3d"] = dot
 
         # Start health checks
         self._run_health_check()
@@ -445,3 +454,15 @@ class ServerStatusBar(QWidget):
                 dot.setObjectName("dotRed")
             dot.style().unpolish(dot)
             dot.style().polish(dot)
+
+        # Vision3D separate indicator
+        v3d_dot = self._dots.get("_vision3d")
+        if v3d_dot:
+            maya_info = results.get("maya-mcp", {})
+            v3d_status = maya_info.get("vision3d", "")
+            if v3d_status and v3d_status != "offline":
+                v3d_dot.setObjectName("dotGreen")
+            else:
+                v3d_dot.setObjectName("dotRed")
+            v3d_dot.style().unpolish(v3d_dot)
+            v3d_dot.style().polish(v3d_dot)
