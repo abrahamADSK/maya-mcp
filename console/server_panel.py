@@ -3,6 +3,10 @@
 Reads Claude Code configuration (~/.claude.json) to discover which MCP servers
 are available, then performs periodic health checks to display live status.
 
+Provides two widgets:
+  - ServerPanel   — full side panel with rows (for standalone window)
+  - ServerStatusBar — compact horizontal dots (for Maya panel header)
+
 Servers supported:
   - maya-mcp   → TCP ping to Maya Command Port
   - fpt-mcp    → ShotGrid credential check
@@ -17,14 +21,18 @@ import os
 import socket
 from typing import Optional
 
-from PySide6.QtCore import QThread, QTimer, Signal, Qt
-from PySide6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from .qt_compat import QtWidgets, QtCore
+
+# Aliases for Qt classes used throughout
+QThread = QtCore.QThread
+QTimer = QtCore.QTimer
+Signal = QtCore.Signal
+Qt = QtCore.Qt
+QFrame = QtWidgets.QFrame
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 
 
 # ---------------------------------------------------------------------------
@@ -340,3 +348,100 @@ class ServerPanel(QFrame):
     def get_available_servers(self) -> dict:
         """Return the detected servers dict for system prompt generation."""
         return self._servers
+
+
+# ---------------------------------------------------------------------------
+# Compact status bar (for Maya panel header)
+# ---------------------------------------------------------------------------
+
+_STATUS_BAR_STYLE = """
+QLabel#dotGreen {
+    min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;
+    border-radius: 4px; background-color: #22c55e;
+}
+QLabel#dotRed {
+    min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;
+    border-radius: 4px; background-color: #ef4444;
+}
+QLabel#dotYellow {
+    min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;
+    border-radius: 4px; background-color: #eab308;
+}
+QLabel#serverTag {
+    color: #64748b; font-size: 10px; font-weight: 600;
+}
+"""
+
+
+class ServerStatusBar(QWidget):
+    """Compact horizontal server status dots for embedding in headers.
+
+    Shows: ●maya ●fpt ●flame ●v3d  with coloured dots.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(_STATUS_BAR_STYLE)
+        self._lay = QHBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(4)
+        self._dots: dict[str, QLabel] = {}
+        self._servers: dict = {}
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._run_health_check)
+
+    def update_servers(self, servers: dict):
+        """Build dots for each server and start health checks."""
+        self._servers = servers
+
+        # Clear existing
+        while self._lay.count():
+            item = self._lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._dots.clear()
+
+        short_names = {
+            "maya-mcp": "maya",
+            "fpt-mcp": "fpt",
+            "flame-mcp": "flame",
+        }
+
+        for name in servers:
+            dot = QLabel()
+            dot.setObjectName("dotYellow")
+            dot.setFixedSize(8, 8)
+            self._lay.addWidget(dot)
+
+            tag = QLabel(short_names.get(name, name[:6]))
+            tag.setObjectName("serverTag")
+            self._lay.addWidget(tag)
+
+            self._dots[name] = dot
+
+        # Start health checks
+        self._run_health_check()
+        self._timer.start(30_000)
+
+    def _run_health_check(self):
+        if not self._servers:
+            return
+        self._checker = HealthChecker(self._servers, parent=self)
+        self._checker.finished.connect(self._on_results)
+        self._checker.start()
+
+    def _on_results(self, results: dict):
+        for name, info in results.items():
+            dot = self._dots.get(name)
+            if not dot:
+                continue
+            status = info.get("status", "offline")
+            if status == "connected":
+                dot.setObjectName("dotGreen")
+            elif status == "configured":
+                dot.setObjectName("dotYellow")
+            else:
+                dot.setObjectName("dotRed")
+            dot.style().unpolish(dot)
+            dot.style().polish(dot)

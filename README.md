@@ -27,8 +27,11 @@ Beyond primitives, maya-mcp handles real production tasks: polygon modeling (ext
 ### AI-Powered 3D Generation (optional addon)
 Optionally integrates with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. Non-blocking async workflow: submit job → poll status → download results → import into Maya. Runs on a remote GPU server so your local machine stays responsive. Vision3D is **not required** — maya-mcp works fully without it.
 
+### Embedded Maya Console Panel
+A dockable Qt panel that lives inside Maya as a `workspaceControl` tab (next to the Attribute Editor). Provides a chat interface to Claude with live Maya context (scene name, object count, selection, renderer). **Installs automatically** — the first time Claude connects to Maya (via `maya_ping` or `maya_launch`), the MCP Pipeline menu and panel are injected into the running Maya session. No manual `userSetup.py` editing required. The panel persists across Maya sessions — if left open, it auto-restores on next launch. Uses PySide2 (Maya 2023–2024) or PySide6 (Maya 2025+) automatically via a compatibility shim. All MCP servers (maya-mcp, fpt-mcp, flame-mcp) are accessible from the panel through Claude Code CLI.
+
 ### Cross-MCP Orchestration
-Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow Production Tracking) and [flame-mcp](https://github.com/abrahamADSK/flame-mcp) (Autodesk Flame). When multiple servers are configured, Claude can orchestrate end-to-end VFX workflows across applications. Consistent architecture across all three servers.
+Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow Production Tracking) and [flame-mcp](https://github.com/abrahamADSK/flame-mcp) (Autodesk Flame). Each DCC has its own embedded console, and all consoles access all MCP servers via Claude Code CLI. When multiple servers are configured, Claude can orchestrate end-to-end VFX workflows across applications. Consistent architecture across all three servers.
 
 ---
 
@@ -117,12 +120,16 @@ maya-mcp/
 │       ├── USD_API.md          # Maya-USD import/export, proxy shapes, pxr API
 │       └── ANTI_PATTERNS.md    # Common LLM hallucinations + wrong flag names
 │
-├── console/                    # Qt desktop console (optional)
-│   ├── app.py                  # Entry point + maya-mcp:// protocol handler
-│   ├── chat_window.py          # Dark-theme chat window
-│   ├── claude_worker.py        # QThread worker with dynamic system prompt
-│   ├── server_panel.py         # MCP server discovery + health checks
-│   └── build_app_bundle.py     # macOS .app bundle generator
+├── console/                    # Qt console — Maya panel + legacy standalone
+│   ├── qt_compat.py            # PySide2 (Maya 2023-2024) / PySide6 (2025+) shim
+│   ├── maya_panel.py           # Dockable workspaceControl panel for Maya
+│   ├── chat_widget.py          # Reusable MCPChatWidget (shared by panel & standalone)
+│   ├── claude_worker.py        # QThread worker — Claude CLI subprocess bridge
+│   ├── server_panel.py         # MCP server discovery, health checks, ServerStatusBar
+│   ├── userSetup_snippet.py    # Paste into Maya's userSetup.py for auto-setup
+│   ├── app.py                  # Legacy standalone entry point (use fpt-mcp console)
+│   ├── chat_window.py          # Legacy standalone chat window
+│   └── build_app_bundle.py     # Legacy macOS .app bundle generator
 │
 ├── reference/                  # Pipeline I/O (git-ignored)
 ├── CLAUDE.md                   # Project documentation for Claude
@@ -166,7 +173,10 @@ First run downloads the embedding model (~570 MB, cached afterwards). The index 
 
 ### 4. Set up Maya Command Port
 
-Add to `~/Library/Preferences/Autodesk/maya/2026/scripts/userSetup.py`:
+Add to your Maya `userSetup.py` (create it if it doesn't exist):
+- **Windows**: `%USERPROFILE%/Documents/maya/<version>/scripts/userSetup.py`
+- **macOS**: `~/Library/Preferences/Autodesk/maya/<version>/scripts/userSetup.py`
+- **Linux**: `~/maya/<version>/scripts/userSetup.py`
 
 ```python
 import maya.cmds as cmds
@@ -183,6 +193,10 @@ def open_command_port():
 
 cmds.evalDeferred(open_command_port)
 ```
+
+**The MCP Pipeline Console panel installs itself automatically.** The first time Claude connects to Maya (via `maya_ping` or `maya_launch`), the server injects the panel menu and UI through the Command Port — no additional `userSetup.py` configuration needed. The panel docks next to the Attribute Editor and persists across sessions.
+
+> **Optional:** If you want the menu to be available even before Claude connects (e.g., on every Maya startup), see `console/userSetup_snippet.py` for additional `userSetup.py` entries.
 
 ### 5. Configure Claude Code
 

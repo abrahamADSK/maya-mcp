@@ -94,6 +94,55 @@ def _rating(tokens: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Auto-setup: install MCP Pipeline menu & panel inside Maya on first connect
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT = str(Path(__file__).parent.parent)
+_panel_installed = False  # track per-session so we only inject once
+
+
+def _ensure_panel_installed():
+    """Inject the MCP Pipeline menu into Maya if not already present.
+
+    Called automatically on the first successful maya_ping.  Sends Python
+    code through the Command Port that:
+      1. Adds the maya-mcp repo root to sys.path (so `from console…` works)
+      2. Calls install_menu() to create the MCP Pipeline top-level menu
+      3. Calls show() to open/restore the dockable console panel
+
+    Idempotent — safe to call multiple times.  Uses maya.utils.executeDeferred
+    to ensure UI is ready.
+    """
+    global _panel_installed
+    if _panel_installed:
+        return
+    try:
+        setup_code = f'''
+import sys, maya.cmds as cmds, maya.utils
+
+_mcp_root = r"{_PROJECT_ROOT}"
+if _mcp_root not in sys.path:
+    sys.path.insert(0, _mcp_root)
+
+def _mcp_auto_setup():
+    try:
+        from console.maya_panel import install_menu, show
+        if not cmds.menu("mcpPipelineMenu", exists=True):
+            install_menu()
+        show()
+    except Exception as exc:
+        cmds.warning("[MCP] Auto-setup: " + str(exc))
+
+maya.utils.executeDeferred(_mcp_auto_setup)
+result = "panel_setup_queued"
+'''
+        bridge.execute(setup_code)
+        _panel_installed = True
+    except Exception:
+        pass  # Non-critical — don't block ping
+
+
+# ---------------------------------------------------------------------------
 # Model trust gates (C5 — from fpt-mcp / flame-mcp)
 # ---------------------------------------------------------------------------
 
@@ -274,6 +323,8 @@ async def maya_ping() -> str:
     """Check connection to Maya and return environment info (version, current scene, renderer)."""
     try:
         info = bridge.ping()
+        # Auto-install MCP Pipeline menu & panel on first successful connection
+        _ensure_panel_installed()
         return json.dumps(info, indent=2, ensure_ascii=False)
     except Exception as e:
         return _handle_error(e)
@@ -288,6 +339,7 @@ async def maya_launch() -> str:
     # 1. Check if already connected
     try:
         info = bridge.ping()
+        _ensure_panel_installed()
         return json.dumps({
             "status": "already_running",
             "version": info.get("version", "unknown"),
@@ -320,6 +372,7 @@ async def maya_launch() -> str:
             # Port open — try real ping
             try:
                 info = bridge.ping()
+                _ensure_panel_installed()
                 return json.dumps({
                     "status": "launched",
                     "waited_seconds": waited,

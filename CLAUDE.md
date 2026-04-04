@@ -236,4 +236,30 @@ Typical publish workflow:
 
 ---
 
+## 10. Console Panel Architecture
+
+### Maya Embedded Panel
+The `console/` package provides a dockable panel inside Maya via `cmds.workspaceControl`.
+
+**Key modules:**
+- `qt_compat.py` — PySide2 (Maya 2023-2024) / PySide6 (Maya 2025+) compatibility shim
+- `maya_panel.py` — workspaceControl wrapper, Maya callbacks (selection/scene), menu registration
+- `chat_widget.py` — Reusable `MCPChatWidget` with context badge, server status dots, markdown rendering
+- `claude_worker.py` — QThread that spawns `claude -p --output-format stream-json`
+- `server_panel.py` — MCP server discovery from `~/.claude.json`, health checks, `ServerStatusBar`
+- `userSetup_snippet.py` — Ready-to-paste snippet for Maya's `userSetup.py`
+
+**How it works:**
+1. **Auto-setup on first connect:** `maya_ping` / `maya_launch` call `_ensure_panel_installed()` which injects Python via Command Port to add `sys.path`, register the menu, and open the panel. No manual `userSetup.py` editing needed.
+2. `install_menu()` creates "MCP Pipeline > Open Console" in Maya's menu bar
+3. `show()` creates a `workspaceControl(retain=True)` docked next to AttributeEditor
+4. `_build_panel()` is called by Maya's `uiScript` — wraps Qt pointer, creates `MCPChatWidget`
+5. Maya callbacks push selection/scene context into the widget before each message
+6. `claude_worker.py` spawns Claude CLI — all MCPs discovered via `~/.claude.json` automatically
+7. Panel persists across Maya sessions (retain=True + uiScript auto-rebuilds on restore)
+
+**Standalone consoles** (app.py, chat_window.py) are legacy — use fpt-mcp or flame-mcp consoles instead.
+
+---
+
 **Keep this file updated when architecture, tools, or workflows change.**

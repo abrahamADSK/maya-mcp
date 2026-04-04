@@ -17,7 +17,10 @@ import os
 import shutil
 import subprocess
 
-from PySide6.QtCore import QThread, Signal
+from .qt_compat import QtCore
+
+QThread = QtCore.QThread
+Signal = QtCore.Signal
 
 
 def _find_claude() -> str:
@@ -140,8 +143,10 @@ def build_system_prompt(available_servers: dict) -> str:
 
     if "flame-mcp" in available_servers:
         parts.append(
-            "3. **flame-mcp** — Autodesk Flame control:\n"
-            "   flame_render, flame_export, flame_import, flame_status, flame_batch_render"
+            "3. **flame-mcp** — Autodesk Flame control + RAG:\n"
+            "   execute_python (run Python inside Flame), search_flame_docs (RAG search),\n"
+            "   list_libraries, list_reels, get_project_info, get_flame_version,\n"
+            "   learn_pattern, session_stats"
         )
 
     parts.append(_WORKFLOW_SECTION)
@@ -199,14 +204,15 @@ _TOOL_LABELS = {
     "search_sg_docs": "Searching ShotGrid documentation",
     "learn_pattern": "Learning validated pattern",
     "session_stats": "Fetching session statistics",
-    # flame-mcp tools (when available)
-    "flame_render": "Sending render to Flame",
-    "flame_export": "Exporting from Flame",
-    "flame_import": "Importing into Flame",
-    "flame_status": "Checking Flame status",
-    "flame_batch_render": "Running batch render in Flame",
-    "flame_create_sequence": "Creating sequence in Flame",
-    "flame_list_projects": "Listing Flame projects",
+    # flame-mcp tools (real tool names from flame_mcp_server.py)
+    "search_flame_docs": "Searching Flame documentation",
+    "execute_python": "Executing Python in Flame",
+    "list_libraries": "Listing Flame libraries",
+    "list_reels": "Listing Flame reels",
+    "get_project_info": "Getting Flame project info",
+    "get_flame_version": "Getting Flame version",
+    # Note: learn_pattern and session_stats are shared names across MCPs.
+    # The prefix stripping resolves which MCP they belong to.
 }
 
 
