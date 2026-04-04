@@ -41,7 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pydantic import BaseModel, Field, ConfigDict
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
 from maya_bridge import MayaBridge, MayaBridgeError
 from safety import check_dangerous
@@ -826,8 +826,9 @@ finally:
 
 
 @mcp.tool(name="maya_viewport_capture")
-async def maya_viewport_capture(params: ViewportCaptureInput) -> str:
-    """Capture the Maya viewport as PNG/JPG image. Does not do Arnold render — it is an instant viewport grab (<1s). Useful for visually verifying scene state."""
+async def maya_viewport_capture(params: ViewportCaptureInput) -> list:
+    """Capture the Maya viewport as PNG/JPG image and return it for visual analysis. Does not do Arnold render — it is an instant viewport grab (<1s). Useful for visually verifying scene state, checking lighting, framing, and detecting issues."""
+    import base64
     try:
         camera_opt = ""
         if params.camera:
@@ -842,7 +843,7 @@ if cmds.getPanel(typeOf=_mcp_panel) == 'modelPanel':
 
         code = f"""
 import maya.cmds as cmds
-import os
+import os, base64
 cmds.undoInfo(stateWithoutFlush=False)
 try:
     {camera_opt}
@@ -854,12 +855,26 @@ try:
         offScreen=True, percent=100{frame_opt}
     )
     _mcp_size = os.path.getsize('{params.output_path}') // 1024
+    with open('{params.output_path}', 'rb') as _f:
+        _mcp_b64 = base64.b64encode(_f.read()).decode('ascii')
     result = {{'captured': '{params.output_path}', 'size_kb': _mcp_size,
-              'resolution': '{params.width}x{params.height}'}}
+              'resolution': '{params.width}x{params.height}',
+              'image_b64': _mcp_b64}}
 finally:
     cmds.undoInfo(stateWithoutFlush=True)
 """
-        return await asyncio.to_thread(bridge.execute, code)
+        raw = await asyncio.to_thread(bridge.execute, code)
+        # Parse the result to extract the base64 image
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        mime = "image/png" if fmt == "png" else "image/jpeg"
+        img_b64 = data.get("image_b64", "")
+        meta = f"Captured {data.get('resolution', '?')} — {data.get('size_kb', '?')} KB — {data.get('captured', params.output_path)}"
+        if img_b64:
+            return [
+                Image(data=base64.b64decode(img_b64), media_type=mime),
+                meta,
+            ]
+        return [meta, "(image data not available — check output_path)"]
     except Exception as e:
         return _handle_error(e)
 

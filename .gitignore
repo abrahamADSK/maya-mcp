@@ -22,6 +22,14 @@ build/
 # ── Cowork skill bundles ─────────────────────────────────────
 *.skill
 
+# ── Temp scripts ─────────────────────────────────────────────
+*.command
+
+# ── Claude / RAG (generated) ─────────────────────────────────
+.claude/
+core/rag/corpus.json
+core/rag/index/
+
 # ── Editor ───────────────────────────────────────────────────
 .vscode/
 .idea/
