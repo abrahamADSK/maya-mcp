@@ -90,6 +90,13 @@ def _get_shell_env() -> dict:
 
 _SHELL_ENV = _get_shell_env()
 
+# Maya injects SSL_CERT_FILE pointing to its bundled Python 2.7 cert
+# bundle (inside Maya.app).  Node.js picks this up and fails SSL
+# verification against modern APIs.  Remove it so Node uses its own
+# built-in CA store.
+for _poison_var in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE"):
+    _SHELL_ENV.pop(_poison_var, None)
+
 
 def _find_claude() -> str:
     """Locate the claude CLI binary."""
