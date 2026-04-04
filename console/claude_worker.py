@@ -23,16 +23,41 @@ QThread = QtCore.QThread
 Signal = QtCore.Signal
 
 
-def _augmented_path() -> str:
-    """Build a PATH that includes common Node.js / Homebrew locations.
+def _get_shell_env() -> dict:
+    """Capture the user's full login-shell environment.
 
-    Maya's subprocess environment has a minimal PATH that often excludes
-    ``/opt/homebrew/bin``, ``~/.nvm/…``, etc.  The ``claude`` CLI is a
-    Node.js script (``#!/usr/bin/env node``), so ``node`` must be
-    discoverable for the shebang to resolve.
+    Maya launches from Finder with a minimal env that lacks PATH entries,
+    OAuth tokens, SSL cert paths, proxy settings, etc.  This function
+    spawns a login shell (``zsh -l`` on macOS), sources the user's
+    profile, and returns the resulting environment — identical to what
+    the user gets in Terminal/iTerm.
+
+    Falls back to os.environ with augmented PATH if the shell fails.
     """
     import glob as _glob
 
+    # Try to get the real shell env
+    for shell in ["/bin/zsh", "/bin/bash"]:
+        if not os.path.isfile(shell):
+            continue
+        try:
+            result = subprocess.run(
+                [shell, "-l", "-c", "env"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                env = {}
+                for line in result.stdout.splitlines():
+                    if "=" in line:
+                        key, _, val = line.partition("=")
+                        env[key] = val
+                if "HOME" in env and "PATH" in env:
+                    return env
+        except Exception:
+            continue
+
+    # Fallback: augment Maya's limited env manually
+    env = os.environ.copy()
     extra = [
         "/opt/homebrew/bin",
         "/usr/local/bin",
@@ -40,7 +65,6 @@ def _augmented_path() -> str:
         os.path.expanduser("~/.npm-global/bin"),
         os.path.expanduser("~/.local/bin"),
     ]
-    # nvm: pick the latest installed version
     nvm_dirs = sorted(
         _glob.glob(os.path.expanduser("~/.nvm/versions/node/*/bin")),
         reverse=True,
@@ -48,20 +72,21 @@ def _augmented_path() -> str:
     if nvm_dirs:
         extra.insert(0, nvm_dirs[0])
 
-    base = os.environ.get("PATH", "/usr/bin:/bin")
+    base = env.get("PATH", "/usr/bin:/bin")
     for p in extra:
         if os.path.isdir(p) and p not in base:
             base = p + ":" + base
-    return base
+    env["PATH"] = base
+    return env
 
 
-_AUGMENTED_PATH = _augmented_path()
+_SHELL_ENV = _get_shell_env()
 
 
 def _find_claude() -> str:
     """Locate the claude CLI binary."""
-    # Search with augmented PATH so we find it inside Maya too
-    found = shutil.which("claude", path=_AUGMENTED_PATH)
+    # Search with shell PATH so we find it inside Maya too
+    found = shutil.which("claude", path=_SHELL_ENV.get("PATH", ""))
     if found:
         return found
     candidates = [
@@ -326,7 +351,7 @@ class ClaudeWorker(QThread):
                 stderr=subprocess.PIPE,
                 bufsize=1,
                 text=True,
-                env={**os.environ, "PATH": _AUGMENTED_PATH, "CLAUDE_NO_TELEMETRY": "1"},
+                env={**_SHELL_ENV, "CLAUDE_NO_TELEMETRY": "1"},
             )
 
             text_parts: list[str] = []
