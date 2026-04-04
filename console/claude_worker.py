@@ -23,9 +23,45 @@ QThread = QtCore.QThread
 Signal = QtCore.Signal
 
 
+def _augmented_path() -> str:
+    """Build a PATH that includes common Node.js / Homebrew locations.
+
+    Maya's subprocess environment has a minimal PATH that often excludes
+    ``/opt/homebrew/bin``, ``~/.nvm/…``, etc.  The ``claude`` CLI is a
+    Node.js script (``#!/usr/bin/env node``), so ``node`` must be
+    discoverable for the shebang to resolve.
+    """
+    import glob as _glob
+
+    extra = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        os.path.expanduser("~/.volta/bin"),
+        os.path.expanduser("~/.npm-global/bin"),
+        os.path.expanduser("~/.local/bin"),
+    ]
+    # nvm: pick the latest installed version
+    nvm_dirs = sorted(
+        _glob.glob(os.path.expanduser("~/.nvm/versions/node/*/bin")),
+        reverse=True,
+    )
+    if nvm_dirs:
+        extra.insert(0, nvm_dirs[0])
+
+    base = os.environ.get("PATH", "/usr/bin:/bin")
+    for p in extra:
+        if os.path.isdir(p) and p not in base:
+            base = p + ":" + base
+    return base
+
+
+_AUGMENTED_PATH = _augmented_path()
+
+
 def _find_claude() -> str:
     """Locate the claude CLI binary."""
-    found = shutil.which("claude")
+    # Search with augmented PATH so we find it inside Maya too
+    found = shutil.which("claude", path=_AUGMENTED_PATH)
     if found:
         return found
     candidates = [
@@ -290,7 +326,7 @@ class ClaudeWorker(QThread):
                 stderr=subprocess.PIPE,
                 bufsize=1,
                 text=True,
-                env={**os.environ, "CLAUDE_NO_TELEMETRY": "1"},
+                env={**os.environ, "PATH": _AUGMENTED_PATH, "CLAUDE_NO_TELEMETRY": "1"},
             )
 
             text_parts: list[str] = []
