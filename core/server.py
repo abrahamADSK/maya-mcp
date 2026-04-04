@@ -132,11 +132,16 @@ if _mcp_root not in sys.path:
 def _mcp_auto_setup():
     try:
         from console.maya_panel import install_menu, show, PANEL_NAME
+        # Menu: always ensure it exists (lightweight, idempotent)
         if not cmds.menu("mcpPipelineMenu", exists=True):
             install_menu()
-        # Only open panel on first install — respect user if they closed it
+        # Panel: show if it doesn't exist yet OR exists but isn't visible
+        # (retain=True keeps metadata even when closed, so exists can be
+        # True while the panel is hidden — we must check visible too)
         if not cmds.workspaceControl(PANEL_NAME, exists=True):
             show()
+        elif not cmds.workspaceControl(PANEL_NAME, q=True, visible=True):
+            cmds.workspaceControl(PANEL_NAME, e=True, visible=True, restore=True)
     except Exception as exc:
         cmds.warning("[MCP] Auto-setup: " + str(exc))
 
