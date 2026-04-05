@@ -46,3 +46,4 @@ core/rag/index/
 *.ckpt
 *.bin
 hf_models/
+logs/
