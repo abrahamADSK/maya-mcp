@@ -5,7 +5,7 @@ Indexes Maya API documentation into a local ChromaDB vector database.
 Run once after installation, and again whenever docs change.
 
 Usage:
-    cd maya-mcp-project
+    cd maya-mcp
     python -m core.rag.build_index
 
 What it indexes:

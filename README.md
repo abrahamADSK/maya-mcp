@@ -1,5 +1,11 @@
 # maya-mcp
 
+> [!WARNING]
+> **Experimental project — use at your own risk.**
+> This is an independent, unofficial experiment created with [Claude Code](https://claude.com/claude-code). It is **not** affiliated with, endorsed by, or officially supported by Autodesk in any way. The Maya name and trademarks belong to Autodesk, Inc.
+>
+> Executing AI-generated code inside a live Maya session carries real risks: **unexpected crashes, loss of unsaved work, unintended modifications to scenes, rigs, or assets.** Always work on a duplicate or test scene. Never run this on production material without a full backup. The author(s) accept no responsibility for data loss, corruption, or any other damage resulting from its use.
+
 > MCP server for Autodesk Maya — 27 tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
 
 ---

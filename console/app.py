@@ -30,10 +30,19 @@ from .chat_window import ChatWindow
 # ---------------------------------------------------------------------------
 
 def _load_sg_credentials() -> dict:
-    """Load ShotGrid credentials from .env files (check fpt-mcp and local)."""
+    """Load ShotGrid credentials from .env files or environment variables.
+
+    Search order:
+      1. .env in this console's own directory
+      2. .env in the maya-mcp repo root
+      3. ANTHROPIC_API_KEY / SHOTGRID_* environment variables (already set)
+    """
+    # Dynamic search: console dir → repo root → no hardcoded external paths
+    console_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(console_dir)
     env_paths = [
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
-        os.path.expanduser("~/Claude_projects/fpt-mcp/.env"),
+        os.path.join(console_dir, ".env"),
+        os.path.join(repo_root, ".env"),
     ]
     creds = {}
     for env_path in env_paths:
@@ -46,6 +55,13 @@ def _load_sg_credentials() -> dict:
                         key = k.strip()
                         if key not in creds:
                             creds[key] = v.strip().strip('"').strip("'")
+    # Fallback to environment variables for keys not found in .env files
+    for key in ("SHOTGRID_URL", "SHOTGRID_SCRIPT_NAME", "SHOTGRID_SCRIPT_KEY",
+                "ANTHROPIC_API_KEY"):
+        if key not in creds:
+            val = os.environ.get(key)
+            if val:
+                creds[key] = val
     return creds
 
 

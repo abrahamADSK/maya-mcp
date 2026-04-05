@@ -75,7 +75,7 @@ Short queries like "set keyframe tangent" are automatically expanded with domain
 ## 3. Execution Environment
 
 ### Location
-- **Repository**: `~/Claude_projects/maya-mcp-project/` (local Mac)
+- **Repository**: `~/Claude_projects/maya-mcp/` (local Mac)
 - **MCP Server**: runs with `python core/server.py` (standard MCP stdio transport)
 - **MCP Configuration**: `~/.claude.json` (via `claude mcp add -s user`)
 - **Tool Permissions**: `~/.claude/settings.json`
@@ -163,7 +163,7 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 
 ### Building the Index
 ```bash
-cd maya-mcp-project
+cd maya-mcp
 python -m core.rag.build_index
 ```
 First run downloads embedding model (~570 MB, cached). Index stored in `core/rag/index/`.

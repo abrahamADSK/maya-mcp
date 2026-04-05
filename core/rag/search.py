@@ -247,7 +247,7 @@ def search(query: str, n_results: int = 5) -> tuple[str, int]:
     if collection is None:
         return (
             "RAG index not found. Build it first:\n"
-            "  cd maya-mcp-project && python -m core.rag.build_index",
+            "  cd maya-mcp && python -m core.rag.build_index",
             0,
         )
 
