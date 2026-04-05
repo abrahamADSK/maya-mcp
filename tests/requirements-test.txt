@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────────
+# Test dependencies for maya-mcp
+#
+# Install with:
+#   pip install -r tests/requirements-test.txt
+#
+# Note on mcp SDK:
+#   The full mcp SDK is NOT required to run the test suite.
+#   conftest.py installs a minimal stub of mcp.server.fastmcp at
+#   collection time, so server.py can be imported without the SDK.
+#   If you install mcp (>= 1.26.0), the stub is automatically
+#   skipped (see the `if "mcp" not in sys.modules:` guard in conftest.py).
+# ─────────────────────────────────────────────────────────────────
+
+# ── Core test framework ───────────────────────────────────────────
+pytest>=7.4.0
+pytest-asyncio>=0.23.0      # @pytest.mark.asyncio in test_vision3d + test_import_file
+
+# ── HTTP mocking (test_vision3d.py) ───────────────────────────────
+httpx>=0.27.0               # httpx.MockTransport used in Vision3D tests
+
+# ── RAG search tests (test_rag_search.py + conftest.py RAG fixtures) ──
+chromadb>=0.5.0             # ChromaDB persistent collection for mini corpus
+rank-bm25>=0.2.2            # BM25Okapi tokenizer used in patch_rag_singletons
+
+# ── Optional: real MCP SDK ────────────────────────────────────────
+# Uncomment if you want to use the full SDK instead of the conftest stub.
+# The stub in conftest.py provides FastMCP, Context, and Image only.
+# mcp>=1.26.0

@@ -150,7 +150,7 @@ Run: `pytest tests/test_rag_search.py -v`
 ## Bugs conocidos
 
 - `console/app.py:36` tenía hardcodeado `~/Claude_projects/fpt-mcp/.env` para cargar ANTHROPIC_API_KEY — refactorizado a búsqueda dinámica (2026-04-05)
-- 8 tests en `test_maya_bridge.py` (TestMayaCreatePrimitive + TestMayaExecutePython) fallan por `ModuleNotFoundError: No module named 'mcp'` — requieren pip install `mcp` SDK. Los 16 tests de TCP/bridge básicos pasan sin él.
+- ~~8 tests en `test_maya_bridge.py` (TestMayaCreatePrimitive + TestMayaExecutePython) fallan por `ModuleNotFoundError: No module named 'mcp'`~~ → resuelto 2026-04-05: stub de mcp SDK movido a `conftest.py` (nivel módulo), todos los tests pasan.
 
 ---
 
@@ -188,4 +188,24 @@ Todos usan `os.path.expanduser()` (no absolutas puras). Los paths de Maya son es
 
 ---
 
-## Última actualización: 2026-04-05 — Import file tests creados (19 tests, monkeypatch bridge.execute, cobertura de maya_import_file: 6 formatos, namespace, scale, group_under, error handling, undo chunks, extensión desconocida). Total: 174 tests (40 nuevos all passing: 19 import + 21 Vision3D; pre-existing failures: 20 failed por mcp SDK ausente en safety, 29 errors por chromadb ausente en RAG — no son regresiones).
+## Última actualización: 2026-04-05 (sesión 2) — Refactor de tests: tres tareas completadas.
+
+### Tarea 1 — asyncio modernizado en `test_maya_bridge.py`
+- Reemplazadas las 8 ocurrencias de `asyncio.get_event_loop().run_until_complete()` por `asyncio.run()` en `TestMayaCreatePrimitive` (4) y `TestMayaExecutePython` (4).
+- Añadido `import asyncio` al top-level del archivo; eliminados los `import asyncio` inline dentro de cada método.
+
+### Tarea 2 — Stubs compartidos en `conftest.py`
+- **conftest.py**: Añadido stub del mcp SDK al nivel del módulo (guard `if "mcp" not in sys.modules`). Añadido fixture `mock_ctx` (AsyncMock con `ctx.info`). Añadidos `import types as _types` y `AsyncMock` a los imports.
+- **test_vision3d.py**: Eliminados los bloques de stubs inline de mcp, maya_bridge y safety (≈60 líneas). Eliminados `_make_mock_ctx()` y el fixture local `mock_ctx`. Eliminados `import types` y `AsyncMock` (ya no necesarios). El archivo usa el `mock_ctx` fixture de conftest.py.
+- **test_import_file.py**: Eliminados los bloques de stubs inline de mcp, maya_bridge y safety (≈60 líneas). Eliminados `import types`, `from unittest.mock import patch, MagicMock`. Añadido `from maya_bridge import MayaBridgeError` (módulo real de core/). Actualizado `_StubMayaBridgeError` → `MayaBridgeError` en `test_bridge_error_returns_message`.
+- Resultado: maya_bridge y safety usan los módulos reales de `core/` (no tienen dependencias externas). mcp se sigue stubbing desde conftest.py.
+
+### Tarea 3 — `tests/requirements-test.txt` creado
+Dependencias documentadas: `pytest>=7.4.0`, `pytest-asyncio>=0.23.0`, `httpx>=0.27.0`, `chromadb>=0.5.0`, `rank-bm25>=0.2.2`. Incluida nota explicando que mcp SDK NO es necesario (el stub de conftest.py lo reemplaza).
+
+### Resultado pytest
+`python -m pytest tests/ -v` → **174 passed, 0 failed** en 1.67s (sandbox Linux). Todos los test files corren correctamente juntos en un mismo proceso pytest sin colisiones de `sys.modules`.
+
+---
+
+**Sesión anterior (2026-04-05)**: Import file tests creados (19 tests, monkeypatch bridge.execute, cobertura de maya_import_file: 6 formatos, namespace, scale, group_under, error handling, undo chunks, extensión desconocida). Total acumulado: 174 tests.

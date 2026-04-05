@@ -20,9 +20,7 @@ Test cases (from TESTING_PLAN section 4.5):
 
 import json
 import sys
-import types
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -31,72 +29,11 @@ _CORE_DIR = Path(__file__).resolve().parent.parent / "core"
 if str(_CORE_DIR) not in sys.path:
     sys.path.insert(0, str(_CORE_DIR))
 
-
-# ── Stub mcp SDK ─────────────────────────────────────────────────────────
-# Same approach as test_vision3d.py: lightweight stubs so server.py imports
-# succeed without the full MCP SDK installed.
-
-_mcp_pkg = types.ModuleType("mcp")
-_mcp_server = types.ModuleType("mcp.server")
-_mcp_fastmcp = types.ModuleType("mcp.server.fastmcp")
-
-
-class _StubContext:
-    pass
-
-
-class _StubImage:
-    pass
-
-
-class _StubFastMCP:
-    def __init__(self, *a, **kw):
-        pass
-
-    def tool(self, **kw):
-        def decorator(fn):
-            return fn
-        return decorator
-
-
-_mcp_fastmcp.FastMCP = _StubFastMCP
-_mcp_fastmcp.Context = _StubContext
-_mcp_fastmcp.Image = _StubImage
-
-_mcp_pkg.server = _mcp_server
-_mcp_server.fastmcp = _mcp_fastmcp
-
-sys.modules["mcp"] = _mcp_pkg
-sys.modules["mcp.server"] = _mcp_server
-sys.modules["mcp.server.fastmcp"] = _mcp_fastmcp
-
-# ── Stub maya_bridge ──────────────────────────────────────────────────────
-_maya_bridge = types.ModuleType("maya_bridge")
-
-
-class _StubMayaBridge:
-    def __init__(self, *a, **kw):
-        pass
-
-    def execute(self, code: str) -> str:
-        """Default stub — tests override via monkeypatch."""
-        return json.dumps({"imported": 1, "objects": ["imported_obj"], "file": "test"})
-
-
-class _StubMayaBridgeError(Exception):
-    pass
-
-
-_maya_bridge.MayaBridge = _StubMayaBridge
-_maya_bridge.MayaBridgeError = _StubMayaBridgeError
-sys.modules["maya_bridge"] = _maya_bridge
-
-# ── Stub safety module ───────────────────────────────────────────────────
-_safety = types.ModuleType("safety")
-_safety.check_dangerous = lambda code: None
-sys.modules["safety"] = _safety
-
-# ── Import server ────────────────────────────────────────────────────────
+# ── Import server ─────────────────────────────────────────────────────────
+# conftest.py installs the mcp SDK stub and adds core/ to sys.path before
+# any test file is collected, so `import server` works without the full SDK.
+# maya_bridge and safety are real modules available from core/.
+from maya_bridge import MayaBridgeError
 import server as srv  # noqa: E402
 
 
@@ -312,7 +249,7 @@ class TestImportErrors:
         """MayaBridgeError from bridge.execute is caught and formatted."""
 
         def raise_bridge_error(code: str):
-            raise _StubMayaBridgeError("file not found: /nonexistent.glb")
+            raise MayaBridgeError("file not found: /nonexistent.glb")
 
         monkeypatch.setattr(srv.bridge, "execute", raise_bridge_error)
 

@@ -17,6 +17,7 @@ Test cases (aligned with TESTING_PLAN §4.1):
   6. maya_execute_python sends code and returns result
 """
 
+import asyncio
 import json
 import socket
 import time
@@ -230,12 +231,9 @@ class TestMayaCreatePrimitive:
         import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        import asyncio
         from server import CreatePrimitiveInput, PrimitiveType
         params = CreatePrimitiveInput(primitive_type=PrimitiveType.CUBE)
-        result = asyncio.get_event_loop().run_until_complete(
-            server.maya_create_primitive(params)
-        )
+        result = asyncio.run(server.maya_create_primitive(params))
 
         assert "polyCube" in captured_code["code"]
         assert "pCube1" in result
@@ -251,16 +249,13 @@ class TestMayaCreatePrimitive:
         import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        import asyncio
         from server import CreatePrimitiveInput, PrimitiveType
         params = CreatePrimitiveInput(
             primitive_type=PrimitiveType.SPHERE,
             name="mySphere",
             position=[1.0, 2.0, 3.0],
         )
-        result = asyncio.get_event_loop().run_until_complete(
-            server.maya_create_primitive(params)
-        )
+        result = asyncio.run(server.maya_create_primitive(params))
 
         code = captured_code["code"]
         assert "polySphere" in code
@@ -278,7 +273,6 @@ class TestMayaCreatePrimitive:
         import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        import asyncio
         from server import CreatePrimitiveInput, PrimitiveType
         params = CreatePrimitiveInput(
             primitive_type=PrimitiveType.CYLINDER,
@@ -286,9 +280,7 @@ class TestMayaCreatePrimitive:
             scale=[2.0, 2.0, 2.0],
             rotation=[0.0, 45.0, 0.0],
         )
-        asyncio.get_event_loop().run_until_complete(
-            server.maya_create_primitive(params)
-        )
+        asyncio.run(server.maya_create_primitive(params))
 
         code = captured_code["code"]
         assert "polyCylinder" in code
@@ -299,7 +291,6 @@ class TestMayaCreatePrimitive:
     def test_all_primitive_types(self, monkeypatch):
         """All 6 primitive types generate the correct polyCmds function."""
         import server
-        import asyncio
         from server import CreatePrimitiveInput, PrimitiveType
 
         expected_funcs = {
@@ -320,9 +311,7 @@ class TestMayaCreatePrimitive:
 
             monkeypatch.setattr(server.bridge, "execute", fake_execute)
             params = CreatePrimitiveInput(primitive_type=ptype)
-            asyncio.get_event_loop().run_until_complete(
-                server.maya_create_primitive(params)
-            )
+            asyncio.run(server.maya_create_primitive(params))
             assert func_name in captured["code"], (
                 f"{ptype.value} should use cmds.{func_name}"
             )
@@ -349,12 +338,9 @@ class TestMayaExecutePython:
         import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        import asyncio
         from server import ExecutePythonInput
         params = ExecutePythonInput(code="result = 21 * 2")
-        result = asyncio.get_event_loop().run_until_complete(
-            server.maya_execute_python(params)
-        )
+        result = asyncio.run(server.maya_execute_python(params))
 
         assert captured_code["code"] == "result = 21 * 2"
         assert result == "42"
@@ -371,12 +357,9 @@ class TestMayaExecutePython:
         before_calls = server._stats["exec_calls"]
         before_in = server._stats["tokens_in"]
 
-        import asyncio
         from server import ExecutePythonInput
         params = ExecutePythonInput(code="result = 'hello'")
-        asyncio.get_event_loop().run_until_complete(
-            server.maya_execute_python(params)
-        )
+        asyncio.run(server.maya_execute_python(params))
 
         assert server._stats["exec_calls"] == before_calls + 1
         assert server._stats["tokens_in"] > before_in
@@ -396,13 +379,10 @@ class TestMayaExecutePython:
 
         before_blocks = server._stats["safety_blocks"]
 
-        import asyncio
         from server import ExecutePythonInput
         # This pattern is caught by safety.py: wildcard delete
         params = ExecutePythonInput(code="cmds.delete('*')")
-        result = asyncio.get_event_loop().run_until_complete(
-            server.maya_execute_python(params)
-        )
+        result = asyncio.run(server.maya_execute_python(params))
 
         parsed = json.loads(result)
         assert "safety_warning" in parsed
@@ -418,12 +398,9 @@ class TestMayaExecutePython:
 
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        import asyncio
         from server import ExecutePythonInput
         params = ExecutePythonInput(code="result = cmds.ls()")
-        result = asyncio.get_event_loop().run_until_complete(
-            server.maya_execute_python(params)
-        )
+        result = asyncio.run(server.maya_execute_python(params))
 
         # _handle_error returns JSON with error key
         assert "error" in result.lower() or "Connection lost" in result

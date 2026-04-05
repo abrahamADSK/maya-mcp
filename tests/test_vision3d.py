@@ -19,7 +19,7 @@ Test cases (from TESTING_PLAN section 4.4):
 import json
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -31,13 +31,6 @@ if str(_CORE_DIR) not in sys.path:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
-
-def _make_mock_ctx() -> AsyncMock:
-    """Create a mock MCP Context with async info() method."""
-    ctx = AsyncMock()
-    ctx.info = AsyncMock()
-    return ctx
-
 
 _MOCK_BASE_URL = "http://mock-vision3d:8000"
 
@@ -68,78 +61,10 @@ def _bytes_response(content: bytes, status_code: int = 200) -> httpx.Response:
     )
 
 
-# ── Import server module (with mcp stub) ─────────────────────────────────
-# server.py imports `from mcp.server.fastmcp import ...` at top level.
-# We stub the mcp package so we can import the functions and models
-# without installing the full MCP SDK.
-
-import types
-
-# ── Stub mcp SDK ──────────────────────────────────────────────────────────
-# server.py imports: from mcp.server.fastmcp import FastMCP, Image, Context
-# We provide minimal stubs so import succeeds without the full MCP SDK.
-
-_mcp_pkg = types.ModuleType("mcp")
-_mcp_server = types.ModuleType("mcp.server")
-_mcp_fastmcp = types.ModuleType("mcp.server.fastmcp")
-
-
-class _StubContext:
-    """Minimal stand-in for mcp.server.fastmcp.Context type annotation."""
-    pass
-
-
-class _StubImage:
-    """Minimal stand-in for mcp.server.fastmcp.Image."""
-    pass
-
-
-class _StubFastMCP:
-    """Minimal stand-in for FastMCP that captures @mcp.tool() decorators."""
-    def __init__(self, *a, **kw):
-        pass
-
-    def tool(self, **kw):
-        """Decorator that just returns the function unchanged."""
-        def decorator(fn):
-            return fn
-        return decorator
-
-
-_mcp_fastmcp.FastMCP = _StubFastMCP
-_mcp_fastmcp.Context = _StubContext
-_mcp_fastmcp.Image = _StubImage
-
-_mcp_pkg.server = _mcp_server
-_mcp_server.fastmcp = _mcp_fastmcp
-
-sys.modules["mcp"] = _mcp_pkg
-sys.modules["mcp.server"] = _mcp_server
-sys.modules["mcp.server.fastmcp"] = _mcp_fastmcp
-
-# ── Stub maya_bridge (not needed for Vision3D tests) ──────────────────────
-_maya_bridge = types.ModuleType("maya_bridge")
-
-
-class _StubMayaBridge:
-    def __init__(self, *a, **kw):
-        pass
-
-
-class _StubMayaBridgeError(Exception):
-    pass
-
-
-_maya_bridge.MayaBridge = _StubMayaBridge
-_maya_bridge.MayaBridgeError = _StubMayaBridgeError
-sys.modules["maya_bridge"] = _maya_bridge
-
-# ── Stub safety module ────────────────────────────────────────────────────
-_safety = types.ModuleType("safety")
-_safety.check_dangerous = lambda code: None
-sys.modules["safety"] = _safety
-
-# Now import the actual server module
+# ── Import server module ──────────────────────────────────────────────────
+# conftest.py installs the mcp SDK stub and adds core/ to sys.path before
+# any test file is collected, so `import server` works without the full SDK.
+# maya_bridge and safety are real modules available from core/.
 import server as srv  # noqa: E402
 
 
@@ -153,12 +78,6 @@ def _reset_http_client():
     yield
     srv._http_client = None
     srv._job_log_cursors.clear()
-
-
-@pytest.fixture()
-def mock_ctx():
-    """Provide a mock MCP Context."""
-    return _make_mock_ctx()
 
 
 # ── 1. vision3d_health — server available ─────────────────────────────────

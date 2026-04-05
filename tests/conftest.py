@@ -16,8 +16,9 @@ import sys
 import json
 import socket
 import threading
+import types as _types
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -27,6 +28,59 @@ import pytest
 _CORE_DIR = Path(__file__).resolve().parent.parent / "core"
 if str(_CORE_DIR) not in sys.path:
     sys.path.insert(0, str(_CORE_DIR))
+
+
+# ── Shared MCP SDK stub ───────────────────────────────────────────────────────
+# server.py imports `from mcp.server.fastmcp import FastMCP, Image, Context` at
+# module level.  We install a minimal stub here (before any test file is
+# collected) so that `import server` succeeds without the full MCP SDK.
+# The guard ensures a real installation is not clobbered when the SDK is present.
+
+if "mcp" not in sys.modules:
+    _mcp_pkg = _types.ModuleType("mcp")
+    _mcp_server_mod = _types.ModuleType("mcp.server")
+    _mcp_fastmcp = _types.ModuleType("mcp.server.fastmcp")
+
+    class _StubFastMCP:
+        """Minimal FastMCP stand-in: captures @mcp.tool() decorators."""
+        def __init__(self, *a, **kw):
+            pass
+
+        def tool(self, **kw):
+            def decorator(fn):
+                return fn
+            return decorator
+
+    class _StubContext:
+        """Minimal Context type-annotation stand-in."""
+        pass
+
+    class _StubImage:
+        """Minimal Image stand-in."""
+        pass
+
+    _mcp_fastmcp.FastMCP = _StubFastMCP
+    _mcp_fastmcp.Context = _StubContext
+    _mcp_fastmcp.Image = _StubImage
+    _mcp_pkg.server = _mcp_server_mod
+    _mcp_server_mod.fastmcp = _mcp_fastmcp
+
+    sys.modules["mcp"] = _mcp_pkg
+    sys.modules["mcp.server"] = _mcp_server_mod
+    sys.modules["mcp.server.fastmcp"] = _mcp_fastmcp
+
+
+# ── Shared fixtures ───────────────────────────────────────────────────────────
+
+@pytest.fixture()
+def mock_ctx():
+    """Provide a mock MCP Context with async info() method.
+
+    Used by Vision3D tool tests that receive a Context parameter.
+    """
+    ctx = AsyncMock()
+    ctx.info = AsyncMock()
+    return ctx
 
 
 # ── Mock TCP Server ──────────────────────────────────────────────────────────
