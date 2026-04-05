@@ -151,6 +151,7 @@ Run: `pytest tests/test_rag_search.py -v`
 
 - `console/app.py:36` tenía hardcodeado `~/Claude_projects/fpt-mcp/.env` para cargar ANTHROPIC_API_KEY — refactorizado a búsqueda dinámica (2026-04-05)
 - ~~8 tests en `test_maya_bridge.py` (TestMayaCreatePrimitive + TestMayaExecutePython) fallan por `ModuleNotFoundError: No module named 'mcp'`~~ → resuelto 2026-04-05: stub de mcp SDK movido a `conftest.py` (nivel módulo), todos los tests pasan.
+- ~~`console/claude_worker.py`: `subprocess.Popen` no pasaba `cwd=`, heredando el CWD de Maya. Claude CLI no encontraba MCP servers registrados en `.claude/settings.json` del proyecto~~ → resuelto 2026-04-05: añadido `cwd=_REPO_ROOT` derivado de `Path(__file__).resolve().parent.parent`.
 
 ---
 
@@ -188,7 +189,7 @@ Todos usan `os.path.expanduser()` (no absolutas puras). Los paths de Maya son es
 
 ---
 
-## Última actualización: 2026-04-05 (sesión 2) — Refactor de tests: tres tareas completadas.
+## Última actualización: 2026-04-05 (sesión 3) — Fix cwd en ClaudeWorker subprocess.
 
 ### Tarea 1 — asyncio modernizado en `test_maya_bridge.py`
 - Reemplazadas las 8 ocurrencias de `asyncio.get_event_loop().run_until_complete()` por `asyncio.run()` en `TestMayaCreatePrimitive` (4) y `TestMayaExecutePython` (4).

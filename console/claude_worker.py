@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 from .qt_compat import QtCore
 
@@ -117,6 +118,11 @@ def _find_claude() -> str:
 
 
 CLAUDE_BIN = _find_claude()
+
+# Repo root — used as cwd for Claude CLI so it picks up project-level
+# MCP config from .claude/settings.json instead of requiring global config.
+# console/claude_worker.py → parent = console/ → parent.parent = repo root
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 
 # Max time for a single invocation (shape gen can take ~15 min)
 TIMEOUT_SECONDS = 900
@@ -367,6 +373,7 @@ class ClaudeWorker(QThread):
                 bufsize=1,
                 text=True,
                 env={**_SHELL_ENV, "CLAUDE_NO_TELEMETRY": "1"},
+                cwd=_REPO_ROOT,
             )
 
             text_parts: list[str] = []
