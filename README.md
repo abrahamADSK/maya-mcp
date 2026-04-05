@@ -1,5 +1,7 @@
 # maya-mcp
 
+> Control Autodesk Maya with natural language using Claude and the Model Context Protocol (MCP)
+
 > [!WARNING]
 > **Experimental project — use at your own risk.**
 > This is an independent, unofficial experiment created with [Claude Code](https://claude.com/claude-code). It is **not** affiliated with, endorsed by, or officially supported by Autodesk in any way. The Maya name and trademarks belong to Autodesk, Inc.
@@ -147,6 +149,17 @@ maya-mcp/
 ---
 
 ## Installation
+
+### Automatic Installation
+
+```bash
+git clone https://github.com/abrahamADSK/maya-mcp.git
+cd maya-mcp
+chmod +x install.sh
+./install.sh
+```
+
+The installer creates a virtual environment, installs dependencies, builds the RAG index, and registers the MCP server with Claude Code.
 
 ### 1. Clone and configure
 
