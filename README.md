@@ -14,21 +14,6 @@
 
 ## Features
 
-### RAG-Powered Documentation Search
-LLMs hallucinate Maya API details constantly — wrong flag names (`width=` instead of `w=`), nonexistent commands (`cmds.usdExport` instead of `cmds.mayaUSDExport`), incorrect return types. maya-mcp includes a **hybrid RAG engine** (ChromaDB semantic + BM25 lexical, fused via Reciprocal Rank Fusion) with 5 curated documentation corpora covering maya.cmds, PyMEL, Arnold/mtoa, Maya-USD, and a comprehensive anti-patterns database. The LLM calls `search_maya_docs` before writing any unfamiliar code, getting verified syntax with relevance scores.
-
-### HyDE Query Expansion
-Short queries like "set keyframe tangent" don't match code-heavy documentation well. maya-mcp uses **Hypothetical Document Embedding (HyDE)** — it detects which Maya API domain the query targets (cmds, PyMEL, Arnold, USD, MEL) and wraps the query in a domain-specific code template before embedding. This bridges the gap between natural-language questions and code documentation.
-
-### Anti-Hallucination Safety Layer
-Before any code reaches Maya, the **safety module** scans for 14+ dangerous patterns: bulk deletes without filters, undo system tampering, filesystem operations on scene files, plugin deregistration with active nodes, namespace deletions, referenced geometry modification, and more. Each pattern includes an explanation of WHY it's dangerous and a SAFE alternative.
-
-### Self-Learning Pattern Memory
-When the RAG returns low-relevance results (< 60%) but the operation succeeds, the LLM can call `learn_pattern` to save the working pattern for future sessions. **Model trust gates** ensure only Sonnet/Opus can write directly to docs — other models stage candidates for human review. Knowledge grows over time without manual curation.
-
-### Token Efficiency Tracking
-Every tool call tracks tokens in/out. The `session_stats` tool reports how much context was saved by RAG vs loading full documentation, making the efficiency gains measurable and visible.
-
 ### Production Maya Operations
 Beyond primitives, maya-mcp handles real production tasks: polygon modeling (extrude, bevel, boolean, combine, smooth), animation keyframing with tangent control, multi-format I/O (OBJ, FBX, GLTF, Alembic, USD, MA/MB), viewport capture/playblast, full scene snapshots, and shelf button creation. All operations use undo chunks for safe rollback.
 
@@ -103,6 +88,34 @@ FastMCP server (core/server.py) — 27 tools
 | `search_maya_docs` | Hybrid RAG search across 5 Maya API corpora with relevance scores |
 | `learn_pattern` | Save validated working patterns for future sessions (with trust gates) |
 | `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned |
+
+---
+
+## RAG — Knowledge Engine
+
+### Architecture
+
+LLMs hallucinate Maya API details constantly — wrong flag names (`width=` instead of `w=`), nonexistent commands (`cmds.usdExport` instead of `cmds.mayaUSDExport`), incorrect return types. maya-mcp includes a **hybrid RAG engine** (ChromaDB semantic + BM25 lexical, fused via Reciprocal Rank Fusion) with 5 curated documentation corpora covering maya.cmds, PyMEL, Arnold/mtoa, Maya-USD, and a comprehensive anti-patterns database. The LLM calls `search_maya_docs` before writing any unfamiliar code, getting verified syntax with relevance scores.
+
+### HyDE Query Expansion
+
+Short queries like "set keyframe tangent" don't match code-heavy documentation well. maya-mcp uses **Hypothetical Document Embedding (HyDE)** — it detects which Maya API domain the query targets (cmds, PyMEL, Arnold, USD, MEL) and wraps the query in a domain-specific code template before embedding. This bridges the gap between natural-language questions and code documentation.
+
+### Dangerous Pattern Detection
+
+Before any code reaches Maya, the **safety module** scans for 14+ dangerous patterns: bulk deletes without filters, undo system tampering, filesystem operations on scene files, plugin deregistration with active nodes, namespace deletions, referenced geometry modification, and more. Each pattern includes an explanation of WHY it is dangerous and a SAFE alternative.
+
+---
+
+## Self-Learning
+
+When the RAG returns low-relevance results (< 60%) but the operation succeeds, the LLM can call `learn_pattern` to save the working pattern for future sessions. **Model trust gates** ensure only Sonnet/Opus can write directly to docs — other models stage candidates for human review. Knowledge grows over time without manual curation.
+
+---
+
+## Token Tracking
+
+Every tool call tracks tokens in/out. The `session_stats` tool reports how much context was saved by RAG vs loading full documentation, making the efficiency gains measurable and visible.
 
 ---
 
