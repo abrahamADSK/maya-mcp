@@ -148,6 +148,21 @@ maya-mcp/
 
 ---
 
+## Requirements
+
+- macOS
+- Autodesk Maya 2023 or later
+- Python 3.9 or higher (ships with Maya)
+- Node.js v22 or higher (required by Claude Code)
+- Claude Code 2.x
+- A Claude account — Pro, Max, or API key
+
+### Optional
+
+- [Vision3D](https://github.com/abrahamADSK/vision3d) server for AI-powered 3D generation
+
+---
+
 ## Installation
 
 ### Automatic Installation
@@ -244,6 +259,24 @@ Or for Claude Desktop, add to `~/Library/Application Support/Claude/claude_deskt
 ### 6. Vision3D addon (optional — for AI 3D generation)
 
 maya-mcp can optionally integrate with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. This is **not required** for core Maya functionality. If you want it, follow the Vision3D README to install and run, then set `GPU_API_URL` and `GPU_API_KEY` in your environment.
+
+---
+
+## Usage
+
+Once installed, maya-mcp is available through Claude Code or any MCP-compatible client. Open Maya, ensure the Command Port is running, and start a conversation:
+
+```
+You: "Create a 2x2 grid of spheres with 0.5 unit spacing"
+Claude → maya_create_primitive (sphere) × 4 → maya_transform (position each) → Result
+```
+
+```
+You: "Generate a 3D model from this reference image and import it"
+Claude → shape_generate_remote (submit to Vision3D) → vision3d_poll (wait) → vision3d_download → maya_import_file → Result
+```
+
+All operations go through the safety scanner before reaching Maya. Dangerous patterns are blocked with an explanation and a safe alternative.
 
 ---
 
