@@ -178,6 +178,39 @@ Todos usan `os.path.expanduser()` (no absolutas puras). Los paths de Maya son es
 
 ---
 
+## Script de instalación: install.sh
+
+`install.sh` en la raíz del repo automatiza la instalación completa desde un clone limpio. Es idempotente (ejecutarlo dos veces no rompe nada). Funciona en macOS y Linux.
+
+### Pasos que ejecuta
+
+| Paso | Acción |
+|------|--------|
+| 1 | Verifica Python 3.10+ (`python3` o `python`) |
+| 2 | Crea `.venv/` en la raíz del repo si no existe |
+| 3 | Instala `core/requirements.txt` + RAG extras (`chromadb`, `sentence-transformers`, `rank-bm25`) |
+| 4 | Construye el RAG index vía `python -m core.rag.build_index` (skip si ya existe) |
+| 5 | Registra/actualiza la entrada `maya-mcp` en `~/.claude.json` (usa `jq` si disponible, Python como fallback) |
+| 6 | Muestra resumen con ✓/⚠/✗ por paso y próximos pasos manuales |
+
+### Notas de diseño
+
+- **Venv en raíz**: `.venv/` en `maya-mcp/` (no en `core/`), consistente con la ruta que usa `server_panel.py` y el ejemplo de `claude mcp add` del README.
+- **Sin setup.py**: el proyecto no tiene `pyproject.toml` ni `setup.py`, por lo que se usa `pip install -r core/requirements.txt`.
+- **RAG extras separados**: `chromadb`, `sentence-transformers` y `rank-bm25` no están en `core/requirements.txt` (el requirements de runtime es mínimo), pero el script los instala para que el índice funcione.
+- **RAG build skip**: si `core/rag/index/` y `core/rag/corpus.json` ya existen, se omite el rebuild (el índice viene committed en el repo).
+- **~/.claude.json idempotente**: el entry se hace upsert — si ya existía, se sobreescribe con las rutas actuales del clone. No duplica.
+- **Errores no fatales**: RAG build y registro JSON no abortan la instalación; se reportan como warnings/errors en el resumen final.
+
+### Uso
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+---
+
 ## Pendiente
 
 - ~~Crear tests automatizados (prioritario)~~ → safety tests creados (67 tests)
@@ -189,7 +222,7 @@ Todos usan `os.path.expanduser()` (no absolutas puras). Los paths de Maya son es
 
 ---
 
-## Última actualización: 2026-04-05 (sesión 3) — Fix cwd en ClaudeWorker subprocess.
+## Última actualización: 2026-04-05 (sesión 4) — Script de instalación install.sh.
 
 ### Tarea 1 — asyncio modernizado en `test_maya_bridge.py`
 - Reemplazadas las 8 ocurrencias de `asyncio.get_event_loop().run_until_complete()` por `asyncio.run()` en `TestMayaCreatePrimitive` (4) y `TestMayaExecutePython` (4).
@@ -209,4 +242,10 @@ Dependencias documentadas: `pytest>=7.4.0`, `pytest-asyncio>=0.23.0`, `httpx>=0.
 
 ---
 
-**Sesión anterior (2026-04-05)**: Import file tests creados (19 tests, monkeypatch bridge.execute, cobertura de maya_import_file: 6 formatos, namespace, scale, group_under, error handling, undo chunks, extensión desconocida). Total acumulado: 174 tests.
+### Sesión 4 — 2026-04-05 — Script install.sh
+
+- **install.sh creado** en raíz del repo. Automatiza los 5 pasos de instalación (Python check, venv, deps, RAG build, ~/.claude.json). Idempotente, funciona en macOS y Linux.
+- **HANDOFF.md actualizado** con sección "Script de instalación" documentando diseño y uso.
+- No se modificó código fuente del proyecto.
+
+**Sesión anterior (2026-04-05, sesión 3)**: Fix cwd en ClaudeWorker subprocess. asyncio modernizado en tests. Stubs compartidos en conftest.py. tests/requirements-test.txt creado. 174 tests pasando.
