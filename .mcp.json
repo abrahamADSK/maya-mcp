@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "maya-mcp": {
+      "command": ".venv/bin/python",
+      "args": ["core/server.py"],
+      "cwd": "."
+    }
+  }
+}
