@@ -20,6 +20,7 @@ Test cases (aligned with TESTING_PLAN §4.1):
 import asyncio
 import json
 import socket
+import unittest.mock
 import time
 
 import pytest
@@ -122,27 +123,12 @@ class TestTimeout:
             b.send_mel("about -v")
 
     def test_timeout_raises_connection_error(self):
-        """Socket timeout is wrapped in MayaConnectionError."""
-        # Bind a socket but don't accept — causes connect timeout
-        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        blocker.bind(("localhost", 0))
-        # listen with backlog 0 and fill it
-        blocker.listen(0)
-        port = blocker.getsockname()[1]
-
-        # Fill the backlog so the next connect will hang
-        filler = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        filler.connect(("localhost", port))
-
-        try:
-            b = MayaBridge(host="localhost", port=port, timeout=0.3)
-            # This should either refuse or timeout
+        """Socket timeout is wrapped in MayaConnectionError (mocked)."""
+        b = MayaBridge(host="localhost", port=19999, timeout=0.3)
+        # Mock socket.connect to raise a timeout — OS-independent
+        with unittest.mock.patch("socket.socket.connect", side_effect=socket.timeout("timed out")):
             with pytest.raises(MayaBridgeError):
                 b.send_mel("about -v")
-        finally:
-            filler.close()
-            blocker.close()
 
     def test_unreachable_host_raises(self):
         """Non-routable host triggers MayaBridgeError within timeout."""
