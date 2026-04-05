@@ -267,6 +267,21 @@ All three MCP servers (maya-mcp, fpt-mcp, flame-mcp) share the same architecture
 
 ---
 
+## Ecosystem
+
+`maya-mcp` is part of a four-component VFX pipeline. Each component has a defined role:
+
+| Repo | Role |
+|------|------|
+| [flame-mcp](https://github.com/abrahamADSK/flame-mcp) | Controls Autodesk Flame for compositing, conform, and finishing |
+| [maya-mcp](https://github.com/abrahamADSK/maya-mcp) | Controls Autodesk Maya for 3D modeling, animation, and rendering |
+| [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) | Connects to Autodesk Flow Production Tracking (ShotGrid) for production tracking, asset management, and publishes |
+| [vision3d](https://github.com/abrahamADSK/vision3d) | GPU inference server for AI-powered 3D generation — the remote backend for maya-mcp's image-to-3D and text-to-3D tools |
+
+`maya-mcp` sits at the 3D creation stage of the pipeline. It consumes `vision3d` via HTTP — submitting image-to-3D or text-to-3D jobs and importing the resulting `.glb` files into Maya. It works alongside `fpt-mcp` for end-to-end workflows: query ShotGrid for an asset, generate or load reference, build the 3D asset in Maya, and register the publish back in ShotGrid. `flame-mcp` typically operates downstream, receiving rendered outputs from Maya for finishing.
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
