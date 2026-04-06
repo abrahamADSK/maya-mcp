@@ -27,6 +27,7 @@ build/
 
 # ── Claude / RAG (generated) ─────────────────────────────────
 .claude/
+.mcp.json
 core/rag/corpus.json
 core/rag/index/
 

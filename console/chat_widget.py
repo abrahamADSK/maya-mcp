@@ -17,7 +17,7 @@ from typing import Optional
 
 from .qt_compat import QtWidgets, QtCore, QtGui
 
-from .claude_worker import ClaudeWorker
+from .claude_worker import AVAILABLE_MODELS, ClaudeWorker
 from .server_panel import ServerStatusBar, detect_mcp_servers
 
 
@@ -222,6 +222,7 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._worker: Optional[ClaudeWorker] = None
         self._progress_lines: list[str] = []
         self._servers: dict = {}
+        self._selected_model_idx = 0
 
         self._build_ui()
         self.setStyleSheet(DARK_STYLE)
@@ -256,6 +257,18 @@ class MCPChatWidget(QtWidgets.QWidget):
         h_lay.addWidget(self._context_badge)
 
         h_lay.addStretch()
+
+        # Model selector combo
+        self._model_combo = QtWidgets.QComboBox()
+        for label, _, _ in AVAILABLE_MODELS:
+            self._model_combo.addItem(label)
+        self._model_combo.setCurrentIndex(self._selected_model_idx)
+        self._model_combo.currentIndexChanged.connect(self._on_model_changed)
+        self._model_combo.setStyleSheet(
+            "QComboBox { background: #1e293b; color: #e0e0e0; border: 1px solid #334155; "
+            "border-radius: 6px; padding: 2px 6px; font-size: 11px; }"
+        )
+        h_lay.addWidget(self._model_combo)
 
         # Compact server status dots
         self._status_bar = ServerStatusBar()
@@ -306,6 +319,19 @@ class MCPChatWidget(QtWidgets.QWidget):
         layout.addWidget(input_bar)
 
         self._input.setFocus()
+
+    # ------------------------------------------------------------------
+    # Model selection
+    # ------------------------------------------------------------------
+
+    def _on_model_changed(self, index: int):
+        """Called when the user picks a different model in the combo."""
+        self._selected_model_idx = index
+
+    def _get_selected_model(self) -> tuple[str, str]:
+        """Return (model_id, backend) for the currently selected model."""
+        _, model_id, backend = AVAILABLE_MODELS[self._selected_model_idx]
+        return model_id, backend
 
     # ------------------------------------------------------------------
     # Quick actions
@@ -445,11 +471,14 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._progress_lines = []
         self._append_bubble("<i>Thinking...</i>", "thinking")
 
+        model_id, backend = self._get_selected_model()
         self._worker = ClaudeWorker(
             text,
             self._context,
             history=self._history[:-1],
             available_servers=self._servers,
+            model_id=model_id,
+            backend=backend,
             parent=self,
         )
         self._worker.progress.connect(self._on_progress)

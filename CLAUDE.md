@@ -262,4 +262,64 @@ The `console/` package provides a dockable panel inside Maya via `cmds.workspace
 
 ---
 
+## 11. LLM Backend & Model Selection
+
+maya-mcp supports multiple LLM backends via the model selector in the Console panel header.
+
+### Recommended local model: Qwen3.5 9B (`qwen3.5-mcp`)
+- **Tool calling**: 97.5% accuracy (1st of 13 models, eval J.D. Hodges)
+- **Context window**: 262K tokens
+- **Memory**: 6.6 GB (Q4_K_M)
+- **Multimodal**: vision-capable (important for viewport_capture analysis)
+- **Modelfile**: `qwen3.5-mcp` is a custom Modelfile derived from `qwen3.5:9b` with
+  `num_ctx 8192`, `temperature 0.7`, `top_p 0.8`, `top_k 20`.
+  Available on glorfindel and Mac M5 Pro.
+- **Mac 24GB fallback**: `qwen3.5:4b` (direct, no custom Modelfile)
+- **Ollama API note**: requires `"think": false` in each request to disable thinking mode.
+
+### Available backends
+| Backend | Label in combo | URL source | Notes |
+|---|---|---|---|
+| `anthropic` | Claude Sonnet/Opus | Anthropic API | Default, needs internet + API key |
+| `ollama` | 🖥 models | `config.json → ollama_url` | glorfindel RTX 3090, LAN |
+| `ollama_mac` | 🍎 models | `config.json → ollama_mac_url` | Mac-local, offline |
+
+### Backend switching
+The Console panel passes `--model` and env vars (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_API_KEY`) to the Claude Code CLI subprocess. For Ollama backends, the Anthropic
+SDK is redirected to the Ollama Messages-compatible endpoint (Ollama v0.14+).
+
+### Write-allowed models (RAG trust gates)
+Only Claude models can write patterns via `learn_pattern`. Local models (Ollama) are
+read-only — they can search docs but cannot persist new patterns. Configured via
+`write_allowed_models` in `core/config.json` (default: `["claude-opus", "claude-sonnet"]`).
+
+### viewport_capture fallback for non-vision models
+`maya_viewport_capture` returns both the image (base64) and text metadata (path, resolution,
+size). Models without vision capability (e.g. `qwen3.5:4b`, `glm-4.7-flash`) will receive
+the text metadata but cannot analyze the image content. The screenshot file is still saved
+to the specified `output_path` for manual inspection or later use. When using a non-vision
+model, prefer `maya_scene_snapshot` (text-only scene state) over `maya_viewport_capture`.
+
+### Prerequisites for local models
+```bash
+# Install Ollama (macOS)
+brew install ollama
+brew services start ollama
+
+# Pull the model
+ollama pull qwen3.5:9b
+# On Mac 24GB (fallback):
+ollama pull qwen3.5:4b
+```
+
+### Configuration
+Copy `core/config.example.json` to `core/config.json` and adjust URLs.
+
+### Full LLM strategy
+See `MODEL_STRATEGY.md` in the ecosystem root for hardware configs, VRAM management,
+update procedures, and architecture decisions.
+
+---
+
 **Keep this file updated when architecture, tools, or workflows change.**

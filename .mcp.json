@@ -4,6 +4,16 @@
       "command": ".venv/bin/python",
       "args": ["core/server.py"],
       "cwd": "."
+    },
+    "flame": {
+      "command": "/Users/abraham/Claude_projects/flame-mcp/.venv/bin/python",
+      "args": ["/Users/abraham/Claude_projects/flame-mcp/flame_mcp_server.py"],
+      "cwd": "/Users/abraham/Claude_projects/flame-mcp"
+    },
+    "fpt-mcp": {
+      "command": "/Users/abraham/Claude_projects/fpt-mcp/.venv/bin/python",
+      "args": ["-m", "fpt_mcp.server"],
+      "cwd": "/Users/abraham/Claude_projects/fpt-mcp"
     }
   }
 }

@@ -127,6 +127,71 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 # Max time for a single invocation (shape gen can take ~15 min)
 TIMEOUT_SECONDS = 900
 
+# ---------------------------------------------------------------------------
+# Multi-backend model configuration
+# ---------------------------------------------------------------------------
+
+# Each entry: (display_label, model_id, backend)
+AVAILABLE_MODELS = [
+    # ── Anthropic cloud (default — needs internet + API key) ─────────
+    ("Claude Sonnet 4.6",     "claude-sonnet-4-6",         "anthropic"),
+    ("Claude Opus 4.6",       "claude-opus-4-6",           "anthropic"),
+    # ── Self-hosted Ollama (glorfindel RTX 3090, LAN) ────────────────
+    ("Qwen3.5 9B 🖥",         "qwen3.5-mcp",               "ollama"),
+    ("GLM-4.7 Flash 🖥",      "glm-4.7-flash",             "ollama"),
+    # ── Mac-local Ollama (offline, no LAN) ───────────────────────────
+    ("Qwen3.5 9B 🍎",         "qwen3.5-mcp",               "ollama_mac"),
+    ("Qwen3.5 4B 🍎",         "qwen3.5:4b",                "ollama_mac"),
+]
+
+# Models allowed to write RAG patterns (learn_pattern). Local models are read-only.
+WRITE_ALLOWED_MODELS = ["claude-opus", "claude-sonnet"]
+
+# Default Ollama URLs — can be overridden by core/config.json
+DEFAULT_OLLAMA_URL = "http://glorfindel:11434"
+DEFAULT_OLLAMA_MAC_URL = "http://localhost:11434"
+
+# Models with vision capability (for viewport_capture analysis)
+VISION_MODELS = {"claude-sonnet-4-6", "claude-opus-4-6", "qwen3.5-mcp", "qwen3.5:9b"}
+
+
+def _load_config() -> dict:
+    """Load config.json from the core/ directory."""
+    cfg_path = Path(_REPO_ROOT) / "core" / "config.json"
+    try:
+        return json.loads(cfg_path.read_text())
+    except Exception:
+        return {}
+
+
+def build_backend_env(model_id: str, backend: str) -> dict:
+    """Return env-var overrides for the selected backend.
+
+    For Ollama backends, redirects the Anthropic SDK to the Ollama
+    Messages-compatible endpoint (Ollama v0.14+).
+    """
+    cfg = _load_config()
+    env = {}
+
+    if backend == "ollama":
+        base_url = cfg.get("ollama_url", DEFAULT_OLLAMA_URL)
+        env["ANTHROPIC_BASE_URL"] = base_url
+        env["ANTHROPIC_AUTH_TOKEN"] = "ollama"
+        env["ANTHROPIC_API_KEY"] = ""
+    elif backend == "ollama_mac":
+        base_url = cfg.get("ollama_mac_url", DEFAULT_OLLAMA_MAC_URL)
+        env["ANTHROPIC_BASE_URL"] = base_url
+        env["ANTHROPIC_AUTH_TOKEN"] = "ollama"
+        env["ANTHROPIC_API_KEY"] = ""
+    # anthropic backend: no overrides needed, uses default env
+
+    return env
+
+
+def model_has_vision(model_id: str) -> bool:
+    """Return True if the model supports image analysis (viewport_capture)."""
+    return model_id in VISION_MODELS
+
 
 # ---------------------------------------------------------------------------
 # Dynamic system prompt builder
@@ -316,6 +381,8 @@ class ClaudeWorker(QThread):
         context: dict | None = None,
         history: list | None = None,
         available_servers: dict | None = None,
+        model_id: str | None = None,
+        backend: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -323,6 +390,8 @@ class ClaudeWorker(QThread):
         self._context = context or {}
         self._history = history or []
         self._servers = available_servers or {}
+        self._model_id = model_id
+        self._backend = backend
 
     def _label_for_tool(self, tool_name: str) -> str:
         """Return a human-friendly label for an MCP tool name."""
@@ -364,15 +433,24 @@ class ClaudeWorker(QThread):
         system_prompt = build_system_prompt(self._servers)
 
         try:
+            # Build environment with backend-specific overrides
+            run_env = {**_SHELL_ENV, "CLAUDE_NO_TELEMETRY": "1"}
+            if self._model_id and self._backend:
+                run_env.update(build_backend_env(self._model_id, self._backend))
+
+            cmd = [CLAUDE_BIN, "-p", prompt,
+                   "--output-format", "stream-json", "--verbose",
+                   "--append-system-prompt", system_prompt]
+            if self._model_id:
+                cmd.extend(["--model", self._model_id])
+
             proc = subprocess.Popen(
-                [CLAUDE_BIN, "-p", prompt,
-                 "--output-format", "stream-json", "--verbose",
-                 "--append-system-prompt", system_prompt],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=1,
                 text=True,
-                env={**_SHELL_ENV, "CLAUDE_NO_TELEMETRY": "1"},
+                env=run_env,
                 cwd=_REPO_ROOT,
             )
 
