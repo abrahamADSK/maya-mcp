@@ -22,6 +22,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+# ── ulimit check ──────────────────────────────────────────────────────────────
+import resource
+_soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+if _soft < 4096:
+    import warnings
+    warnings.warn(
+        f"Low file descriptor limit ({_soft}). ChromaDB may crash. "
+        f"Run: ulimit -n 4096",
+        stacklevel=1,
+    )
+
 # ── Path setup ────────────────────────────────────────────────────────────────
 # maya-mcp/core/safety.py  ←  the module under test
 # maya-mcp/tests/conftest.py  ←  this file
