@@ -101,7 +101,7 @@ class TestVision3dHealth:
 
         mock_client = _mock_client(handler)
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_health(mock_ctx))
+            result = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
         assert result["available"] is True
         assert result["gpu"] == "NVIDIA RTX 4090"
@@ -122,7 +122,7 @@ class TestVision3dHealth:
 
         mock_client = _mock_client(handler)
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_health(mock_ctx))
+            result = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
         assert result["available"] is False
         assert "503" in result["error"]
@@ -136,7 +136,7 @@ class TestVision3dHealth:
 
         mock_client = _mock_client(handler)
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_health(mock_ctx))
+            result = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
         assert result["available"] is False
         assert "error" in result
@@ -168,12 +168,12 @@ class TestShapeGenerateRemote:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.shape_generate_remote(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_generate_image(params.model_dump(), mock_ctx))
 
         assert result["status"] == "started"
         assert result["job_id"] == "job-img-001"
         assert "next_step" in result
-        assert "vision3d_poll" in result["next_step"]
+        assert "poll" in result["next_step"]
 
     @pytest.mark.asyncio
     async def test_image_not_found(self, mock_ctx, tmp_path):
@@ -184,7 +184,7 @@ class TestShapeGenerateRemote:
         )
 
         with patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.shape_generate_remote(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_generate_image(params.model_dump(), mock_ctx))
 
         assert "error" in result
         assert "not found" in result["error"].lower()
@@ -203,7 +203,7 @@ class TestShapeGenerateRemote:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.shape_generate_remote(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_generate_image(params.model_dump(), mock_ctx))
 
         assert "error" in result
         assert "500" in result["error"]
@@ -232,7 +232,7 @@ class TestShapeGenerateText:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.shape_generate_text(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_generate_text(params.model_dump(), mock_ctx))
 
         assert result["status"] == "started"
         assert result["job_id"] == "job-txt-042"
@@ -250,7 +250,7 @@ class TestShapeGenerateText:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.shape_generate_text(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_generate_text(params.model_dump(), mock_ctx))
 
         assert "error" in result
         assert "422" in result["error"]
@@ -279,14 +279,14 @@ class TestVision3dPoll:
         params = srv.Vision3DPollInput(job_id="job-run-01")
 
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_poll(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert result["status"] == "running"
         assert result["elapsed_s"] == 12
         assert len(result["new_log_lines"]) == 2
         assert "Loading model" in result["new_log_lines"][0]
         assert "next_step" in result
-        assert "vision3d_poll" in result["next_step"]
+        assert "poll" in result["next_step"]
 
     @pytest.mark.asyncio
     async def test_poll_incremental_logs(self, mock_ctx):
@@ -308,7 +308,7 @@ class TestVision3dPoll:
         params = srv.Vision3DPollInput(job_id="job-inc-01")
 
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_poll(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         # Should only have the 2 new lines (step 3, step 4)
         assert len(result["new_log_lines"]) == 2
@@ -336,13 +336,13 @@ class TestVision3dPoll:
         params = srv.Vision3DPollInput(job_id="job-done-01")
 
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_poll(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert result["status"] == "completed"
         assert result["elapsed_s"] == 180
         assert "mesh.glb" in result["files"]
         assert "textured.glb" in result["files"]
-        assert "vision3d_download" in result["next_step"]
+        assert "download" in result["next_step"]
 
     @pytest.mark.asyncio
     async def test_poll_failed_status(self, mock_ctx):
@@ -361,7 +361,7 @@ class TestVision3dPoll:
         params = srv.Vision3DPollInput(job_id="job-fail-01")
 
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_poll(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert result["status"] == "failed"
         assert "CUDA" in result["error"]
@@ -377,7 +377,7 @@ class TestVision3dPoll:
         params = srv.Vision3DPollInput(job_id="nonexistent-job")
 
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            result = json.loads(await srv.vision3d_poll(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert "error" in result
         assert "not found" in result["error"].lower()
@@ -412,7 +412,7 @@ class TestVision3dDownload:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.vision3d_download(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_download(params.model_dump(), mock_ctx))
 
         assert result["status"] == "ok"
         assert len(result["downloaded"]) == 2
@@ -442,7 +442,7 @@ class TestVision3dDownload:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.vision3d_download(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_download(params.model_dump(), mock_ctx))
 
         assert result["status"] == "ok"
         assert len(result["downloaded"]) == 1
@@ -466,7 +466,7 @@ class TestVision3dDownload:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            result = json.loads(await srv.vision3d_download(params, mock_ctx))
+            result = json.loads(await srv._do_v3d_download(params.model_dump(), mock_ctx))
 
         assert result["downloaded"][0]["size_kb"] == 2
 
@@ -485,7 +485,7 @@ class TestServerDown:
 
         mock_client = _mock_client(handler)
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            raw = await srv.vision3d_health(mock_ctx)
+            raw = await srv._do_v3d_health({}, mock_ctx)
 
         result = json.loads(raw)
         assert result["available"] is False
@@ -502,7 +502,7 @@ class TestServerDown:
         params = srv.Vision3DPollInput(job_id="job-offline")
 
         with patch.object(srv, "_get_http_client", return_value=mock_client):
-            raw = await srv.vision3d_poll(params, mock_ctx)
+            raw = await srv._do_v3d_poll(params.model_dump(), mock_ctx)
 
         result = json.loads(raw)
         assert "error" in result
@@ -523,7 +523,7 @@ class TestServerDown:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            raw = await srv.vision3d_download(params, mock_ctx)
+            raw = await srv._do_v3d_download(params.model_dump(), mock_ctx)
 
         result = json.loads(raw)
         assert "error" in result
@@ -542,7 +542,7 @@ class TestServerDown:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            raw = await srv.shape_generate_remote(params, mock_ctx)
+            raw = await srv._do_v3d_generate_image(params.model_dump(), mock_ctx)
 
         result = json.loads(raw)
         assert "error" in result
@@ -559,7 +559,7 @@ class TestServerDown:
 
         with patch.object(srv, "_get_http_client", return_value=mock_client), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
-            raw = await srv.shape_generate_text(params, mock_ctx)
+            raw = await srv._do_v3d_generate_text(params.model_dump(), mock_ctx)
 
         result = json.loads(raw)
         assert "error" in result

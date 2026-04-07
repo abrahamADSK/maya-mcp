@@ -7,7 +7,9 @@
 ## Estado actual
 
 **Funciona**:
-- 27 MCP tools: 18 Maya scene ops, 6 Vision3D integration, 3 RAG/Intelligence
+- **14 visible MCP tools** (dispatch pattern O1b): 9 Tier-1 + 3 Meta/RAG + 2 dispatch (`maya_session`, `maya_vision3d`)
+- Internamente: 9 session handlers (`_do_ping`, `_do_launch`, etc.) + 6 Vision3D handlers (`_do_v3d_*`) — sin `@mcp.tool`
+- 18 Maya scene ops, 6 Vision3D integration, 3 RAG/Intelligence (funcionalidad completa preservada)
 - RAG híbrido (ChromaDB + BM25 + HyDE + RRF) con 5 corpus docs (CMDS, PyMEL, Arnold, USD, Anti-Patterns)
 - Safety module con 14+ regex patterns + explicaciones + alternativas seguras
 - Token tracking con estimación de eficiencia
@@ -222,7 +224,7 @@ chmod +x install.sh
 
 ---
 
-## Última actualización: 2026-04-05 (sesión 4) — Script de instalación install.sh.
+## Última actualización: 2026-04-07 (sesión 5) — Dispatch pattern O1b implementado.
 
 ### Tarea 1 — asyncio modernizado en `test_maya_bridge.py`
 - Reemplazadas las 8 ocurrencias de `asyncio.get_event_loop().run_until_complete()` por `asyncio.run()` en `TestMayaCreatePrimitive` (4) y `TestMayaExecutePython` (4).
@@ -249,3 +251,57 @@ Dependencias documentadas: `pytest>=7.4.0`, `pytest-asyncio>=0.23.0`, `httpx>=0.
 - No se modificó código fuente del proyecto.
 
 **Sesión anterior (2026-04-05, sesión 3)**: Fix cwd en ClaudeWorker subprocess. asyncio modernizado en tests. Stubs compartidos en conftest.py. tests/requirements-test.txt creado. 174 tests pasando.
+
+---
+
+## Sesión 5 — 2026-04-07 — Dispatch pattern O1b
+
+### Objetivo
+Implementar el dispatch pattern definido en `COWORK_O1_DISPATCH.md` para reducir los tools visibles de 27 a 14, compatibilidad con Qwen 3.5 9B (8K context).
+
+### Cambios en `core/server.py`
+
+**Nuevos Enums y modelos Pydantic:**
+```python
+class SessionAction(str, Enum):
+    PING = "ping"; LAUNCH = "launch"; NEW_SCENE = "new_scene"
+    SAVE_SCENE = "save_scene"; LIST_SCENE = "list_scene"
+    SCENE_SNAPSHOT = "scene_snapshot"; DELETE = "delete"
+    EXECUTE_PYTHON = "execute_python"; SHELF_BUTTON = "shelf_button"
+
+class Vision3DAction(str, Enum):
+    HEALTH="health"; GENERATE_IMAGE="generate_image"; GENERATE_TEXT="generate_text"
+    TEXTURE="texture"; POLL="poll"; DOWNLOAD="download"
+```
+
+**Herramientas convertidas a `_do_*` (sin `@mcp.tool`):**
+- 9 session handlers: `_do_ping`, `_do_launch`, `_do_new_scene`, `_do_save_scene`, `_do_list_scene`, `_do_scene_snapshot`, `_do_delete`, `_do_execute_python`, `_do_shelf_button`
+- 6 Vision3D handlers: `_do_v3d_health`, `_do_v3d_generate_image`, `_do_v3d_generate_text`, `_do_v3d_texture`, `_do_v3d_poll`, `_do_v3d_download`
+
+**Nuevas dispatch tools (con `@mcp.tool`):**
+- `maya_session(params: SessionDispatchInput)` — enruta a 9 session handlers
+- `maya_vision3d(params: Vision3DDispatchInput, ctx: Context)` — enruta a 6 V3D handlers, pasa ctx
+
+**Preservado:**
+- `asyncio.to_thread(bridge.execute, code)` en `_do_scene_snapshot` y `_do_shelf_button`
+- `await ctx.info(...)` en todos los V3D handlers (ctx pasado desde dispatch)
+- Validación Pydantic interna en cada `_do_*` via `try/except ValidationError`
+
+**Resultado:**
+- `grep -c '@mcp.tool' core/server.py` → **14** (era 27)
+
+### Cambios en tests
+
+**`tests/test_maya_bridge.py`** — `TestMayaExecutePython`:
+- `server.maya_execute_python(ExecutePythonInput(code="..."))` → `server._do_execute_python({"code": "..."})`
+- 4 tests actualizados a la nueva firma de `_do_*` (dict en lugar de Pydantic model)
+
+**`tests/test_vision3d.py`** — todos los 21 tests:
+- `srv.vision3d_health(mock_ctx)` → `srv._do_v3d_health({}, mock_ctx)`
+- `srv.vision3d_poll(params, mock_ctx)` → `srv._do_v3d_poll(params.model_dump(), mock_ctx)`
+- (mismo patrón para download, generate_remote, generate_text)
+- Strings `next_step`: `"vision3d_poll"` → `"poll"`, `"vision3d_download"` → `"download"`
+
+**Resultado pytest:**
+- `tests/ --ignore=tests/test_rag_search.py` → **131/131 passed** (test_rag_search.py requiere chromadb — mismo estado previo)
+- `tests/test_rag_search.py` → 43 errors (chromadb no instalable en sandbox, ✅ en Mac)

@@ -304,17 +304,18 @@ class TestMayaCreatePrimitive:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4.1.6 — maya_execute_python Sends Code and Returns Result
+# 4.1.6 — _do_execute_python Sends Code and Returns Result
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestMayaExecutePython:
     """
-    Verify that server.maya_execute_python passes code through the bridge
-    and handles safety checks.
+    Verify that server._do_execute_python passes code through the bridge
+    and handles safety checks. (Previously tested maya_execute_python;
+    updated for O1b dispatch pattern — handler is now _do_execute_python.)
     """
 
     def test_execute_returns_bridge_result(self, monkeypatch):
-        """execute_python forwards code to bridge.execute and returns result."""
+        """_do_execute_python forwards code to bridge.execute and returns result."""
         captured_code = {}
 
         def fake_execute(code, as_json=False):
@@ -324,15 +325,13 @@ class TestMayaExecutePython:
         import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        from server import ExecutePythonInput
-        params = ExecutePythonInput(code="result = 21 * 2")
-        result = asyncio.run(server.maya_execute_python(params))
+        result = asyncio.run(server._do_execute_python({"code": "result = 21 * 2"}))
 
         assert captured_code["code"] == "result = 21 * 2"
         assert result == "42"
 
     def test_execute_increments_stats(self, monkeypatch):
-        """execute_python increments exec_calls and token stats."""
+        """_do_execute_python increments exec_calls and token stats."""
         import server
 
         def fake_execute(code, as_json=False):
@@ -343,15 +342,13 @@ class TestMayaExecutePython:
         before_calls = server._stats["exec_calls"]
         before_in = server._stats["tokens_in"]
 
-        from server import ExecutePythonInput
-        params = ExecutePythonInput(code="result = 'hello'")
-        asyncio.run(server.maya_execute_python(params))
+        asyncio.run(server._do_execute_python({"code": "result = 'hello'"}))
 
         assert server._stats["exec_calls"] == before_calls + 1
         assert server._stats["tokens_in"] > before_in
 
     def test_execute_blocks_dangerous_code(self, monkeypatch):
-        """execute_python blocks dangerous patterns and increments safety_blocks."""
+        """_do_execute_python blocks dangerous patterns and increments safety_blocks."""
         import server
 
         # Ensure bridge.execute is NOT called for blocked code
@@ -365,10 +362,8 @@ class TestMayaExecutePython:
 
         before_blocks = server._stats["safety_blocks"]
 
-        from server import ExecutePythonInput
         # This pattern is caught by safety.py: wildcard delete
-        params = ExecutePythonInput(code="cmds.delete('*')")
-        result = asyncio.run(server.maya_execute_python(params))
+        result = asyncio.run(server._do_execute_python({"code": "cmds.delete('*')"}))
 
         parsed = json.loads(result)
         assert "safety_warning" in parsed
@@ -376,7 +371,7 @@ class TestMayaExecutePython:
         assert server._stats["safety_blocks"] == before_blocks + 1
 
     def test_execute_handles_bridge_error(self, monkeypatch):
-        """execute_python returns error JSON when bridge raises."""
+        """_do_execute_python returns error JSON when bridge raises."""
         import server
 
         def fake_execute(code, as_json=False):
@@ -384,9 +379,7 @@ class TestMayaExecutePython:
 
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        from server import ExecutePythonInput
-        params = ExecutePythonInput(code="result = cmds.ls()")
-        result = asyncio.run(server.maya_execute_python(params))
+        result = asyncio.run(server._do_execute_python({"code": "result = cmds.ls()"}))
 
         # _handle_error returns JSON with error key
         assert "error" in result.lower() or "Connection lost" in result

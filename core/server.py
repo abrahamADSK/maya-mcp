@@ -6,8 +6,9 @@ animation, I/O, viewport capture, and Vision3D integration.
 Communicates with Maya via Command Port (TCP) using maya_bridge.
 
 Features:
-    - 24 Maya tools (primitives, transforms, modeling, animation, I/O, rendering)
-    - 6 Vision3D tools (image-to-3D, text-to-3D, texturing)
+    - 9 Tier-1 Maya tools (always visible)
+    - 9 session tools (behind maya_session dispatch)
+    - 6 Vision3D tools (behind maya_vision3d dispatch)
     - 3 RAG tools (search_maya_docs, learn_pattern, session_stats)
     - Dangerous pattern detection (safety.py)
     - Hybrid search: ChromaDB + BM25 + HyDE + RRF fusion
@@ -245,6 +246,49 @@ class CameraInput(BaseModel):
 
 
 # ─────────────────────────────────────────────
+# Dispatch Models
+# ─────────────────────────────────────────────
+
+class SessionAction(str, Enum):
+    """Actions available in the maya_session dispatch tool."""
+    PING = "ping"
+    LAUNCH = "launch"
+    NEW_SCENE = "new_scene"
+    SAVE_SCENE = "save_scene"
+    LIST_SCENE = "list_scene"
+    SCENE_SNAPSHOT = "scene_snapshot"
+    DELETE = "delete"
+    EXECUTE_PYTHON = "execute_python"
+    SHELF_BUTTON = "shelf_button"
+
+
+class SessionDispatchInput(BaseModel):
+    """Input for the maya_session dispatch tool."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    action: SessionAction = Field(..., description="Which session action to run")
+    params: Optional[dict] = Field(default=None, description="Parameters for the chosen action (see tool description)")
+
+
+class Vision3DAction(str, Enum):
+    """Actions available in the maya_vision3d dispatch tool."""
+    HEALTH = "health"
+    GENERATE_IMAGE = "generate_image"
+    GENERATE_TEXT = "generate_text"
+    TEXTURE = "texture"
+    POLL = "poll"
+    DOWNLOAD = "download"
+
+
+class Vision3DDispatchInput(BaseModel):
+    """Input for the maya_vision3d dispatch tool."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    action: Vision3DAction = Field(..., description="Which Vision3D action to run")
+    params: Optional[dict] = Field(default=None, description="Parameters for the chosen action (see tool description)")
+
+
+# ─────────────────────────────────────────────
 # Tools
 # ─────────────────────────────────────────────
 
@@ -270,8 +314,7 @@ def _handle_error(e: Exception) -> str:
     return f"Unexpected error: {type(e).__name__}: {e}"
 
 
-@mcp.tool(name="maya_ping")
-async def maya_ping() -> str:
+async def _do_ping(params: dict) -> str:
     """Check connection to Maya and return environment info (version, current scene, renderer)."""
     try:
         info = bridge.ping()
@@ -281,8 +324,7 @@ async def maya_ping() -> str:
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_launch")
-async def maya_launch() -> str:
+async def _do_launch(params: dict) -> str:
     """Open Maya and wait for the Command Port to respond."""
     import socket
     import time
@@ -422,15 +464,19 @@ result = {{'object': '{params.object_name}', 'position': pos, 'rotation': rot, '
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_list_scene")
-async def maya_list_scene(params: SceneQueryInput) -> str:
+async def _do_list_scene(params: dict) -> str:
     """List objects in the Maya scene, with optional filters by type or name."""
+    from pydantic import ValidationError
+    try:
+        validated = SceneQueryInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for list_scene: {e}"})
     try:
         filters = []
-        if params.object_type:
-            filters.append(f"type='{params.object_type}'")
-        if params.name_filter:
-            filters.append(f"'{params.name_filter}'")
+        if validated.object_type:
+            filters.append(f"type='{validated.object_type}'")
+        if validated.name_filter:
+            filters.append(f"'{validated.name_filter}'")
 
         filter_str = ", ".join(filters)
 
@@ -445,13 +491,18 @@ result = {{'count': len(objects), 'objects': objects}}
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_delete")
-async def maya_delete(params: DeleteObjectInput) -> str:
+async def _do_delete(params: dict) -> str:
     """Delete an object from the Maya scene by name (supports wildcards like *sphere*)."""
+    from pydantic import ValidationError
+    try:
+        validated = DeleteObjectInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for delete: {e}"})
+
     _stats["exec_calls"] += 1
 
     # Safety check
-    warning = check_dangerous(f'cmds.delete("{params.object_name}")')
+    warning = check_dangerous(f'cmds.delete("{validated.object_name}")')
     if warning:
         _stats["safety_blocks"] += 1
         return json.dumps({"safety_warning": warning})
@@ -459,12 +510,12 @@ async def maya_delete(params: DeleteObjectInput) -> str:
     try:
         code = f"""
 import maya.cmds as cmds
-targets = cmds.ls('{params.object_name}')
+targets = cmds.ls('{validated.object_name}')
 if targets:
     cmds.delete(targets)
     result = {{'deleted': targets}}
 else:
-    result = {{'error': 'Not found: {params.object_name}'}}
+    result = {{'error': 'Not found: {validated.object_name}'}}
 """
         response = bridge.execute(code)
         _stats["tokens_out"] += _tok(response)
@@ -545,28 +596,32 @@ cmds.delete(aim)
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_execute_python")
-async def maya_execute_python(params: ExecutePythonInput) -> str:
+async def _do_execute_python(params: dict) -> str:
     """Execute arbitrary Python code in Maya. Code must assign its result to a 'result' variable. Useful for advanced operations not covered by other tools."""
+    from pydantic import ValidationError
+    try:
+        validated = ExecutePythonInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for execute_python: {e}"})
+
     _stats["exec_calls"] += 1
-    _stats["tokens_in"] += _tok(params.code)
+    _stats["tokens_in"] += _tok(validated.code)
 
     # Safety check on code
-    warning = check_dangerous(params.code)
+    warning = check_dangerous(validated.code)
     if warning:
         _stats["safety_blocks"] += 1
         return json.dumps({"safety_warning": warning})
 
     try:
-        response = bridge.execute(params.code)
+        response = bridge.execute(validated.code)
         _stats["tokens_out"] += _tok(response)
         return response
     except Exception as e:
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_new_scene")
-async def maya_new_scene() -> str:
+async def _do_new_scene(params: dict) -> str:
     """Create a new empty scene in Maya (discards current scene without saving)."""
     try:
         code = """
@@ -579,8 +634,7 @@ result = {'status': 'new_scene_created'}
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_save_scene")
-async def maya_save_scene() -> str:
+async def _do_save_scene(params: dict) -> str:
     """Save the current Maya scene."""
     try:
         code = """
@@ -879,8 +933,7 @@ finally:
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_scene_snapshot")
-async def maya_scene_snapshot() -> str:
+async def _do_scene_snapshot(params: dict) -> str:
     """Return a complete snapshot of scene state: file, modified, frame, objects by type, renderer, plugins, render resolution. Useful for informed decisions before operations."""
     try:
         code = """
@@ -919,35 +972,74 @@ result = {
         return _handle_error(e)
 
 
-@mcp.tool(name="maya_shelf_button")
-async def maya_shelf_button(params: ShelfButtonInput) -> str:
+async def _do_shelf_button(params: dict) -> str:
     """Create a custom button on the Maya shelf with associated Python code. Allows Claude to leave reusable tools in the interface."""
+    from pydantic import ValidationError
+    try:
+        validated = ShelfButtonInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for shelf_button: {e}"})
     try:
         # Escape the command for embedding in Python string
-        safe_command = params.command.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        safe_command = validated.command.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         code = f"""
 import maya.cmds as cmds
 import maya.mel as mel
 
 # Create or find the shelf
-_mcp_shelf = '{params.shelf_name}'
+_mcp_shelf = '{validated.shelf_name}'
 if not cmds.shelfLayout(_mcp_shelf, exists=True):
-    mel.eval('addNewShelfTab "{params.shelf_name}"')
+    mel.eval('addNewShelfTab "{validated.shelf_name}"')
 
 _mcp_btn = cmds.shelfButton(
     parent=_mcp_shelf,
-    label='{params.label}',
-    annotation='{params.tooltip}',
-    imageOverlayLabel='{params.icon_label[:4]}',
+    label='{validated.label}',
+    annotation='{validated.tooltip}',
+    imageOverlayLabel='{validated.icon_label[:4]}',
     image='pythonFamily.png',
     command='{safe_command}',
     sourceType='python'
 )
-result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': '{params.label}'}}
+result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': '{validated.label}'}}
 """
         return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
         return _handle_error(e)
+
+
+# ─────────────────────────────────────────────
+# Session Dispatch Tool
+# ─────────────────────────────────────────────
+
+@mcp.tool(name="maya_session")
+async def maya_session(params: SessionDispatchInput) -> str:
+    """Manage Maya session, query scene state, and run utility commands.
+
+    Available actions:
+
+    • ping — Check connection to Maya, return version/scene/renderer. No params needed.
+    • launch — Open Maya and wait for Command Port to respond. No params needed.
+    • new_scene — Create a new empty scene (discards unsaved). No params needed.
+    • save_scene — Save the current scene. No params needed.
+    • list_scene — List objects in the scene. Optional params: {"object_type": "mesh", "name_filter": "*sphere*"}
+    • scene_snapshot — Full scene state: file, modified flag, frame range, object counts by type, renderer, plugins, resolution. No params needed.
+    • delete — Delete objects by name (wildcards supported). Required params: {"object_name": "*sphere*"}
+    • execute_python — Run arbitrary Python in Maya. Assign result to 'result' variable. Required params: {"code": "import maya.cmds as cmds; ..."}
+    • shelf_button — Create a shelf button with Python code. Required params: {"label": "MyBtn", "command": "print('hello')"} Optional: {"tooltip": "...", "shelf_name": "Custom", "icon_label": "MCP"}
+    """
+    dispatch = {
+        SessionAction.PING: _do_ping,
+        SessionAction.LAUNCH: _do_launch,
+        SessionAction.NEW_SCENE: _do_new_scene,
+        SessionAction.SAVE_SCENE: _do_save_scene,
+        SessionAction.LIST_SCENE: _do_list_scene,
+        SessionAction.SCENE_SNAPSHOT: _do_scene_snapshot,
+        SessionAction.DELETE: _do_delete,
+        SessionAction.EXECUTE_PYTHON: _do_execute_python,
+        SessionAction.SHELF_BUTTON: _do_shelf_button,
+    }
+    handler = dispatch[params.action]
+    return await handler(params.params or {})
 
 
 # ─────────────────────────────────────────────
@@ -1121,13 +1213,11 @@ class Vision3DDownloadInput(BaseModel):
 # ── Tools: check Vision3D availability ─────────────────────────
 
 
-@mcp.tool(name="vision3d_health")
-async def vision3d_health(ctx: Context) -> str:
+async def _do_v3d_health(params: dict, ctx: Context) -> str:
     """Check if Vision3D server is available and responding.
 
     Returns GPU information, available models, and text-to-3D status.
-    Call this tool BEFORE offering AI generation options to the user,
-    to know if Vision3D is running and accessible.
+    Call this BEFORE offering AI generation options to the user.
     """
     try:
         client = _get_http_client()
@@ -1162,17 +1252,20 @@ async def vision3d_health(ctx: Context) -> str:
 # ── Tools: start jobs (non-blocking) ───────────────────────────────────
 
 
-@mcp.tool(name="shape_generate_remote")
-async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str:
+async def _do_v3d_generate_image(params: dict, ctx: Context) -> str:
     """Start textured 3D generation from image in Vision3D (non-blocking).
 
     Uploads the image and starts the complete pipeline (shape + decimation + texturing).
-    Returns a job_id immediately. Use vision3d_poll to follow progress
-    and vision3d_download to download results when finished.
+    Returns a job_id immediately. Use poll to follow progress and download to get results.
     """
+    from pydantic import ValidationError
     try:
-        image_local = Path(params.image_path)
-        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
+        validated = ShapeGenerateInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for generate_image: {e}"})
+    try:
+        image_local = Path(validated.image_path)
+        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
 
         if not image_local.exists():
             return json.dumps({
@@ -1188,12 +1281,12 @@ async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str
         shutil.copy2(str(image_local), str(input_copy))
 
         client = _get_http_client()
-        quality_desc = params.preset or f"model={params.model or 'turbo'}"
+        quality_desc = validated.preset or f"model={validated.model or 'turbo'}"
 
         await ctx.info(f"Uploading image to Vision3D ({quality_desc})...")
 
-        form_data = {"output_subdir": params.output_subdir}
-        form_data.update(_build_quality_form_data(params))
+        form_data = {"output_subdir": validated.output_subdir}
+        form_data.update(_build_quality_form_data(validated))
 
         with open(str(image_local), "rb") as f:
             resp = await client.post(
@@ -1217,40 +1310,44 @@ async def shape_generate_remote(params: ShapeGenerateInput, ctx: Context) -> str
         return json.dumps({
             "status": "started",
             "job_id": job_id,
-            "output_subdir": params.output_subdir,
+            "output_subdir": validated.output_subdir,
             "output_dir": str(out_dir),
             "quality": quality_desc,
             "image_copy": str(input_copy),
-            "next_step": f"Call vision3d_poll(job_id='{job_id}') to see progress. "
-                         f"When status is 'completed', call vision3d_download(job_id='{job_id}', "
-                         f"output_subdir='{params.output_subdir}').",
+            "next_step": f"Call maya_vision3d(action='poll', params={{'job_id': '{job_id}'}}) to see progress. "
+                         f"When status is 'completed', call maya_vision3d(action='download', "
+                         f"params={{'job_id': '{job_id}', 'output_subdir': '{validated.output_subdir}'}}).",
         }, indent=2)
 
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
-@mcp.tool(name="shape_generate_text")
-async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
+async def _do_v3d_generate_text(params: dict, ctx: Context) -> str:
     """Start 3D generation from text in Vision3D (non-blocking).
 
     Sends the prompt and starts the text-to-3D pipeline.
-    Returns job_id. Use vision3d_poll to follow progress.
+    Returns job_id. Use poll to follow progress.
     """
+    from pydantic import ValidationError
     try:
-        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
+        validated = ShapeTextInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for generate_text: {e}"})
+    try:
+        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
         client = _get_http_client()
-        quality_desc = params.preset or f"model={params.model or 'turbo'}"
+        quality_desc = validated.preset or f"model={validated.model or 'turbo'}"
 
-        await ctx.info(f"Sending prompt to Vision3D: '{params.text_prompt}' ({quality_desc})...")
+        await ctx.info(f"Sending prompt to Vision3D: '{validated.text_prompt}' ({quality_desc})...")
 
         form_data = {
-            "text_prompt": params.text_prompt,
-            "output_subdir": params.output_subdir,
+            "text_prompt": validated.text_prompt,
+            "output_subdir": validated.output_subdir,
         }
-        form_data.update(_build_quality_form_data(params))
+        form_data.update(_build_quality_form_data(validated))
 
         resp = await client.post("/api/generate-text", data=form_data)
 
@@ -1269,51 +1366,55 @@ async def shape_generate_text(params: ShapeTextInput, ctx: Context) -> str:
         return json.dumps({
             "status": "started",
             "job_id": job_id,
-            "output_subdir": params.output_subdir,
+            "output_subdir": validated.output_subdir,
             "output_dir": str(out_dir),
             "quality": quality_desc,
-            "next_step": f"Call vision3d_poll(job_id='{job_id}') to follow progress.",
+            "next_step": f"Call maya_vision3d(action='poll', params={{'job_id': '{job_id}'}}) to follow progress.",
         }, indent=2)
 
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
-@mcp.tool(name="texture_mesh_remote")
-async def texture_mesh_remote(params: TextureRemoteInput, ctx: Context) -> str:
+async def _do_v3d_texture(params: dict, ctx: Context) -> str:
     """Start mesh texturing in Vision3D (non-blocking).
 
     Uploads mesh + image and starts the texturing pipeline.
-    Returns job_id. Use vision3d_poll to follow progress.
+    Returns job_id. Use poll to follow progress.
     """
+    from pydantic import ValidationError
     try:
-        out_dir     = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
-        mesh_local  = out_dir / params.mesh_filename
-        image_local = out_dir / params.image_filename
+        validated = TextureRemoteInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for texture: {e}"})
+    try:
+        out_dir     = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
+        mesh_local  = out_dir / validated.mesh_filename
+        image_local = out_dir / validated.image_filename
 
         if not mesh_local.exists():
             return json.dumps({
                 "error": f"Mesh not found: {mesh_local}",
-                "hint":  "Generate the mesh first with shape_generate_remote."
+                "hint":  "Generate the mesh first with maya_vision3d(action='generate_image', ...)."
             })
         if not image_local.exists():
             return json.dumps({
                 "error":  f"Image not found: {image_local}",
-                "hint":   f"Copy the image as '{params.image_filename}' in {out_dir}"
+                "hint":   f"Copy the image as '{validated.image_filename}' in {out_dir}"
             })
 
         client = _get_http_client()
 
-        await ctx.info(f"Uploading {params.mesh_filename} + {params.image_filename} to Vision3D...")
+        await ctx.info(f"Uploading {validated.mesh_filename} + {validated.image_filename} to Vision3D...")
 
         with open(str(mesh_local), "rb") as mf, open(str(image_local), "rb") as imf:
             resp = await client.post(
                 "/api/texture-mesh",
                 files={
-                    "mesh": (params.mesh_filename, mf, "application/octet-stream"),
-                    "image": (params.image_filename, imf, "image/png"),
+                    "mesh": (validated.mesh_filename, mf, "application/octet-stream"),
+                    "image": (validated.image_filename, imf, "image/png"),
                 },
-                data={"output_subdir": params.output_subdir},
+                data={"output_subdir": validated.output_subdir},
             )
 
         if resp.status_code != 200:
@@ -1331,8 +1432,8 @@ async def texture_mesh_remote(params: TextureRemoteInput, ctx: Context) -> str:
         return json.dumps({
             "status": "started",
             "job_id": job_id,
-            "output_subdir": params.output_subdir,
-            "next_step": f"Call vision3d_poll(job_id='{job_id}') to follow progress.",
+            "output_subdir": validated.output_subdir,
+            "next_step": f"Call maya_vision3d(action='poll', params={{'job_id': '{job_id}'}}) to follow progress.",
         }, indent=2)
 
     except Exception as e:
@@ -1342,29 +1443,33 @@ async def texture_mesh_remote(params: TextureRemoteInput, ctx: Context) -> str:
 # ── Tools: poll progress and download ──────────────────────────────────
 
 
-@mcp.tool(name="vision3d_poll")
-async def vision3d_poll(params: Vision3DPollInput, ctx: Context) -> str:
+async def _do_v3d_poll(params: dict, ctx: Context) -> str:
     """Poll job status in Vision3D. Returns new log lines since last call (incremental progress).
 
-    Call this tool repeatedly while status is 'running'.
-    When status is 'completed', call vision3d_download.
+    Call repeatedly while status is 'running'.
+    When status is 'completed', call download.
     When status is 'failed', show the error to the user.
     """
+    from pydantic import ValidationError
+    try:
+        validated = Vision3DPollInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for poll: {e}"})
     try:
         client = _get_http_client()
-        resp = await client.get(f"/api/jobs/{params.job_id}")
+        resp = await client.get(f"/api/jobs/{validated.job_id}")
 
         if resp.status_code == 404:
-            return json.dumps({"error": f"Job '{params.job_id}' not found in Vision3D."})
+            return json.dumps({"error": f"Job '{validated.job_id}' not found in Vision3D."})
 
         resp.raise_for_status()
         job = resp.json()
 
         # Deliver only new log lines since last poll
-        cursor = _job_log_cursors.get(params.job_id, 0)
+        cursor = _job_log_cursors.get(validated.job_id, 0)
         all_log = job.get("log", [])
         new_lines = all_log[cursor:]
-        _job_log_cursors[params.job_id] = len(all_log)
+        _job_log_cursors[validated.job_id] = len(all_log)
 
         # ctx.info for future MCP progress support
         for line in new_lines:
@@ -1383,18 +1488,18 @@ async def vision3d_poll(params: Vision3DPollInput, ctx: Context) -> str:
         if status == "completed":
             result["files"] = [f["name"] for f in job.get("files", [])]
             result["next_step"] = (
-                f"Job completed in {elapsed}s. Call vision3d_download("
-                f"job_id='{params.job_id}', output_subdir='...') to download files."
+                f"Job completed in {elapsed}s. Call maya_vision3d(action='download', "
+                f"params={{'job_id': '{validated.job_id}', 'output_subdir': '...'}}) to download files."
             )
             # Cleanup cursor
-            _job_log_cursors.pop(params.job_id, None)
+            _job_log_cursors.pop(validated.job_id, None)
         elif status == "failed":
             result["error"] = job.get("error", "Unknown error")
-            _job_log_cursors.pop(params.job_id, None)
+            _job_log_cursors.pop(validated.job_id, None)
         else:
             result["next_step"] = (
                 f"Job in progress ({elapsed}s). Call "
-                f"vision3d_poll(job_id='{params.job_id}') again to update."
+                f"maya_vision3d(action='poll', params={{'job_id': '{validated.job_id}'}}) again to update."
             )
 
         return json.dumps(result, indent=2)
@@ -1403,24 +1508,28 @@ async def vision3d_poll(params: Vision3DPollInput, ctx: Context) -> str:
         return json.dumps({"error": str(e)})
 
 
-@mcp.tool(name="vision3d_download")
-async def vision3d_download(params: Vision3DDownloadInput, ctx: Context) -> str:
+async def _do_v3d_download(params: dict, ctx: Context) -> str:
     """Download files from a completed Vision3D job to local directory.
 
-    Call this tool after vision3d_poll reports status='completed'.
+    Call after poll reports status='completed'.
     Downloads specified files to local output subdirectory.
     """
+    from pydantic import ValidationError
     try:
-        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / params.output_subdir
+        validated = Vision3DDownloadInput(**params)
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for download: {e}"})
+    try:
+        out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        await ctx.info(f"Downloading {len(params.files)} files from Vision3D...")
+        await ctx.info(f"Downloading {len(validated.files)} files from Vision3D...")
 
         downloaded = []
         failed = []
 
-        for fname in params.files:
-            ok = await _download_file(params.job_id, fname, out_dir / fname)
+        for fname in validated.files:
+            ok = await _download_file(validated.job_id, fname, out_dir / fname)
             if ok:
                 size_kb = (out_dir / fname).stat().st_size // 1024
                 downloaded.append({"name": fname, "size_kb": size_kb})
@@ -1440,7 +1549,7 @@ async def vision3d_download(params: Vision3DDownloadInput, ctx: Context) -> str:
             "textured": textured_ready,
             "baked_texture": baked_ready,
             "next_step": (
-                "Files downloaded. Import textured.glb in Maya with maya_execute_python, "
+                "Files downloaded. Import textured.glb in Maya with maya_session(action='execute_python', ...), "
                 "or use mesh_uv.obj + texture_baked.png for full UV control."
                 if textured_ready else
                 "Partial download. Check 'failed' to see which files failed."
@@ -1449,6 +1558,38 @@ async def vision3d_download(params: Vision3DDownloadInput, ctx: Context) -> str:
 
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+# ─────────────────────────────────────────────
+# Vision3D Dispatch Tool
+# ─────────────────────────────────────────────
+
+@mcp.tool(name="maya_vision3d")
+async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
+    """AI-powered 3D asset generation via Vision3D server (requires GPU with Hunyuan3D-2).
+
+    Call health FIRST to check availability before offering generation.
+    Jobs are non-blocking: start → poll → download.
+
+    Available actions:
+
+    • health — Check if Vision3D is running and what GPU/models are available. No params.
+    • generate_image — Start 3D generation from a reference image. Required params: {"image_path": "/path/to/image.png", "output_subdir": "my_asset"} Optional: {"preset": "medium", "model": "turbo", "octree_resolution": 384, "num_inference_steps": 20, "target_faces": 50000}
+    • generate_text — Start 3D generation from a text prompt. Required params: {"text_prompt": "a medieval sword", "output_subdir": "sword"} Optional: {"preset": "medium", "model": "turbo", "octree_resolution": 384, "num_inference_steps": 20, "target_faces": 50000}
+    • texture — Texture an existing mesh using a reference image. Required params: {"output_subdir": "my_asset"} Optional: {"mesh_filename": "mesh.glb", "image_filename": "input.png"}
+    • poll — Check job progress (call repeatedly while running). Required params: {"job_id": "uuid-from-generate"}
+    • download — Download completed job results. Required params: {"job_id": "uuid", "output_subdir": "my_asset"} Optional: {"files": ["textured.glb", "mesh.glb"]}
+    """
+    dispatch = {
+        Vision3DAction.HEALTH: _do_v3d_health,
+        Vision3DAction.GENERATE_IMAGE: _do_v3d_generate_image,
+        Vision3DAction.GENERATE_TEXT: _do_v3d_generate_text,
+        Vision3DAction.TEXTURE: _do_v3d_texture,
+        Vision3DAction.POLL: _do_v3d_poll,
+        Vision3DAction.DOWNLOAD: _do_v3d_download,
+    }
+    handler = dispatch[params.action]
+    return await handler(params.params or {}, ctx)
 
 
 # ---------------------------------------------------------------------------
