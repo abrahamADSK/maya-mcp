@@ -90,6 +90,17 @@ PY_VERSION=$("$PYTHON_BIN" --version 2>&1)
 success "Found ${PY_VERSION} at $(command -v "$PYTHON_BIN")"
 STEPS_OK+=("Python version check passed (${PY_VERSION})")
 
+# ── Check Ollama (optional — for local/free inference) ───────────────────────
+info "Checking Ollama (optional)..."
+if command -v ollama &>/dev/null; then
+    OLLAMA_VERSION=$(ollama --version 2>/dev/null | head -1)
+    success "Ollama found: ${OLLAMA_VERSION}"
+else
+    warn "Ollama not found — skip if using Anthropic cloud models."
+    warn "  macOS: brew install ollama && brew services start ollama"
+    warn "  Linux: https://ollama.com/download/linux"
+fi
+
 # =============================================================================
 # STEP 2 — Create virtual environment in .venv/ (if not already present)
 # =============================================================================
