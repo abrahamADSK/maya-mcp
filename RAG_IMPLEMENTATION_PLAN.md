@@ -6,7 +6,7 @@ Consistent module structure, same patterns, adapted for the Maya domain.
 ## Architecture (mirrors fpt-mcp exactly)
 
 ```
-core/
+src/maya_mcp/
   rag/
     __init__.py        — Package docstring
     config.py          — Shared constants (embedding model, BM25, RRF, chunking, token tracking)
@@ -24,10 +24,10 @@ core/
 
 ## Files to Create
 
-### 1. core/rag/__init__.py
+### 1. src/maya_mcp/rag/__init__.py
 Package docstring only. Mirrors fpt-mcp/rag/__init__.py.
 
-### 2. core/rag/config.py
+### 2. src/maya_mcp/rag/config.py
 - EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5" (same as fpt-mcp)
 - BM25_CANDIDATES = 20, RRF_K = 60
 - COLLECTION_NAME = "maya_docs"
@@ -35,11 +35,11 @@ Package docstring only. Mirrors fpt-mcp/rag/__init__.py.
 - CHUNK_SPLIT_THRESHOLD = 700, MIN_CHUNK_CHARS = 80
 - FULL_DOC_TOKENS = estimated after docs written
 
-### 3. core/rag/build_index.py
+### 3. src/maya_mcp/rag/build_index.py
 Identical structure to fpt-mcp. PRIMARY_DOCS maps to Maya docs.
 API_TAG = {"CMDS_API.md": "maya_cmds", "PYMEL_API.md": "pymel", ...}
 
-### 4. core/rag/search.py
+### 4. src/maya_mcp/rag/search.py
 - Lazy singletons for ChromaDB + BM25
 - In-session cache (_search_cache)
 - Adaptive HyDE with Maya-domain templates:
@@ -50,14 +50,14 @@ API_TAG = {"CMDS_API.md": "maya_cmds", "PYMEL_API.md": "pymel", ...}
 - RRF fusion (identical algorithm)
 - search() → (text, max_relevance)
 
-### 5. core/docs/ (Maya API corpus)
+### 5. src/maya_mcp/docs/ (Maya API corpus)
 - CMDS_API.md: maya.cmds reference — polyCube, polyExtrude, xform, file, etc.
 - PYMEL_API.md: PyMEL object-oriented API
 - ARNOLD_API.md: Arnold mtoa shaders, AOVs, render settings
 - USD_API.md: Maya-USD integration
 - ANTI_PATTERNS.md: Common LLM hallucinations (wrong flag names, deprecated cmds)
 
-### 6. core/safety.py
+### 6. src/maya_mcp/safety.py
 Maya-specific patterns:
 - `cmds.file(new=True, force=True)` without save prompt
 - `cmds.delete("*")` or unfiltered bulk delete
@@ -70,7 +70,7 @@ Maya-specific patterns:
 - Path traversal in file operations
 - Plugin deregistration (`cmds.unloadPlugin`)
 
-### 7. server.py modifications
+### 7. src/maya_mcp/server.py modifications
 - Add imports: safety.check_dangerous, rag.search.search
 - Add _stats dict + _tok() + _rating() (token tracking)
 - Add _stats_reset_at, _last_rag_score, _rag_called_this_session
@@ -90,9 +90,9 @@ After RAG implementation, translate ALL Spanish strings:
 
 ## Sequence
 1. Save this plan ← DONE
-2. Create core/rag/ module (config, build_index, search)
-3. Create core/docs/ corpus
-4. Create core/safety.py
+2. Create src/maya_mcp/rag/ module (config, build_index, search)
+3. Create src/maya_mcp/docs/ corpus
+4. Create src/maya_mcp/safety.py
 5. Integrate into server.py (3 tools + tracking + safety)
 6. Translate everything to English
 7. Verify consistency

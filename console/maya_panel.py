@@ -4,7 +4,7 @@ Provides a workspaceControl-based panel that hosts the MCPChatWidget
 with live Maya context (scene, selection, renderer).
 
 Path resolution:
-    core/server.py injects a guarded block into Maya's userSetup.py on
+    src/maya_mcp/server.py injects a guarded block into Maya's userSetup.py on
     first connect, which adds the project root to sys.path.  This ensures
     all imports work on Maya restart — even before the MCP server connects
     — so the retained workspaceControl can restore its uiScript reliably.

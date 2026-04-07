@@ -46,7 +46,7 @@ Workflow: submit job → poll status (SSE streaming) → download GLB/OBJ → ma
 
 ### Safety module — `tests/test_safety.py` (67 tests, all passing)
 
-Suite de pytest para `core/safety.py`. Cubre los 15 patrones de detección de código peligroso con tests individuales por patrón + verificación de que inputs seguros no disparan falsos positivos.
+Suite de pytest para `src/maya_mcp/safety.py`. Cubre los 15 patrones de detección de código peligroso con tests individuales por patrón + verificación de que inputs seguros no disparan falsos positivos.
 
 | Clase | Tests | Cubre |
 |---|---|---|
@@ -74,7 +74,7 @@ No requiere Maya abierto ni dependencias externas.
 
 ### Import file — `tests/test_import_file.py` (19 tests, all passing)
 
-Suite de pytest para `maya_import_file` en `core/server.py`. Monkeypatcha `bridge.execute` para capturar el código Python enviado a Maya y verificar que contiene los comandos correctos. Stubs internos para `mcp`, `maya_bridge`, y `safety`.
+Suite de pytest para `maya_import_file` en `src/maya_mcp/server.py`. Monkeypatcha `bridge.execute` para capturar el código Python enviado a Maya y verificar que contiene los comandos correctos. Stubs internos para `mcp`, `maya_bridge`, y `safety`.
 
 | Clase | Tests | Cubre |
 |---|---|---|
@@ -92,7 +92,7 @@ No requiere Maya abierto ni dependencias MCP/externas.
 
 ### Vision3D integration — `tests/test_vision3d.py` (21 tests, all passing)
 
-Suite de pytest para las 6 Vision3D tools en `core/server.py`. Usa `httpx.MockTransport` para simular la API REST de Vision3D — no requiere GPU server, red, ni Maya abierto. Stubs internos para `mcp`, `maya_bridge`, y `safety` (no requiere los SDKs instalados).
+Suite de pytest para las 6 Vision3D tools en `src/maya_mcp/server.py`. Usa `httpx.MockTransport` para simular la API REST de Vision3D — no requiere GPU server, red, ni Maya abierto. Stubs internos para `mcp`, `maya_bridge`, y `safety` (no requiere los SDKs instalados).
 
 | Clase | Tests | Cubre |
 |---|---|---|
@@ -109,7 +109,7 @@ No requiere Vision3D server, GPU, ni dependencias MCP/Maya.
 
 ### Maya Bridge — `tests/test_maya_bridge.py` (24 tests, all passing)
 
-Suite de pytest para `core/maya_bridge.py` y las tool functions de `core/server.py` que dependen del bridge TCP. Usa un mock TCP server (definido en `conftest.py`) — no requiere Maya abierto.
+Suite de pytest para `src/maya_mcp/maya_bridge.py` y las tool functions de `src/maya_mcp/server.py` que dependen del bridge TCP. Usa un mock TCP server (definido en `conftest.py`) — no requiere Maya abierto.
 
 | Clase | Tests | Cubre |
 |---|---|---|
@@ -126,7 +126,7 @@ Fixtures en `conftest.py`: `MockMayaTCPServer` (mock TCP), `mock_maya_server` (f
 
 ### RAG search — `tests/test_rag_search.py` (43 tests, all passing)
 
-Suite de pytest para `core/rag/search.py`. Usa mini corpus de 15 chunks con embeddings determinísticos (_DetEF, SHA-256 hash → 64-dim vectors) — no requiere descarga de modelo ni Maya abierto.
+Suite de pytest para `src/maya_mcp/rag/search.py`. Usa mini corpus de 15 chunks con embeddings determinísticos (_DetEF, SHA-256 hash → 64-dim vectors) — no requiere descarga de modelo ni Maya abierto.
 
 | Clase | Tests | Cubre |
 |---|---|---|
@@ -167,7 +167,7 @@ Run: `pytest tests/test_rag_search.py -v`
 | `console/claude_worker.py` | `~/.volta/bin`, `~/.npm-global/bin`, `~/.local/bin`, `~/.nvm/versions/node/*/bin` | Node.js discovery | Bajo (búsqueda) |
 | `console/build_app_bundle.py` | `~/Applications` | Default output .app bundle | Bajo |
 | `console/server_panel.py` | `~/.claude.json` | Claude Code config discovery | Bajo (path estándar) |
-| `core/server.py` | `~/Library/Preferences/Autodesk/maya/...`, `~/maya/...` | userSetup.py discovery | Bajo (paths estándar de Maya) |
+| `src/maya_mcp/server.py` | `~/Library/Preferences/Autodesk/maya/...`, `~/maya/...` | userSetup.py discovery | Bajo (paths estándar de Maya) |
 
 Todos usan `os.path.expanduser()` (no absolutas puras). Los paths de Maya son estándar y correctos.
 
@@ -177,6 +177,8 @@ Todos usan `os.path.expanduser()` (no absolutas puras). Los paths de Maya son es
 |---|---|
 | `CLAUDE.md` | `~/Claude_projects/maya-mcp/`, `~/.claude.json`, `~/.claude/settings.json` |
 | `README.md` | `~/Library/Preferences/Autodesk/maya/`, `~/Library/Application Support/Claude/` |
+
+Note: No more hardcoded `core/` paths in executable code — all references now use the `src/maya_mcp/` package layout.
 
 ---
 
@@ -190,17 +192,17 @@ Todos usan `os.path.expanduser()` (no absolutas puras). Los paths de Maya son es
 |------|--------|
 | 1 | Verifica Python 3.10+ (`python3` o `python`) |
 | 2 | Crea `.venv/` en la raíz del repo si no existe |
-| 3 | Instala `core/requirements.txt` + RAG extras (`chromadb`, `sentence-transformers`, `rank-bm25`) |
-| 4 | Construye el RAG index vía `python -m core.rag.build_index` (skip si ya existe) |
+| 3 | Instala el paquete vía `pip install -e .` + RAG extras (`chromadb`, `sentence-transformers`, `rank-bm25`) |
+| 4 | Construye el RAG index vía `python -m maya_mcp.rag.build_index` (skip si ya existe) |
 | 5 | Registra/actualiza la entrada `maya-mcp` en `~/.claude.json` (usa `jq` si disponible, Python como fallback) |
 | 6 | Muestra resumen con ✓/⚠/✗ por paso y próximos pasos manuales |
 
 ### Notas de diseño
 
-- **Venv en raíz**: `.venv/` en `maya-mcp/` (no en `core/`), consistente con la ruta que usa `server_panel.py` y el ejemplo de `claude mcp add` del README.
-- **Sin setup.py**: el proyecto no tiene `pyproject.toml` ni `setup.py`, por lo que se usa `pip install -r core/requirements.txt`.
-- **RAG extras separados**: `chromadb`, `sentence-transformers` y `rank-bm25` no están en `core/requirements.txt` (el requirements de runtime es mínimo), pero el script los instala para que el índice funcione.
-- **RAG build skip**: si `core/rag/index/` y `core/rag/corpus.json` ya existen, se omite el rebuild (el índice viene committed en el repo).
+- **Venv en raíz**: `.venv/` en `maya-mcp/`, consistente con la ruta que usa `server_panel.py` y el ejemplo de `claude mcp add` del README.
+- **pyproject.toml**: el proyecto tiene `pyproject.toml` (hatchling), se instala con `pip install -e .`.
+- **RAG extras separados**: `chromadb`, `sentence-transformers` y `rank-bm25` son dependencias opcionales; el script los instala para que el índice funcione.
+- **RAG build skip**: si `src/maya_mcp/rag/index/` y `src/maya_mcp/rag/corpus.json` ya existen, se omite el rebuild (el índice viene committed en el repo).
 - **~/.claude.json idempotente**: el entry se hace upsert — si ya existía, se sobreescribe con las rutas actuales del clone. No duplica.
 - **Errores no fatales**: RAG build y registro JSON no abortan la instalación; se reportan como warnings/errors en el resumen final.
 
@@ -233,8 +235,8 @@ chmod +x install.sh
 ### Tarea 2 — Stubs compartidos en `conftest.py`
 - **conftest.py**: Añadido stub del mcp SDK al nivel del módulo (guard `if "mcp" not in sys.modules`). Añadido fixture `mock_ctx` (AsyncMock con `ctx.info`). Añadidos `import types as _types` y `AsyncMock` a los imports.
 - **test_vision3d.py**: Eliminados los bloques de stubs inline de mcp, maya_bridge y safety (≈60 líneas). Eliminados `_make_mock_ctx()` y el fixture local `mock_ctx`. Eliminados `import types` y `AsyncMock` (ya no necesarios). El archivo usa el `mock_ctx` fixture de conftest.py.
-- **test_import_file.py**: Eliminados los bloques de stubs inline de mcp, maya_bridge y safety (≈60 líneas). Eliminados `import types`, `from unittest.mock import patch, MagicMock`. Añadido `from maya_bridge import MayaBridgeError` (módulo real de core/). Actualizado `_StubMayaBridgeError` → `MayaBridgeError` en `test_bridge_error_returns_message`.
-- Resultado: maya_bridge y safety usan los módulos reales de `core/` (no tienen dependencias externas). mcp se sigue stubbing desde conftest.py.
+- **test_import_file.py**: Eliminados los bloques de stubs inline de mcp, maya_bridge y safety (≈60 líneas). Eliminados `import types`, `from unittest.mock import patch, MagicMock`. Añadido `from maya_mcp.maya_bridge import MayaBridgeError` (módulo real de `src/maya_mcp/`). Actualizado `_StubMayaBridgeError` → `MayaBridgeError` en `test_bridge_error_returns_message`.
+- Resultado: maya_bridge y safety usan los módulos reales de `src/maya_mcp/` (no tienen dependencias externas). mcp se sigue stubbing desde conftest.py.
 
 ### Tarea 3 — `tests/requirements-test.txt` creado
 Dependencias documentadas: `pytest>=7.4.0`, `pytest-asyncio>=0.23.0`, `httpx>=0.27.0`, `chromadb>=0.5.0`, `rank-bm25>=0.2.2`. Incluida nota explicando que mcp SDK NO es necesario (el stub de conftest.py lo reemplaza).
@@ -259,7 +261,7 @@ Dependencias documentadas: `pytest>=7.4.0`, `pytest-asyncio>=0.23.0`, `httpx>=0.
 ### Objetivo
 Implementar el dispatch pattern definido en `COWORK_O1_DISPATCH.md` para reducir los tools visibles de 27 a 14, compatibilidad con Qwen 3.5 9B (8K context).
 
-### Cambios en `core/server.py`
+### Cambios en `src/maya_mcp/server.py`
 
 **Nuevos Enums y modelos Pydantic:**
 ```python
@@ -288,7 +290,7 @@ class Vision3DAction(str, Enum):
 - Validación Pydantic interna en cada `_do_*` via `try/except ValidationError`
 
 **Resultado:**
-- `grep -c '@mcp.tool' core/server.py` → **14** (era 27)
+- `grep -c '@mcp.tool' src/maya_mcp/server.py` → **14** (era 27)
 
 ### Cambios en tests
 

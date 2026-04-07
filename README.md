@@ -33,14 +33,14 @@ Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow
 ```
 Claude / LLM
     ↕  MCP protocol (stdio)
-FastMCP server (core/server.py) — 27 tools
-    ├── RAG engine (core/rag/)
+FastMCP server (src/maya_mcp/server.py) — 27 tools
+    ├── RAG engine (src/maya_mcp/rag/)
     │     ├── ChromaDB + BM25 hybrid search
     │     ├── HyDE adaptive query expansion
     │     └── In-session cache + RRF fusion
-    ├── Safety module (core/safety.py)
+    ├── Safety module (src/maya_mcp/safety.py)
     │     └── 14+ dangerous pattern detectors
-    ├── Maya bridge (core/maya_bridge.py)
+    ├── Maya bridge (src/maya_mcp/maya_bridge.py)
     │     └── TCP socket → Command Port :7001
     └── Vision3D client (HTTP)
           └── GPU server for 3D generation
@@ -123,23 +123,26 @@ Every tool call tracks tokens in/out. The `session_stats` tool reports how much 
 
 ```
 maya-mcp/
-├── core/
-│   ├── server.py              # FastMCP server — all 27 tools
-│   ├── maya_bridge.py          # TCP bridge → Maya Command Port :7001
-│   ├── safety.py               # Dangerous pattern detection (14+ patterns)
-│   ├── requirements.txt
-│   ├── rag/
-│   │   ├── config.py           # Embedding model, search params, token tracking
-│   │   ├── build_index.py      # Chunk docs → ChromaDB + BM25 corpus
-│   │   ├── search.py           # Hybrid search: BM25 + semantic + HyDE + RRF
-│   │   ├── index/              # ChromaDB persistent index (auto-generated)
-│   │   └── corpus.json         # BM25 corpus (auto-generated)
-│   └── docs/
-│       ├── CMDS_API.md         # maya.cmds reference (commands, flags, patterns)
-│       ├── PYMEL_API.md        # PyMEL object-oriented API reference
-│       ├── ARNOLD_API.md       # Arnold/mtoa shaders, AOVs, render settings
-│       ├── USD_API.md          # Maya-USD import/export, proxy shapes, pxr API
-│       └── ANTI_PATTERNS.md    # Common LLM hallucinations + wrong flag names
+├── src/
+│   └── maya_mcp/
+│       ├── __init__.py
+│       ├── __main__.py
+│       ├── server.py              # FastMCP server — all 27 tools
+│       ├── maya_bridge.py         # TCP bridge → Maya Command Port :7001
+│       ├── safety.py              # Dangerous pattern detection (14+ patterns)
+│       ├── config.example.json
+│       ├── rag/
+│       │   ├── config.py          # Embedding model, search params, token tracking
+│       │   ├── build_index.py     # Chunk docs → ChromaDB + BM25 corpus
+│       │   ├── search.py          # Hybrid search: BM25 + semantic + HyDE + RRF
+│       │   ├── index/             # ChromaDB persistent index (auto-generated)
+│       │   └── corpus.json        # BM25 corpus (auto-generated)
+│       └── docs/
+│           ├── CMDS_API.md        # maya.cmds reference (commands, flags, patterns)
+│           ├── PYMEL_API.md       # PyMEL object-oriented API reference
+│           ├── ARNOLD_API.md      # Arnold/mtoa shaders, AOVs, render settings
+│           ├── USD_API.md         # Maya-USD import/export, proxy shapes, pxr API
+│           └── ANTI_PATTERNS.md   # Common LLM hallucinations + wrong flag names
 │
 ├── console/                    # Qt console — Maya panel + legacy standalone
 │   ├── qt_compat.py            # PySide2 (Maya 2023-2024) / PySide6 (2025+) shim
@@ -152,6 +155,8 @@ maya-mcp/
 │   ├── chat_window.py          # Legacy standalone chat window
 │   └── build_app_bundle.py     # Legacy macOS .app bundle generator
 │
+├── tests/
+├── pyproject.toml              # Build config, entry point: python -m maya_mcp.server
 ├── reference/                  # Pipeline I/O (git-ignored)
 ├── CLAUDE.md                   # Project documentation for Claude
 ├── WORKFLOW_GUIDE.md           # Workflow guide
@@ -212,10 +217,9 @@ cp .env.example .env
 ### 2. Install dependencies
 
 ```bash
-cd core
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 
 # RAG dependencies (optional but recommended)
 pip install chromadb sentence-transformers rank-bm25
@@ -224,10 +228,10 @@ pip install chromadb sentence-transformers rank-bm25
 ### 3. Build the RAG index
 
 ```bash
-python -m core.rag.build_index
+python -m maya_mcp.rag.build_index
 ```
 
-First run downloads the embedding model (~570 MB, cached afterwards). The index is stored in `core/rag/index/` and can be committed to git.
+First run downloads the embedding model (~570 MB, cached afterwards). The index is stored in `src/maya_mcp/rag/index/` and can be committed to git.
 
 ### 4. Set up Maya Command Port
 
@@ -259,7 +263,7 @@ cmds.evalDeferred(open_command_port)
 ### 5. Configure Claude Code
 
 ```bash
-claude mcp add maya-mcp -s user -- /path/to/maya-mcp/.venv/bin/python /path/to/maya-mcp/core/server.py
+claude mcp add maya-mcp -s user -- /path/to/maya-mcp/.venv/bin/python -m maya_mcp.server
 ```
 
 Or for Claude Desktop, add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
@@ -269,7 +273,7 @@ Or for Claude Desktop, add to `~/Library/Application Support/Claude/claude_deskt
   "mcpServers": {
     "maya-mcp": {
       "command": "/path/to/maya-mcp/.venv/bin/python",
-      "args": ["core/server.py"],
+      "args": ["-m", "maya_mcp.server"],
       "cwd": "/path/to/maya-mcp",
       "env": {
         "GPU_API_URL": "http://your-gpu-host:8000",
@@ -329,7 +333,7 @@ All three MCP servers (maya-mcp, fpt-mcp, flame-mcp) share the same architecture
 
 **Maya Command Port not responding** — Verify in Maya's Script Editor: `cmds.commandPort(':7001', query=True)`. If `False`, run the `open_command_port()` snippet.
 
-**RAG search returns "index not found"** — Run `python -m core.rag.build_index` to build the index.
+**RAG search returns "index not found"** — Run `python -m maya_mcp.rag.build_index` to build the index.
 
 **Shape inference fails immediately** — Model weights may be incomplete. Check that `hunyuan3d-dit-v2-0-turbo/model.fp16.safetensors` (~4.6 GB) exists on the GPU server.
 

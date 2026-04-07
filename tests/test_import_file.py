@@ -1,7 +1,7 @@
 """
 test_import_file.py
 ===================
-Tests for the maya_import_file tool in core/server.py.
+Tests for the maya_import_file tool in src/maya_mcp/server.py.
 
 Monkeypatches bridge.execute to capture the Python code sent to Maya,
 then asserts the code contains the correct import commands for each format,

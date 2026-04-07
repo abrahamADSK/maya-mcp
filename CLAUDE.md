@@ -76,7 +76,7 @@ Short queries like "set keyframe tangent" are automatically expanded with domain
 
 ### Location
 - **Repository**: `~/Claude_projects/maya-mcp/` (local Mac)
-- **MCP Server**: runs with `python core/server.py` (standard MCP stdio transport)
+- **MCP Server**: runs with `python -m maya_mcp.server` (standard MCP stdio transport)
 - **MCP Configuration**: `~/.claude.json` (via `claude mcp add -s user`)
 - **Tool Permissions**: `~/.claude/settings.json`
 
@@ -92,7 +92,7 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 - **macOS Ventura+** with Apple Silicon (Intel support available)
 - **Autodesk Maya 2023+** (tested on 2026)
 - **Arnold** (`mtoa` plugin, included with Maya)
-- **Python 3.10+** to run `core/server.py`
+- **Python 3.10+** to run `python -m maya_mcp.server`
 - **RAG dependencies**: `chromadb`, `sentence-transformers`, `rank-bm25` (optional but recommended)
 - **Command Port enabled** in Maya's `userSetup.py`
 
@@ -146,7 +146,7 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 
 ## 5. RAG System Architecture
 
-### Documentation Corpora (core/docs/)
+### Documentation Corpora (src/maya_mcp/docs/)
 - `CMDS_API.md` — maya.cmds reference: 15+ sections covering scene management, primitives, transforms, selection, hierarchy, attributes, modeling, UVs, materials, lights, cameras, animation, rendering, plugins, deformers, constraints, joints, namespaces, undo, viewport
 - `PYMEL_API.md` — PyMEL object-oriented API: nodes, attributes, connections, transforms, data types, mesh components, key differences from cmds
 - `ARNOLD_API.md` — Arnold/mtoa: shaders (aiStandardSurface attributes), lights, render settings, AOVs, textures, PBR setup pattern
@@ -164,15 +164,15 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 ### Building the Index
 ```bash
 cd maya-mcp
-python -m core.rag.build_index
+python -m maya_mcp.rag.build_index
 ```
-First run downloads embedding model (~570 MB, cached). Index stored in `core/rag/index/`.
+First run downloads embedding model (~570 MB, cached). Index stored in `src/maya_mcp/rag/index/`.
 
 ---
 
 ## 6. Safety Module
 
-`core/safety.py` checks for 14+ dangerous patterns:
+`src/maya_mcp/safety.py` checks for 14+ dangerous patterns:
 - Bulk deletes without specific targets
 - Undo system tampering (stateWithoutFlush=False)
 - Direct filesystem deletion (os.remove, shutil.rmtree)
@@ -292,7 +292,7 @@ SDK is redirected to the Ollama Messages-compatible endpoint (Ollama v0.14+).
 ### Write-allowed models (RAG trust gates)
 Only Claude models can write patterns via `learn_pattern`. Local models (Ollama) are
 read-only — they can search docs but cannot persist new patterns. Configured via
-`write_allowed_models` in `core/config.json` (default: `["claude-opus", "claude-sonnet"]`).
+`write_allowed_models` in `src/maya_mcp/config.json` (default: `["claude-opus", "claude-sonnet"]`).
 
 ### viewport_capture fallback for non-vision models
 `maya_viewport_capture` returns both the image (base64) and text metadata (path, resolution,
@@ -314,7 +314,7 @@ ollama pull qwen3.5:4b
 ```
 
 ### Configuration
-Copy `core/config.example.json` to `core/config.json` and adjust URLs.
+Copy `src/maya_mcp/config.example.json` to `src/maya_mcp/config.json` and adjust URLs.
 
 ### Full LLM strategy
 See `MODEL_STRATEGY.md` in the ecosystem root for hardware configs, VRAM management,

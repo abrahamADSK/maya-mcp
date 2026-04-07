@@ -1,7 +1,7 @@
 """
 test_safety.py
 ==============
-Pytest suite for core/safety.py — verifies that each of the 15 dangerous
+Pytest suite for src/maya_mcp/safety.py — verifies that each of the 15 dangerous
 patterns is detected, and that normal safe inputs pass through without warnings.
 
 No Maya connection or external dependencies required.

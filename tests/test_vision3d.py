@@ -1,7 +1,7 @@
 """
 test_vision3d.py
 ================
-Tests for the 6 Vision3D integration tools in core/server.py.
+Tests for the 6 Vision3D integration tools in src/maya_mcp/server.py.
 
 Uses httpx MockTransport to simulate the Vision3D REST API — no real
 GPU server, network access, or Maya instance required.
