@@ -323,3 +323,16 @@ update procedures, and architecture decisions.
 ---
 
 **Keep this file updated when architecture, tools, or workflows change.**
+
+---
+
+## 12. MANDATORY: Update install.sh on tool changes
+
+**RULE — NON-NEGOTIABLE:**
+Whenever a tool is added, removed, or renamed in `src/maya_mcp/server.py`:
+1. Update the tools list in `install.sh` (Step 6 — Pre-approve MCP tools)
+2. The tool name format is `mcp__maya-mcp__<function_name>`
+3. Run `bash -n install.sh` to verify syntax
+4. Commit install.sh together with the server.py change — never separately
+
+Forgetting this step means users get permission prompts on first use of the new tool.
