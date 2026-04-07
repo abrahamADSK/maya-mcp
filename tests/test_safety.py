@@ -10,7 +10,7 @@ Run with:
 """
 
 import pytest
-from safety import check_dangerous
+from maya_mcp.safety import check_dangerous
 
 
 # ---------------------------------------------------------------------------

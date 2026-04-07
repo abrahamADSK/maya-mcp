@@ -48,3 +48,5 @@ core/rag/index/
 *.bin
 hf_models/
 logs/
+src/maya_mcp/rag/index/
+src/maya_mcp/rag/corpus.json

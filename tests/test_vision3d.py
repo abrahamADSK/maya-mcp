@@ -17,18 +17,10 @@ Test cases (from TESTING_PLAN section 4.4):
 """
 
 import json
-import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 import pytest
-
-# ── Path setup (same as conftest.py) ──────────────────────────────────────
-_CORE_DIR = Path(__file__).resolve().parent.parent / "core"
-if str(_CORE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CORE_DIR))
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -62,10 +54,9 @@ def _bytes_response(content: bytes, status_code: int = 200) -> httpx.Response:
 
 
 # ── Import server module ──────────────────────────────────────────────────
-# conftest.py installs the mcp SDK stub and adds core/ to sys.path before
-# any test file is collected, so `import server` works without the full SDK.
-# maya_bridge and safety are real modules available from core/.
-import server as srv  # noqa: E402
+# conftest.py installs the mcp SDK stub before any test file is collected,
+# so importing maya_mcp.server works without the full MCP SDK.
+from maya_mcp import server as srv
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────

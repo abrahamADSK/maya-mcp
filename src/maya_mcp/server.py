@@ -37,17 +37,14 @@ from typing import Optional, List, Any
 from enum import Enum
 from pathlib import Path
 
-# Ensure this file's directory is on the path so maya_bridge
-# can be found regardless of where the server is launched from
-sys.path.insert(0, str(Path(__file__).parent))
-
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP, Image
 
-from maya_bridge import MayaBridge, MayaBridgeError
-from safety import check_dangerous
+from maya_mcp.maya_bridge import MayaBridge, MayaBridgeError
+from maya_mcp.safety import check_dangerous
 
-_SERVER_DIR = Path(__file__).parent
+_SERVER_DIR = Path(__file__).parent          # src/maya_mcp/
+_PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1053,7 +1050,7 @@ _GPU_API_URL  = os.environ.get("GPU_API_URL",  "http://localhost:8000").rstrip("
 _GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")
 _GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "false").lower() in ("true", "1", "yes")
 _MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
-                                str(Path(__file__).parent.parent))           # project root on Mac
+                                str(_PROJECT_ROOT))                          # project root on Mac
 
 # Lazy httpx client
 _http_client = None
@@ -1627,7 +1624,7 @@ async def search_maya_docs_tool(params: SearchMayaDocsInput) -> str:
     global _last_rag_score, _rag_called_this_session
 
     try:
-        from rag.search import search
+        from maya_mcp.rag.search import search
         text, relevance = search(params.query, n_results=params.n_results)
     except ImportError:
         return json.dumps({
@@ -1705,7 +1702,7 @@ async def learn_pattern_tool(params: LearnPatternInput) -> str:
 
             # Clear RAG cache so new pattern is found on next search
             try:
-                from rag.search import clear_cache
+                from maya_mcp.rag.search import clear_cache
                 clear_cache()
             except ImportError:
                 pass
@@ -1785,7 +1782,7 @@ async def session_stats_tool() -> str:
 # Maya panel auto-setup — inject userSetup.py + menu + panel on first connect
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = str(Path(__file__).parent.parent)
+# _PROJECT_ROOT already defined near top of file (as Path, not str)
 _panel_setup_done = False
 
 
@@ -1937,7 +1934,12 @@ def _bg_panel_install():
             continue
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for ``python -m maya_mcp.server`` and pyproject.toml console_scripts."""
     import threading
     threading.Thread(target=_bg_panel_install, daemon=True).start()
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

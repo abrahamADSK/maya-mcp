@@ -16,7 +16,7 @@ C4 — HyDE (Hypothetical Document Embedding): the query is expanded with a
      domain-specific template for better embedding alignment.
 
 The index must be built first:
-    python -m core.rag.build_index
+    python -m maya_mcp.rag.build_index
 """
 
 import json
@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Any
 
 _RAG_DIR    = Path(__file__).parent
-_CORE_DIR   = _RAG_DIR.parent
-_PROJECT_DIR = _CORE_DIR.parent
+_PKG_DIR    = _RAG_DIR.parent          # src/maya_mcp/
+_PROJECT_DIR = _PKG_DIR.parent.parent  # maya-mcp/
 INDEX_DIR   = str(_RAG_DIR / "index")
 CORPUS_PATH = str(_RAG_DIR / "corpus.json")
 LOG_DIR     = _PROJECT_DIR / "logs"
@@ -59,7 +59,7 @@ _search_cache: dict[int, tuple[str, int]] = {}
 
 def _get_embedding_fn() -> Any:
     """Returns the BGE embedding function — MUST match build_index.py."""
-    from core.rag.config import EMBEDDING_MODEL
+    from maya_mcp.rag.config import EMBEDDING_MODEL
     from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
     return SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
 
@@ -70,13 +70,13 @@ def _get_collection() -> Any | None:
         return _collection
 
     if not os.path.isdir(INDEX_DIR):
-        _log("ERROR: index not found — run python -m core.rag.build_index")
+        _log("ERROR: index not found — run python -m maya_mcp.rag.build_index")
         return None
 
     try:
         import chromadb
         _client = chromadb.PersistentClient(path=INDEX_DIR)
-        from core.rag.config import COLLECTION_NAME
+        from maya_mcp.rag.config import COLLECTION_NAME
         _collection = _client.get_collection(
             COLLECTION_NAME,
             embedding_function=_get_embedding_fn(),
@@ -235,7 +235,7 @@ def search(query: str, n_results: int = 5) -> tuple[str, int]:
 
     Uses in-session cache (A12) to avoid redundant ChromaDB queries.
     """
-    from core.rag.config import BM25_CANDIDATES, RRF_K
+    from maya_mcp.rag.config import BM25_CANDIDATES, RRF_K
 
     # A12 — cache lookup
     cache_key = hash((query, n_results))
@@ -247,13 +247,13 @@ def search(query: str, n_results: int = 5) -> tuple[str, int]:
     if collection is None:
         return (
             "RAG index not found. Build it first:\n"
-            "  cd maya-mcp && python -m core.rag.build_index",
+            "  cd maya-mcp && python -m maya_mcp.rag.build_index",
             0,
         )
 
     count = collection.count()
     if count == 0:
-        return "Index is empty. Run: python -m core.rag.build_index", 0
+        return "Index is empty. Run: python -m maya_mcp.rag.build_index", 0
 
     _log(f"QUERY: '{query}'")
 

@@ -9,7 +9,7 @@ and search.py (read). If you change it here, delete rag/index/ and rebuild.
 
 # -- Embedding model selection ------------------------------------------------
 # IMPORTANT: build and query MUST use the same model. If you change this,
-# delete rag/index/ and run python -m core.rag.build_index to rebuild.
+# delete rag/index/ and run python -m maya_mcp.rag.build_index to rebuild.
 #
 # Option A — bge-small-en-v1.5 (~130 MB): fast, good for semantic queries
 # Option B — bge-large-en-v1.5 (~570 MB): higher accuracy on technical code queries

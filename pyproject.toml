@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "maya-mcp"
+version = "0.1.0"
+description = "MCP server for controlling Autodesk Maya via Command Port"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    # RAG dependencies
+    "chromadb>=0.5.0",
+    "sentence-transformers>=2.2.0",
+    "rank-bm25>=0.2.2",
+]
+
+[project.scripts]
+maya-mcp = "maya_mcp.server:main"

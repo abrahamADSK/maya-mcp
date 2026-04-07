@@ -2,7 +2,7 @@
   "mcpServers": {
     "maya-mcp": {
       "command": ".venv/bin/python",
-      "args": ["core/server.py"],
+      "args": ["-m", "maya_mcp.server"],
       "cwd": "."
     },
     "flame": {

@@ -8,8 +8,8 @@
 # What this script does:
 #   1. Verifies Python 3.10+ is available
 #   2. Creates a virtual environment in .venv/ (repo root) if not present
-#   3. Installs Python dependencies from core/requirements.txt
-#   4. Builds the RAG index via core/rag/build_index.py
+#   3. Installs the package in editable mode (pip install -e .)
+#   4. Builds the RAG index via maya_mcp.rag.build_index
 #   5. Registers (or updates) the MCP server entry in ~/.claude.json
 #   6. Prints an installation summary
 #
@@ -44,9 +44,7 @@ STEPS_ERR=()
 # ── Resolve repo root (works even if script is called from another directory) ─
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${REPO_ROOT}/.venv"
-CORE_DIR="${REPO_ROOT}/core"
-REQUIREMENTS="${CORE_DIR}/requirements.txt"
-BUILD_INDEX="${CORE_DIR}/rag/build_index.py"
+PKG_DIR="${REPO_ROOT}/src/maya_mcp"
 CLAUDE_JSON="${HOME}/.claude.json"
 
 echo ""
@@ -121,36 +119,21 @@ VENV_PYTHON="${VENV_DIR}/bin/python"
 VENV_PIP="${VENV_DIR}/bin/pip"
 
 # =============================================================================
-# STEP 3 — Install dependencies from core/requirements.txt
+# STEP 3 — Install package in editable mode (pip install -e .)
 # =============================================================================
-info "Step 3/5 — Installing Python dependencies..."
+info "Step 3/5 — Installing maya-mcp package..."
 
-if [[ ! -f "${REQUIREMENTS}" ]]; then
-    error "requirements.txt not found at ${REQUIREMENTS}"
-    STEPS_ERR+=("requirements.txt missing — dependencies not installed")
-    # Non-fatal: continue so the rest of the script runs
+# Upgrade pip silently first to avoid resolver warnings
+"${VENV_PIP}" install --quiet --upgrade pip
+
+# Install the package (editable mode) — pyproject.toml declares all deps
+# including RAG extras (chromadb, sentence-transformers, rank-bm25)
+if "${VENV_PIP}" install --quiet -e "${REPO_ROOT}"; then
+    success "maya-mcp package installed in editable mode"
+    STEPS_OK+=("Package installed (pip install -e .)")
 else
-    # Upgrade pip silently first to avoid resolver warnings
-    "${VENV_PIP}" install --quiet --upgrade pip
-
-    # Install from core/requirements.txt
-    # Using --quiet to reduce noise; errors still propagate via set -e
-    "${VENV_PIP}" install --quiet -r "${REQUIREMENTS}"
-    success "Core dependencies installed from core/requirements.txt"
-    STEPS_OK+=("Dependencies installed (core/requirements.txt)")
-
-    # RAG extras: chromadb and sentence-transformers are required for the index.
-    # They are NOT listed in core/requirements.txt (kept lean for server runtime)
-    # but are needed to build and query the RAG index.
-    RAG_EXTRAS="chromadb sentence-transformers rank-bm25"
-    info "Installing RAG extras (${RAG_EXTRAS})..."
-    if "${VENV_PIP}" install --quiet ${RAG_EXTRAS} 2>/dev/null; then
-        success "RAG extras installed"
-        STEPS_OK+=("RAG extras installed (chromadb, sentence-transformers, rank-bm25)")
-    else
-        warn "RAG extras install had warnings — search_maya_docs may be unavailable"
-        STEPS_WARN+=("RAG extras install had issues — check pip output manually")
-    fi
+    error "pip install -e . failed — check output above"
+    STEPS_ERR+=("Package install failed — dependencies may be missing")
 fi
 
 # =============================================================================
@@ -158,31 +141,25 @@ fi
 # =============================================================================
 info "Step 4/5 — Building RAG index..."
 
-if [[ ! -f "${BUILD_INDEX}" ]]; then
-    warn "build_index.py not found at ${BUILD_INDEX} — skipping RAG build"
-    STEPS_WARN+=("RAG build skipped — build_index.py not found")
-else
-    # Check if index already exists and appears complete (has at least one file)
-    INDEX_DIR="${CORE_DIR}/rag/index"
-    CORPUS_JSON="${CORE_DIR}/rag/corpus.json"
+# Check if index already exists and appears complete (has at least one file)
+INDEX_DIR="${PKG_DIR}/rag/index"
+CORPUS_JSON="${PKG_DIR}/rag/corpus.json"
 
-    if [[ -d "${INDEX_DIR}" && "$(ls -A "${INDEX_DIR}" 2>/dev/null)" ]] && \
-       [[ -f "${CORPUS_JSON}" ]]; then
-        success "RAG index already present — skipping rebuild"
-        info "  (delete ${INDEX_DIR} and ${CORPUS_JSON} to force a rebuild)"
-        STEPS_OK+=("RAG index already present — skipped rebuild")
+if [[ -d "${INDEX_DIR}" && "$(ls -A "${INDEX_DIR}" 2>/dev/null)" ]] && \
+   [[ -f "${CORPUS_JSON}" ]]; then
+    success "RAG index already present — skipping rebuild"
+    info "  (delete ${INDEX_DIR} and ${CORPUS_JSON} to force a rebuild)"
+    STEPS_OK+=("RAG index already present — skipped rebuild")
+else
+    info "Running build_index.py (first run downloads embedding model ~570 MB)..."
+    info "This may take several minutes on first install."
+    if (cd "${REPO_ROOT}" && "${VENV_PYTHON}" -m maya_mcp.rag.build_index); then
+        success "RAG index built successfully"
+        STEPS_OK+=("RAG index built (src/maya_mcp/rag/index/)")
     else
-        info "Running build_index.py (first run downloads embedding model ~570 MB)..."
-        info "This may take several minutes on first install."
-        # Run from repo root so relative imports (core.rag.*) work correctly
-        if (cd "${REPO_ROOT}" && "${VENV_PYTHON}" -m core.rag.build_index); then
-            success "RAG index built successfully"
-            STEPS_OK+=("RAG index built (core/rag/index/)")
-        else
-            warn "RAG index build failed — server starts but search_maya_docs will return 'index not found'"
-            warn "Re-run manually: cd ${REPO_ROOT} && .venv/bin/python -m core.rag.build_index"
-            STEPS_WARN+=("RAG index build failed — run manually after install")
-        fi
+        warn "RAG index build failed — server starts but search_maya_docs will return 'index not found'"
+        warn "Re-run manually: cd ${REPO_ROOT} && .venv/bin/python -m maya_mcp.rag.build_index"
+        STEPS_WARN+=("RAG index build failed — run manually after install")
     fi
 fi
 
@@ -191,9 +168,9 @@ fi
 # =============================================================================
 info "Step 5/5 — Registering MCP server in ~/.claude.json..."
 
-# Full absolute paths for the server entry
+# Entry uses `python -m maya_mcp.server` for a proper package invocation
 MCP_COMMAND="${VENV_DIR}/bin/python"
-MCP_ARG="${CORE_DIR}/server.py"
+MCP_ARGS='["-m", "maya_mcp.server"]'
 MCP_CWD="${REPO_ROOT}"
 SERVER_NAME="maya-mcp"
 
@@ -209,9 +186,9 @@ register_with_jq() {
     local new_entry
     new_entry=$(jq -n \
         --arg cmd  "${MCP_COMMAND}" \
-        --arg arg  "${MCP_ARG}" \
+        --argjson args "${MCP_ARGS}" \
         --arg cwd  "${MCP_CWD}" \
-        '{command: $cmd, args: [$arg], cwd: $cwd}')
+        '{command: $cmd, args: $args, cwd: $cwd}')
 
     # Merge: preserve existing keys, upsert mcpServers.<SERVER_NAME>
     echo "${existing}" | jq \
@@ -243,7 +220,7 @@ if os.path.isfile(path):
 data.setdefault("mcpServers", {})
 data["mcpServers"]["${SERVER_NAME}"] = {
     "command": "${MCP_COMMAND}",
-    "args":    ["${MCP_ARG}"],
+    "args":    ["-m", "maya_mcp.server"],
     "cwd":     "${MCP_CWD}",
 }
 
@@ -367,7 +344,7 @@ else
     echo -e "    \"mcpServers\": {"
     echo -e "      \"${SERVER_NAME}\": {"
     echo -e "        \"command\": \"${MCP_COMMAND}\","
-    echo -e "        \"args\": [\"${MCP_ARG}\"],"
+    echo -e "        \"args\": [\"-m\", \"maya_mcp.server\"],"
     echo -e "        \"cwd\": \"${MCP_CWD}\""
     echo -e "      }"
     echo -e "    }"

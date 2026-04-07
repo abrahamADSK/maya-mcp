@@ -3,8 +3,8 @@ conftest.py
 ===========
 Shared fixtures and path setup for maya-mcp tests.
 
-Adds ``core/`` to sys.path so that ``from safety import check_dangerous``
-works the same way server.py imports it (server.py lives inside core/).
+The package is installed in editable mode (``pip install -e .``) so
+``from maya_mcp.xxx import yyy`` works everywhere.
 
 Provides:
   - Mock TCP server fixtures for bridge tests.
@@ -34,11 +34,8 @@ if _soft < 4096:
     )
 
 # ── Path setup ────────────────────────────────────────────────────────────────
-# maya-mcp/core/safety.py  ←  the module under test
-# maya-mcp/tests/conftest.py  ←  this file
-_CORE_DIR = Path(__file__).resolve().parent.parent / "core"
-if str(_CORE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CORE_DIR))
+# Package is installed editable via ``pip install -e .`` — no sys.path hacks.
+# All imports use ``from maya_mcp.xxx import yyy``.
 
 
 # ── Shared MCP SDK stub ───────────────────────────────────────────────────────
@@ -177,7 +174,7 @@ def mock_maya_server():
 @pytest.fixture()
 def bridge_to_mock(mock_maya_server):
     """Returns a MayaBridge pointed at the mock server."""
-    from maya_bridge import MayaBridge
+    from maya_mcp.maya_bridge import MayaBridge
     return MayaBridge(
         host=mock_maya_server.host,
         port=mock_maya_server.port,
@@ -550,7 +547,7 @@ def patch_rag_singletons(rag_chroma_collection, rag_corpus_json):
     Yields (collection, bm25, bm25_docs) for assertions.
     """
     from rank_bm25 import BM25Okapi
-    from rag.search import search as _ensure_imported  # noqa: F401
+    from maya_mcp.rag.search import search as _ensure_imported  # noqa: F401
 
     collection, index_dir = rag_chroma_collection
 
@@ -560,10 +557,10 @@ def patch_rag_singletons(rag_chroma_collection, rag_corpus_json):
     tokenised = [entry["text"].lower().split() for entry in corpus]
     bm25 = BM25Okapi(tokenised)
 
-    with patch("rag.search._collection", collection), \
-         patch("rag.search._bm25", bm25), \
-         patch("rag.search._bm25_docs", corpus), \
-         patch("rag.search.INDEX_DIR", index_dir), \
-         patch("rag.search.CORPUS_PATH", rag_corpus_json), \
-         patch("rag.search._search_cache", {}):
+    with patch("maya_mcp.rag.search._collection", collection), \
+         patch("maya_mcp.rag.search._bm25", bm25), \
+         patch("maya_mcp.rag.search._bm25_docs", corpus), \
+         patch("maya_mcp.rag.search.INDEX_DIR", index_dir), \
+         patch("maya_mcp.rag.search.CORPUS_PATH", rag_corpus_json), \
+         patch("maya_mcp.rag.search._search_cache", {}):
         yield collection, bm25, corpus

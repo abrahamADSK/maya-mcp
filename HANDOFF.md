@@ -305,3 +305,134 @@ class Vision3DAction(str, Enum):
 **Resultado pytest:**
 - `tests/ --ignore=tests/test_rag_search.py` → **131/131 passed** (test_rag_search.py requiere chromadb — mismo estado previo)
 - `tests/test_rag_search.py` → 43 errors (chromadb no instalable en sandbox, ✅ en Mac)
+
+---
+
+## Sesión 6 — 2026-04-07 — Refactor: migrate maya-mcp to src/maya_mcp/ package layout
+
+### Objetivo
+Unificar estructura de directorios: mover de `core/` a `src/maya_mcp/` para tener un paquete Python instalable, idéntica arquitectura que fpt-mcp.
+
+### Estructura anterior → nueva
+
+```
+ANTES:                           DESPUÉS:
+maya-mcp/                        maya-mcp/
+├── core/                        ├── src/
+│   ├── server.py                │   └── maya_mcp/
+│   ├── maya_bridge.py           │       ├── __init__.py
+│   ├── safety.py                │       ├── __main__.py
+│   ├── config.example.json      │       ├── server.py
+│   ├── docs/                    │       ├── maya_bridge.py
+│   └── rag/                     │       ├── safety.py
+│       ├── __init__.py          │       ├── config.example.json
+│       ├── config.py            │       ├── docs/
+│       ├── build_index.py       │       └── rag/
+│       ├── search.py            │           ├── __init__.py
+│       ├── corpus.json          │           ├── config.py
+│       └── index/               │           ├── build_index.py
+├── tests/                       │           ├── search.py
+├── console/                     │           ├── corpus.json
+└── (no pyproject.toml)          │           └── index/
+                                 ├── tests/
+                                 ├── console/    (sin cambios, fuera del paquete)
+                                 ├── pyproject.toml  (NUEVO)
+                                 └── core/       (pendiente eliminar)
+```
+
+### Archivos creados
+
+| Archivo | Propósito |
+|---|---|
+| `pyproject.toml` | Build config (hatchling), deps, entry point `maya-mcp = maya_mcp.server:main` |
+| `src/maya_mcp/__init__.py` | Package marker |
+| `src/maya_mcp/__main__.py` | Permite `python -m maya_mcp` |
+
+### Cambios de imports
+
+**src/maya_mcp/server.py:**
+- Eliminado `sys.path.insert(0, str(Path(__file__).parent))`
+- `from maya_bridge import ...` → `from maya_mcp.maya_bridge import ...`
+- `from safety import ...` → `from maya_mcp.safety import ...`
+- `from rag.search import ...` → `from maya_mcp.rag.search import ...`
+- `_SERVER_DIR` sigue apuntando a `Path(__file__).parent` (ahora `src/maya_mcp/`)
+- `_PROJECT_ROOT` definido como `_SERVER_DIR.parent.parent` (ahora `maya-mcp/`)
+- Eliminada redefinición duplicada de `_PROJECT_ROOT` al final del archivo
+- `_MAC_BASE_DIR` usa `_PROJECT_ROOT` en vez de `Path(__file__).parent.parent`
+- Añadida función `main()` para entry point de pyproject.toml
+
+**src/maya_mcp/rag/search.py:**
+- `from core.rag.config import ...` → `from maya_mcp.rag.config import ...`
+- `_PROJECT_DIR` corregido a `_PKG_DIR.parent.parent` (navega `src/maya_mcp/` → `maya-mcp/`)
+- Strings de error actualizados: `python -m core.rag.build_index` → `python -m maya_mcp.rag.build_index`
+
+**src/maya_mcp/rag/build_index.py:**
+- `from core.rag.config import ...` → `from maya_mcp.rag.config import ...`
+- String de uso actualizado
+
+**src/maya_mcp/rag/config.py:**
+- Comentario actualizado: `python -m maya_mcp.rag.build_index`
+
+**tests/conftest.py:**
+- Eliminado `sys.path.insert(0, str(_CORE_DIR))`
+- `from maya_bridge import MayaBridge` → `from maya_mcp.maya_bridge import MayaBridge`
+- `from rag.search import ...` → `from maya_mcp.rag.search import ...`
+- Todos los `patch("rag.search.xxx")` → `patch("maya_mcp.rag.search.xxx")`
+
+**tests/test_safety.py:**
+- `from safety import ...` → `from maya_mcp.safety import ...`
+
+**tests/test_import_file.py:**
+- Eliminado `sys.path.insert` y imports de `sys`, `Path`
+- `from maya_bridge import ...` → `from maya_mcp.maya_bridge import ...`
+- `import server as srv` → `from maya_mcp import server as srv`
+
+**tests/test_vision3d.py:**
+- Eliminado `sys.path.insert` y imports de `sys`, `Path`
+- `import server as srv` → `from maya_mcp import server as srv`
+
+**tests/test_maya_bridge.py:**
+- `from maya_bridge import ...` → `from maya_mcp.maya_bridge import ...`
+- `import server` → `from maya_mcp import server`
+- `from server import ...` → `from maya_mcp.server import ...`
+
+**tests/test_rag_search.py:**
+- `from rag.search import ...` → `from maya_mcp.rag.search import ...`
+- `patch("rag.search.xxx")` → `patch("maya_mcp.rag.search.xxx")` (3 instancias en TestRagSearchEmptyIndex)
+
+**.mcp.json:**
+- `"args": ["core/server.py"]` → `"args": ["-m", "maya_mcp.server"]`
+
+### Resultado pytest
+`PYTHONPATH=src pytest tests/ -v` → **174 passed, 0 failed** en 1.21s (sandbox Linux con chromadb).
+
+### Pendiente (para ejecutar en Mac)
+
+1. **Eliminar `core/`**: El directorio original sigue existente. No se eliminó porque la regla dice "confirmar antes de borrar". Ejecutar:
+   ```bash
+   rm -rf core/
+   ```
+
+2. **Instalar en modo editable en Mac** (reemplaza el venv actual):
+   ```bash
+   cd ~/Claude_projects/maya-mcp
+   pip install -e . --break-system-packages  # o dentro del .venv
+   ```
+
+3. **Verificar en Mac**:
+   ```bash
+   ulimit -n 4096 && python -m pytest tests/ -v   # target: 174/174
+   python -m maya_mcp.server                        # arranque sin Maya
+   ```
+
+4. **Actualizar `install.sh`**: El script aún referencia `core/`. Adaptar paths a `src/maya_mcp/`.
+
+### Decisiones tomadas
+
+- `console/` queda fuera del paquete `src/` (herramienta standalone, no parte del MCP server)
+- `core/docs/` copiado a `src/maya_mcp/docs/` (server.py referencia `_SERVER_DIR / "docs"`)
+- `_PROJECT_ROOT` definido una sola vez al top de server.py (eliminada redefinición)
+- Función `main()` añadida para entry point limpio
+
+### Bugs conocidos
+- Ninguno nuevo introducido. Los 174 tests pasan idénticamente.

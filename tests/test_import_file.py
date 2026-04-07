@@ -19,22 +19,14 @@ Test cases (from TESTING_PLAN section 4.5):
 """
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
-# ── Path setup ────────────────────────────────────────────────────────────
-_CORE_DIR = Path(__file__).resolve().parent.parent / "core"
-if str(_CORE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CORE_DIR))
-
 # ── Import server ─────────────────────────────────────────────────────────
-# conftest.py installs the mcp SDK stub and adds core/ to sys.path before
-# any test file is collected, so `import server` works without the full SDK.
-# maya_bridge and safety are real modules available from core/.
-from maya_bridge import MayaBridgeError
-import server as srv  # noqa: E402
+# conftest.py installs the mcp SDK stub before any test file is collected,
+# so importing maya_mcp.server works without the full MCP SDK.
+from maya_mcp.maya_bridge import MayaBridgeError
+from maya_mcp import server as srv
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

@@ -38,7 +38,7 @@ class TestRagSearchBasic:
 
     def test_returns_text_and_relevance(self, patch_rag_singletons):
         """search() returns a (str, int) tuple with non-empty text."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, relevance = search("polyCube", n_results=3)
 
@@ -49,7 +49,7 @@ class TestRagSearchBasic:
 
     def test_top_results_mention_polycube(self, patch_rag_singletons):
         """At least one returned chunk mentions polyCube (BM25 should match it)."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("polyCube", n_results=5)
 
@@ -59,7 +59,7 @@ class TestRagSearchBasic:
 
     def test_result_contains_metadata_header(self, patch_rag_singletons):
         """Results are formatted with ### [api] source -- section headers."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("polyCube", n_results=3)
 
@@ -68,7 +68,7 @@ class TestRagSearchBasic:
 
     def test_relevance_is_bounded(self, patch_rag_singletons):
         """max_relevance is in [0, 100]."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         _text, relevance = search("polyCube", n_results=3)
 
@@ -76,7 +76,7 @@ class TestRagSearchBasic:
 
     def test_n_results_limits_output(self, patch_rag_singletons):
         """Requesting n_results=2 returns at most 2 chunk blocks."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("polyCube", n_results=2)
 
@@ -94,7 +94,7 @@ class TestRagSearchCmds:
 
     def test_xform_query_returns_cmds(self, patch_rag_singletons):
         """Querying 'xform translation' returns cmds docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("xform translation worldSpace", n_results=5)
 
@@ -102,7 +102,7 @@ class TestRagSearchCmds:
 
     def test_setattr_query_returns_cmds(self, patch_rag_singletons):
         """Querying 'setAttr type parameter' returns cmds docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("setAttr type parameter compound", n_results=5)
 
@@ -110,7 +110,7 @@ class TestRagSearchCmds:
 
     def test_ls_query_returns_cmds(self, patch_rag_singletons):
         """Querying 'ls type mesh' returns cmds.ls docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("ls type mesh selection", n_results=5)
 
@@ -126,7 +126,7 @@ class TestRagSearchPyMEL:
 
     def test_pynode_query(self, patch_rag_singletons):
         """Querying 'PyNode getAttr' returns pymel docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("PyNode getAttr pm.selected", n_results=5)
 
@@ -136,7 +136,7 @@ class TestRagSearchPyMEL:
 
     def test_mesh_vertex_query(self, patch_rag_singletons):
         """Querying 'MeshVertex position' returns pymel mesh docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("MeshVertex position world", n_results=5)
 
@@ -146,7 +146,7 @@ class TestRagSearchPyMEL:
 
     def test_depend_node_query(self, patch_rag_singletons):
         """Querying 'DependNode listConnections' returns pymel-related docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("DependNode listConnections type", n_results=5)
 
@@ -166,7 +166,7 @@ class TestRagSearchArnold:
 
     def test_aistandard_surface_query(self, patch_rag_singletons):
         """Querying 'aiStandardSurface metalness' returns Arnold docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("aiStandardSurface metalness roughness", n_results=5)
 
@@ -176,7 +176,7 @@ class TestRagSearchArnold:
 
     def test_aov_query(self, patch_rag_singletons):
         """Querying 'arnold AOV diffuse' returns AOV setup docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("arnold AOV diffuse render pass", n_results=5)
 
@@ -192,7 +192,7 @@ class TestRagSearchUSD:
 
     def test_stage_prims_query(self, patch_rag_singletons):
         """Querying 'USD stage prim UsdGeom' returns USD docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("USD stage prim UsdGeom Xformable", n_results=5)
 
@@ -202,7 +202,7 @@ class TestRagSearchUSD:
 
     def test_usdshade_query(self, patch_rag_singletons):
         """Querying 'UsdShade material' returns USD material docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("UsdShade material export mayaUsd", n_results=5)
 
@@ -220,7 +220,7 @@ class TestRagSearchAntiPatterns:
 
     def test_return_value_hallucination_query(self, patch_rag_singletons):
         """Querying 'polyCube return type' surfaces the hallucination warning."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("polyCube return type hallucination", n_results=5)
 
@@ -229,7 +229,7 @@ class TestRagSearchAntiPatterns:
 
     def test_wrong_flag_names_query(self, patch_rag_singletons):
         """Querying 'wrong flag import True' surfaces the wrong flags warning."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search(
             "wrong flag names import True keyword", n_results=5
@@ -253,7 +253,7 @@ class TestRagSearchHydeExpansion:
 
     def test_pymel_domain_detected(self):
         """Queries mentioning 'PyNode' or 'pm.' use PyMEL template."""
-        from rag.search import _hyde_expand
+        from maya_mcp.rag.search import _hyde_expand
 
         result = _hyde_expand("PyNode getAttr translateX")
 
@@ -262,7 +262,7 @@ class TestRagSearchHydeExpansion:
 
     def test_arnold_domain_detected(self):
         """Queries mentioning 'arnold' or 'aiStandard' use Arnold template."""
-        from rag.search import _hyde_expand
+        from maya_mcp.rag.search import _hyde_expand
 
         result = _hyde_expand("arnold aiStandardSurface shader setup")
 
@@ -271,7 +271,7 @@ class TestRagSearchHydeExpansion:
 
     def test_usd_domain_detected(self):
         """Queries mentioning 'usd' or 'UsdGeom' use USD template."""
-        from rag.search import _hyde_expand
+        from maya_mcp.rag.search import _hyde_expand
 
         result = _hyde_expand("USD stage export mayaUsd")
 
@@ -280,7 +280,7 @@ class TestRagSearchHydeExpansion:
 
     def test_mel_domain_detected(self):
         """Queries mentioning 'mel' use MEL template."""
-        from rag.search import _hyde_expand
+        from maya_mcp.rag.search import _hyde_expand
 
         result = _hyde_expand("mel.eval polyCube command")
 
@@ -288,7 +288,7 @@ class TestRagSearchHydeExpansion:
 
     def test_default_cmds_domain(self):
         """Queries without specific keywords default to maya.cmds template."""
-        from rag.search import _hyde_expand
+        from maya_mcp.rag.search import _hyde_expand
 
         result = _hyde_expand("create a cube and move it")
 
@@ -297,7 +297,7 @@ class TestRagSearchHydeExpansion:
 
     def test_hyde_includes_original_query(self):
         """The expanded template still includes the original query text."""
-        from rag.search import _hyde_expand
+        from maya_mcp.rag.search import _hyde_expand
 
         query = "polyCube with subdivisions and custom name"
         result = _hyde_expand(query)
@@ -314,7 +314,7 @@ class TestRagSearchRrfFusion:
 
     def test_rrf_basic_merge(self):
         """RRF merges two disjoint lists."""
-        from rag.search import _rrf_fuse
+        from maya_mcp.rag.search import _rrf_fuse
 
         sem = ["a", "b", "c"]
         bm25 = ["d", "e", "f"]
@@ -326,7 +326,7 @@ class TestRagSearchRrfFusion:
 
     def test_rrf_overlapping_boosted(self):
         """Documents appearing in both lists get boosted to the top."""
-        from rag.search import _rrf_fuse
+        from maya_mcp.rag.search import _rrf_fuse
 
         sem = ["shared", "sem_only_1", "sem_only_2"]
         bm25 = ["bm25_only_1", "shared", "bm25_only_2"]
@@ -339,7 +339,7 @@ class TestRagSearchRrfFusion:
 
     def test_rrf_preserves_relative_order(self):
         """With one ranker, original order is preserved."""
-        from rag.search import _rrf_fuse
+        from maya_mcp.rag.search import _rrf_fuse
 
         sem = ["a", "b", "c"]
         fused = _rrf_fuse(sem, [], k=60)
@@ -348,14 +348,14 @@ class TestRagSearchRrfFusion:
 
     def test_rrf_empty_inputs(self):
         """RRF handles empty input lists gracefully."""
-        from rag.search import _rrf_fuse
+        from maya_mcp.rag.search import _rrf_fuse
 
         fused = _rrf_fuse([], [], k=60)
         assert fused == []
 
     def test_rrf_k_parameter_affects_scores(self):
         """Different k values produce different orderings for edge cases."""
-        from rag.search import _rrf_fuse
+        from maya_mcp.rag.search import _rrf_fuse
 
         sem = ["a", "b"]
         bm25 = ["b", "a"]
@@ -368,7 +368,7 @@ class TestRagSearchRrfFusion:
 
     def test_rrf_integration_with_search(self, patch_rag_singletons):
         """Full search uses RRF when both BM25 and semantic results exist."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, relevance = search("polyCube create primitive", n_results=5)
 
@@ -385,7 +385,7 @@ class TestRagSearchBm25Exact:
 
     def test_polycube_found_by_bm25(self, patch_rag_singletons):
         """Querying 'polyCube' returns chunks containing polyCube."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("polyCube", n_results=5)
 
@@ -417,7 +417,7 @@ class TestRagSearchBm25Exact:
 
     def test_arnold_shader_found_by_bm25(self, patch_rag_singletons):
         """Querying 'aiStandardSurface shader metalness' returns Arnold docs."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("aiStandardSurface shader metalness baseColor", n_results=5)
 
@@ -436,13 +436,13 @@ class TestRagSearchEmptyIndex:
 
     def test_empty_collection_returns_message(self, rag_empty_collection):
         """An empty ChromaDB collection returns an informative message."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         collection, index_dir = rag_empty_collection
 
-        with patch("rag.search._collection", collection), \
-             patch("rag.search.INDEX_DIR", index_dir), \
-             patch("rag.search._search_cache", {}):
+        with patch("maya_mcp.rag.search._collection", collection), \
+             patch("maya_mcp.rag.search.INDEX_DIR", index_dir), \
+             patch("maya_mcp.rag.search._search_cache", {}):
             text, relevance = search("anything", n_results=3)
 
         assert relevance == 0, "Empty index should return relevance 0"
@@ -452,14 +452,14 @@ class TestRagSearchEmptyIndex:
 
     def test_missing_index_dir_returns_message(self, tmp_path):
         """A nonexistent index directory returns the 'build it first' message."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         fake_dir = str(tmp_path / "nonexistent_index")
 
-        with patch("rag.search._collection", None), \
-             patch("rag.search._client", None), \
-             patch("rag.search.INDEX_DIR", fake_dir), \
-             patch("rag.search._search_cache", {}):
+        with patch("maya_mcp.rag.search._collection", None), \
+             patch("maya_mcp.rag.search._client", None), \
+             patch("maya_mcp.rag.search.INDEX_DIR", fake_dir), \
+             patch("maya_mcp.rag.search._search_cache", {}):
             text, relevance = search("anything", n_results=3)
 
         assert relevance == 0
@@ -469,13 +469,13 @@ class TestRagSearchEmptyIndex:
 
     def test_empty_returns_zero_relevance(self, rag_empty_collection):
         """Relevance is exactly 0 when no chunks exist."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         collection, index_dir = rag_empty_collection
 
-        with patch("rag.search._collection", collection), \
-             patch("rag.search.INDEX_DIR", index_dir), \
-             patch("rag.search._search_cache", {}):
+        with patch("maya_mcp.rag.search._collection", collection), \
+             patch("maya_mcp.rag.search.INDEX_DIR", index_dir), \
+             patch("maya_mcp.rag.search._search_cache", {}):
             _text, relevance = search("polyCube", n_results=5)
 
         assert relevance == 0
@@ -490,7 +490,7 @@ class TestRagSearchNoMatch:
 
     def test_irrelevant_query_returns_results(self, patch_rag_singletons):
         """Even an irrelevant query returns *some* results (nearest neighbours)."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, relevance = search(
             "quantum physics superconductor entanglement",
@@ -504,7 +504,7 @@ class TestRagSearchNoMatch:
         self, patch_rag_singletons
     ):
         """Even for a garbage query, output is properly formatted."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, _relevance = search("xyzzy plugh abracadabra", n_results=2)
 
@@ -515,7 +515,7 @@ class TestRagSearchNoMatch:
 
     def test_single_char_query(self, patch_rag_singletons):
         """A single-character query doesn't crash."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text, relevance = search("x", n_results=2)
 
@@ -533,7 +533,7 @@ class TestRagSearchCache:
 
     def test_cache_returns_same_result(self, patch_rag_singletons):
         """Identical query returns cached result on second call."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         result1 = search("polyCube flags", n_results=3)
         result2 = search("polyCube flags", n_results=3)
@@ -542,7 +542,7 @@ class TestRagSearchCache:
 
     def test_different_queries_not_cached(self, patch_rag_singletons):
         """Different queries return different results (not cross-cached)."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         result1 = search("polyCube", n_results=3)
         result2 = search("aiStandardSurface", n_results=3)
@@ -552,7 +552,7 @@ class TestRagSearchCache:
 
     def test_different_n_results_not_cached(self, patch_rag_singletons):
         """Same query with different n_results are distinct cache keys."""
-        from rag.search import search
+        from maya_mcp.rag.search import search
 
         text1, _r1 = search("polyCube", n_results=1)
         text2, _r2 = search("polyCube", n_results=5)
@@ -567,7 +567,7 @@ class TestRagSearchCache:
 
     def test_clear_cache(self, patch_rag_singletons):
         """clear_cache() empties the search cache."""
-        from rag.search import search, clear_cache, _search_cache
+        from maya_mcp.rag.search import search, clear_cache, _search_cache
 
         search("polyCube", n_results=3)
         assert len(_search_cache) > 0, "Cache should have entries after search"

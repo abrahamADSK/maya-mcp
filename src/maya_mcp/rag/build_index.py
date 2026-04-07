@@ -6,7 +6,7 @@ Run once after installation, and again whenever docs change.
 
 Usage:
     cd maya-mcp
-    python -m core.rag.build_index
+    python -m maya_mcp.rag.build_index
 
 What it indexes:
     - docs/CMDS_API.md         (maya.cmds reference + common patterns)
@@ -65,7 +65,7 @@ METHOD_BULLET = re.compile(r"^- `\w", re.MULTILINE)
 
 
 def _load_config():
-    from core.rag.config import (
+    from maya_mcp.rag.config import (
         METHOD_GROUP_SIZE,
         METHOD_GROUP_THRESHOLD,
         CHUNK_SPLIT_THRESHOLD,
@@ -188,7 +188,7 @@ def collect_docs() -> list[tuple[str, str]]:
 
 def _make_embedding_fn() -> Any:
     """Returns a ChromaDB-compatible embedding function using BGE model."""
-    from core.rag.config import EMBEDDING_MODEL
+    from maya_mcp.rag.config import EMBEDDING_MODEL
 
     try:
         from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
@@ -214,7 +214,7 @@ def build() -> None:
         print("ERROR: chromadb not installed.\nRun: pip install chromadb")
         sys.exit(1)
 
-    from core.rag.config import COLLECTION_NAME
+    from maya_mcp.rag.config import COLLECTION_NAME
 
     print(f"Building RAG index in: {INDEX_DIR}")
     os.makedirs(INDEX_DIR, exist_ok=True)

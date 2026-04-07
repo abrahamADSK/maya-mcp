@@ -25,7 +25,7 @@ import time
 
 import pytest
 
-from maya_bridge import MayaBridge, MayaBridgeError, MayaConnectionError, MayaExecutionError
+from maya_mcp.maya_bridge import MayaBridge, MayaBridgeError, MayaConnectionError, MayaExecutionError
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -213,11 +213,11 @@ class TestMayaCreatePrimitive:
             captured_code["code"] = code
             return json.dumps({"name": "pCube1", "type": "cube"})
 
-        # We import server module to access the tool function and bridge
-        import server
+        # Import server module to access the tool function and bridge
+        from maya_mcp import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        from server import CreatePrimitiveInput, PrimitiveType
+        from maya_mcp.server import CreatePrimitiveInput, PrimitiveType
         params = CreatePrimitiveInput(primitive_type=PrimitiveType.CUBE)
         result = asyncio.run(server.maya_create_primitive(params))
 
@@ -232,10 +232,10 @@ class TestMayaCreatePrimitive:
             captured_code["code"] = code
             return json.dumps({"name": "mySphere", "type": "sphere"})
 
-        import server
+        from maya_mcp import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        from server import CreatePrimitiveInput, PrimitiveType
+        from maya_mcp.server import CreatePrimitiveInput, PrimitiveType
         params = CreatePrimitiveInput(
             primitive_type=PrimitiveType.SPHERE,
             name="mySphere",
@@ -256,10 +256,10 @@ class TestMayaCreatePrimitive:
             captured_code["code"] = code
             return json.dumps({"name": "cyl1", "type": "cylinder"})
 
-        import server
+        from maya_mcp import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
-        from server import CreatePrimitiveInput, PrimitiveType
+        from maya_mcp.server import CreatePrimitiveInput, PrimitiveType
         params = CreatePrimitiveInput(
             primitive_type=PrimitiveType.CYLINDER,
             position=[0.0, 5.0, 0.0],
@@ -276,8 +276,8 @@ class TestMayaCreatePrimitive:
 
     def test_all_primitive_types(self, monkeypatch):
         """All 6 primitive types generate the correct polyCmds function."""
-        import server
-        from server import CreatePrimitiveInput, PrimitiveType
+        from maya_mcp import server
+        from maya_mcp.server import CreatePrimitiveInput, PrimitiveType
 
         expected_funcs = {
             PrimitiveType.CUBE: "polyCube",
@@ -322,7 +322,7 @@ class TestMayaExecutePython:
             captured_code["code"] = code
             return "42"
 
-        import server
+        from maya_mcp import server
         monkeypatch.setattr(server.bridge, "execute", fake_execute)
 
         result = asyncio.run(server._do_execute_python({"code": "result = 21 * 2"}))
@@ -332,7 +332,7 @@ class TestMayaExecutePython:
 
     def test_execute_increments_stats(self, monkeypatch):
         """_do_execute_python increments exec_calls and token stats."""
-        import server
+        from maya_mcp import server
 
         def fake_execute(code, as_json=False):
             return "OK"
@@ -349,7 +349,7 @@ class TestMayaExecutePython:
 
     def test_execute_blocks_dangerous_code(self, monkeypatch):
         """_do_execute_python blocks dangerous patterns and increments safety_blocks."""
-        import server
+        from maya_mcp import server
 
         # Ensure bridge.execute is NOT called for blocked code
         execute_called = {"called": False}
@@ -372,7 +372,7 @@ class TestMayaExecutePython:
 
     def test_execute_handles_bridge_error(self, monkeypatch):
         """_do_execute_python returns error JSON when bridge raises."""
-        import server
+        from maya_mcp import server
 
         def fake_execute(code, as_json=False):
             raise MayaBridgeError("Connection lost")
