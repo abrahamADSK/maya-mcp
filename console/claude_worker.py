@@ -147,7 +147,7 @@ AVAILABLE_MODELS = [
 # Models allowed to write RAG patterns (learn_pattern). Local models are read-only.
 WRITE_ALLOWED_MODELS = ["claude-opus", "claude-sonnet"]
 
-# Default Ollama URLs — can be overridden by core/config.json
+# Default Ollama URLs — can be overridden by src/maya_mcp/config.json
 DEFAULT_OLLAMA_URL = "http://glorfindel:11434"
 DEFAULT_OLLAMA_MAC_URL = "http://localhost:11434"
 
@@ -156,8 +156,8 @@ VISION_MODELS = {"claude-sonnet-4-6", "claude-opus-4-6", "qwen3.5-mcp", "qwen3.5
 
 
 def _load_config() -> dict:
-    """Load config.json from the core/ directory."""
-    cfg_path = Path(_REPO_ROOT) / "core" / "config.json"
+    """Load config.json from the src/maya_mcp/ directory."""
+    cfg_path = Path(_REPO_ROOT) / "src" / "maya_mcp" / "config.json"
     try:
         return json.loads(cfg_path.read_text())
     except Exception:
