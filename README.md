@@ -181,7 +181,7 @@ maya-mcp/
     ollama pull qwen3.5:9b
     ollama create qwen3.5-mcp -f Modelfile.qwen35mcp
     ```
-  - See [MODEL_STRATEGY.md](../MODEL_STRATEGY.md) for Modelfile details, `think: false` requirement, and KEEP_ALIVE tuning
+  - See [MODEL_STRATEGY.md](MODEL_STRATEGY.md) for Modelfile details, `think: false` requirement, and KEEP_ALIVE tuning
 - [Vision3D](https://github.com/abrahamADSK/vision3d) server for AI-powered 3D generation
 
 ---
