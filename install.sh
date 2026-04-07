@@ -284,6 +284,26 @@ else
 fi
 
 # =============================================================================
+# CHECK — .env file (informational, non-blocking)
+# =============================================================================
+ENV_FILE="${REPO_ROOT}/.env"
+ENV_EXAMPLE="${REPO_ROOT}/.env.example"
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    if [[ -f "${ENV_EXAMPLE}" ]]; then
+        warn ".env file not found."
+        warn "  Copy .env.example to .env and configure GPU_API_URL"
+        warn "  Example: cp .env.example .env"
+        STEPS_WARN+=(".env not found — copy from .env.example and configure GPU_API_URL")
+    else
+        warn ".env not found and no .env.example to copy from — create it manually."
+        STEPS_WARN+=(".env not found — create manually with GPU_API_URL")
+    fi
+else
+    success ".env file present"
+fi
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 echo ""

@@ -205,7 +205,8 @@ The installer creates a virtual environment, installs dependencies, builds the R
 git clone https://github.com/abrahamADSK/maya-mcp.git
 cd maya-mcp
 cp .env.example .env
-# Edit .env with your values
+# Edit .env and set GPU_API_URL to your Vision3D server address
+# Example: GPU_API_URL=http://glorfindel:8000
 ```
 
 ### 2. Install dependencies
