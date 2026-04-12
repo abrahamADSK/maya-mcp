@@ -1,15 +1,17 @@
 # HANDOFF — maya-mcp
 
-**Nivel de completitud: Alto (~85%)**. 27 tools implementados, RAG funcional, console panel dockable en Maya.
+**Nivel de completitud: Alto**. 14 MCP tools (dispatch pattern) con 7 Vision3D actions + 9 session actions + 3 RAG/Meta. RAG funcional, console panel dockable en Maya.
+
+> **Última resincronización del estado actual: 2026-04-12** (commit `f4756f8`, refactor Vision3D per-session URL). Las secciones "Sesión N" al final del documento son snapshots históricos de sus fechas respectivas y no se reescriben.
 
 ---
 
 ## Estado actual
 
 **Funciona**:
-- **14 visible MCP tools** (dispatch pattern O1b): 9 Tier-1 + 3 Meta/RAG + 2 dispatch (`maya_session`, `maya_vision3d`)
-- Internamente: 9 session handlers (`_do_ping`, `_do_launch`, etc.) + 6 Vision3D handlers (`_do_v3d_*`) — sin `@mcp.tool`
-- 18 Maya scene ops, 6 Vision3D integration, 3 RAG/Intelligence (funcionalidad completa preservada)
+- **14 visible MCP tools** (dispatch pattern O1b): 9 Tier-1 directos + 3 Meta/RAG + 2 dispatch (`maya_session`, `maya_vision3d`)
+- Internamente: 9 session handlers (`_do_ping`, `_do_launch`, etc.) + 7 Vision3D handlers (`_do_v3d_select_server`, `_do_v3d_health`, `_do_v3d_generate_image`, `_do_v3d_generate_text`, `_do_v3d_texture`, `_do_v3d_poll`, `_do_v3d_download`) — sin `@mcp.tool`
+- 18 Maya scene ops, 7 Vision3D integration, 3 RAG/Intelligence (funcionalidad completa preservada)
 - RAG híbrido (ChromaDB + BM25 + HyDE + RRF) con 5 corpus docs (CMDS, PyMEL, Arnold, USD, Anti-Patterns)
 - Safety module con 14+ regex patterns + explicaciones + alternativas seguras
 - Token tracking con estimación de eficiencia
@@ -26,19 +28,21 @@
 
 **Limitaciones**:
 - NO VERIFICADO — requiere Maya abierto con Command Port habilitado
-- Vision3D tools requieren GPU server activo (glorfindel)
+- Acciones Vision3D requieren un servidor Vision3D alcanzable (URL pedida al usuario al primer uso por sesión)
 
 ---
 
 ## Relación con vision3d
 
-maya-mcp actúa como cliente REST de vision3d. 6 tools (`vision3d_health`, `shape_generate_remote`, `shape_generate_text`, `texture_mesh_remote`, `vision3d_poll`, `vision3d_download`) envían requests HTTP a `GPU_API_URL` (default: http://localhost:8000).
+maya-mcp actúa como cliente REST de vision3d. Las 7 acciones del dispatch `maya_vision3d` (`select_server`, `health`, `generate_image`, `generate_text`, `texture`, `poll`, `download`) envían requests HTTP a la URL elegida para la sesión.
+
+**Política de URL per-session (commit `f4756f8`, 2026-04-12):** la URL del servidor Vision3D **no se almacena en ningún archivo persistente** — no hay campo en `config.json`, no hay pool de candidatos, no hay whitelist. En la primera llamada Vision3D de cada sesión MCP, el dispatch devuelve `vision3d_url_required`; Claude pregunta al usuario la URL en el chat, el usuario la tipea, Claude llama `select_server` con esa URL, y se cachea en memoria del proceso hasta reinicio del MCP. Si la variable de entorno `GPU_API_URL` está definida, se surface como `suggested_default` dentro del payload de error, pero el usuario tiene que confirmarla explícitamente — nunca auto-select.
 
 ```
-maya-mcp (Mac) --httpx--> vision3d FastAPI (glorfindel:8000)
+maya-mcp (Mac) --httpx--> vision3d FastAPI (URL elegida por el usuario en el chat)
 ```
 
-Workflow: submit job → poll status (SSE streaming) → download GLB/OBJ → maya_import_file.
+Workflow: seleccionar URL → submit job → poll status (SSE streaming) → download GLB/OBJ → maya_import_file.
 
 ---
 
@@ -90,9 +94,9 @@ Run: `pytest tests/test_import_file.py -v`
 
 No requiere Maya abierto ni dependencias MCP/externas.
 
-### Vision3D integration — `tests/test_vision3d.py` (21 tests, all passing)
+### Vision3D integration — `tests/test_vision3d.py` (43 tests, all passing)
 
-Suite de pytest para las 6 Vision3D tools en `src/maya_mcp/server.py`. Usa `httpx.MockTransport` para simular la API REST de Vision3D — no requiere GPU server, red, ni Maya abierto. Stubs internos para `mcp`, `maya_bridge`, y `safety` (no requiere los SDKs instalados).
+Suite de pytest para las 7 acciones del dispatch `maya_vision3d` en `src/maya_mcp/server.py`, más el selector de URL per-session. Usa `httpx.MockTransport` para simular la API REST de Vision3D — no requiere GPU server, red, ni Maya abierto. Stubs internos para `mcp`, `maya_bridge`, y `safety` (no requiere los SDKs instalados).
 
 | Clase | Tests | Cubre |
 |---|---|---|
@@ -102,6 +106,7 @@ Suite de pytest para las 6 Vision3D tools en `src/maya_mcp/server.py`. Usa `http
 | TestVision3dPoll | 5 | Running + logs, incremental logs, completed + files, failed, 404 not found |
 | TestVision3dDownload | 3 | Download to disk, partial failure, size reporting |
 | TestServerDown | 5 | ConnectError en health/poll/download/generate_remote/generate_text |
+| TestVision3dUrlSelection | 21 | `_is_valid_http_url` (8), `_resolve_client_or_error` estados (5), `select_server` freeform/https/trailing-slash/malformed/ftp/missing (6), end-to-end unselected→url_required + select→health (2) |
 
 Run: `pytest tests/test_vision3d.py -v`
 

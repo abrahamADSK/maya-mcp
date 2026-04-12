@@ -270,17 +270,47 @@ info "Step 6/6 — Pre-approving maya-mcp tools in ~/.claude/settings.json..."
 import json, os
 from pathlib import Path
 
+#
+# Canonical MCP tool list for pre-approval.
+#
+# maya-mcp exposes exactly 14 MCP tools (decorated with @mcp.tool in
+# src/maya_mcp/server.py). 9 of them are "Tier-1" Maya operations that
+# are directly decorated, 2 are dispatch tools that group multiple
+# actions under a single MCP tool name, and 3 are RAG / meta tools.
+#
+# Dispatch tools — each contains the following actions, all covered
+# by pre-approving the parent dispatch tool name:
+#
+#   maya_session → ping, launch, new_scene, save_scene, list_scene,
+#                  scene_snapshot, delete, execute_python, shelf_button
+#
+#   maya_vision3d → select_server, health, generate_image, generate_text,
+#                   texture, poll, download
+#
+# Note: earlier versions of this script listed the 9 maya_session
+# actions and 6 vision3d action names as if they were individual tools.
+# They never were — they are dispatch actions, not @mcp.tool-decorated
+# functions. The correct surface to pre-approve is the dispatch tool
+# name, which is what this list now uses.
+#
 TOOLS = [
-    "maya_launch", "maya_ping", "maya_create_primitive", "maya_assign_material",
-    "maya_transform", "maya_list_scene", "maya_delete", "maya_create_light",
-    "maya_create_camera", "maya_execute_python", "maya_new_scene", "maya_save_scene",
-    "maya_mesh_operation", "maya_set_keyframe", "maya_import_file",
-    "maya_viewport_capture", "maya_scene_snapshot", "maya_shelf_button",
-    # Vision3D actions all live behind the single `maya_vision3d` dispatch tool:
-    # list_servers, select_server, health, generate_image, generate_text,
-    # texture, poll, download. Pre-approving the dispatch tool covers them all.
+    # Tier-1 Maya operations (directly decorated with @mcp.tool)
+    "maya_create_primitive",
+    "maya_assign_material",
+    "maya_transform",
+    "maya_create_light",
+    "maya_create_camera",
+    "maya_mesh_operation",
+    "maya_set_keyframe",
+    "maya_import_file",
+    "maya_viewport_capture",
+    # Dispatch tools (cover multiple actions each — see comment above)
+    "maya_session",
     "maya_vision3d",
-    "search_maya_docs", "learn_pattern", "session_stats",
+    # RAG & intelligence
+    "search_maya_docs",
+    "learn_pattern",
+    "session_stats",
 ]
 PREFIX = "mcp__maya-mcp__"
 new_tools = {PREFIX + t for t in TOOLS}
