@@ -72,15 +72,17 @@ FastMCP server (src/maya_mcp/server.py) — 27 tools
 | `maya_scene_snapshot` | Full scene state: file, renderer, object counts, plugins, units |
 | `maya_shelf_button` | Create reusable shelf buttons with custom Python commands |
 
-### Vision3D Integration (6 tools — optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
-| Tool | Description |
-|------|-------------|
-| `vision3d_health` | Check GPU server availability and model status |
-| `shape_generate_remote` | Image-to-3D generation (full pipeline) |
-| `shape_generate_text` | Text-to-3D generation |
-| `texture_mesh_remote` | Texture an existing mesh with AI |
-| `vision3d_poll` | Poll async job status |
-| `vision3d_download` | Download completed results to local disk |
+### Vision3D Integration (8 actions behind `maya_vision3d` — optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
+| Action | Description |
+|--------|-------------|
+| `list_servers` | List configured Vision3D server URLs and the one selected for this session |
+| `select_server` | Pick a Vision3D server URL for the rest of this MCP session (per-session, ask-once) |
+| `health` | Check availability and model status of the selected server |
+| `generate_image` | Image-to-3D generation (full pipeline) |
+| `generate_text` | Text-to-3D generation |
+| `texture` | Texture an existing mesh with AI |
+| `poll` | Poll async job status |
+| `download` | Download completed results to local disk |
 
 ### RAG & Intelligence (3 tools)
 | Tool | Description |
@@ -286,7 +288,22 @@ Or for Claude Desktop, add to `~/Library/Application Support/Claude/claude_deskt
 
 ### 6. Vision3D addon (optional — for AI 3D generation)
 
-maya-mcp can optionally integrate with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. This is **not required** for core Maya functionality. If you want it, follow the Vision3D README to install and run, then set `GPU_API_URL` and `GPU_API_KEY` in your environment.
+maya-mcp can optionally integrate with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. This is **not required** for core Maya functionality.
+
+**Multi-server configuration (per-session selection):** maya-mcp can target several Vision3D servers (e.g. a local Mac MPS instance and a remote CUDA host) and let you pick which one to use on a per-session basis. List the candidate URLs in `src/maya_mcp/config.json`:
+
+```json
+{
+  "vision3d_servers": [
+    "http://localhost:8000",
+    "http://glorfindel:8000"
+  ]
+}
+```
+
+At the first call that needs a GPU (e.g. `maya_vision3d(action="health")`), the tool returns `server_selection_required` with the list of URLs. Claude asks you which server to use, you pick one, Claude calls `maya_vision3d(action="select_server", params={"url": "<chosen-url>"})`, and the choice is cached for the rest of the MCP session. Restarting the MCP server clears the selection by design.
+
+If `vision3d_servers` is missing from `config.json`, maya-mcp falls back to a single-server setup using the `GPU_API_URL` environment variable (backward compatible with pre-selector installs). You only need `GPU_API_KEY` if your Vision3D server has an API key configured.
 
 ---
 

@@ -269,6 +269,8 @@ class SessionDispatchInput(BaseModel):
 
 class Vision3DAction(str, Enum):
     """Actions available in the maya_vision3d dispatch tool."""
+    LIST_SERVERS = "list_servers"
+    SELECT_SERVER = "select_server"
     HEALTH = "health"
     GENERATE_IMAGE = "generate_image"
     GENERATE_TEXT = "generate_text"
@@ -1045,40 +1047,130 @@ async def maya_session(params: SessionDispatchInput) -> str:
 
 from mcp.server.fastmcp import Context
 
-# Configuration via environment variables
-_GPU_API_URL  = os.environ.get("GPU_API_URL",  "http://localhost:8000").rstrip("/")
+# Connection-level configuration (shared by every vision3d server target)
 _GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")
 _GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "false").lower() in ("true", "1", "yes")
 _MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
                                 str(_PROJECT_ROOT))                          # project root on Mac
 
-# Lazy httpx client
-_http_client = None
+# ── Vision3D server selection (per-session, ask-once) ─────────────────────
+#
+# Policy (see memory project_vision3d_server_selection.md):
+#   1. The list of available vision3d servers lives in config.json under
+#      "vision3d_servers" as a flat list of URLs. Nothing is hardcoded.
+#   2. At process start no server is selected. The first handler that needs
+#      to talk to the GPU returns a structured "server_selection_required"
+#      error with the list of URLs, and the LLM asks the user.
+#   3. The user picks a URL; the LLM calls
+#      maya_vision3d(action="select_server", params={"url": "..."}).
+#      The choice is cached in _selected_vision3d for the rest of the process.
+#   4. Subsequent calls reuse the chosen client from _http_clients.
+#   5. On restart of the MCP server, the selection is forgotten by design.
+#
+# Retro-compat: if config.json has no "vision3d_servers" list (or the file is
+# absent), we fall back to a single-entry list built from the GPU_API_URL env
+# var — same behavior as before the selector existed, one implicit server.
+
+_vision3d_servers: list[str] = []       # loaded from config.json at first use
+_selected_vision3d: Optional[str] = None  # URL picked for this session (None = ask)
+_http_clients: dict = {}                # URL -> httpx.AsyncClient (lazy cache)
 
 # Track log cursors per job (for incremental log delivery)
 _job_log_cursors: dict[str, int] = {}
 
 
-def _get_http_client():
-    """Return a reusable httpx client for GPU API calls."""
-    global _http_client
-    if _http_client is None:
-        import httpx
-        headers = {}
-        if _GPU_API_KEY:
-            headers["x-api-key"] = _GPU_API_KEY
-        _http_client = httpx.AsyncClient(
-            base_url=_GPU_API_URL,
-            headers=headers,
-            verify=_GPU_VERIFY,
-            timeout=httpx.Timeout(connect=10, read=900, write=60, pool=10),
-        )
-    return _http_client
+def _load_vision3d_servers() -> list[str]:
+    """Return the list of vision3d server URLs configured for this install.
+
+    Source of truth is `config.json` → `vision3d_servers` (a flat list of URLs,
+    user-populated, no hardcoded defaults). If the key is missing or empty the
+    function falls back to a single-entry list built from the `GPU_API_URL`
+    env var (defaulting to http://localhost:8000) for backward compatibility
+    with the pre-selector setup.
+
+    The result is cached in `_vision3d_servers` so the list is read from disk
+    only once per process.
+    """
+    global _vision3d_servers
+    if _vision3d_servers:
+        return _vision3d_servers
+
+    cfg = _get_config()
+    raw = cfg.get("vision3d_servers", [])
+    urls = [str(u).rstrip("/") for u in raw if isinstance(u, str) and u.strip()]
+
+    if not urls:
+        # Fallback: single-server retrocompat via env var
+        fallback = os.environ.get("GPU_API_URL", "http://localhost:8000").rstrip("/")
+        urls = [fallback]
+
+    _vision3d_servers = urls
+    return _vision3d_servers
+
+
+def _build_http_client(url: str):
+    """Create a fresh httpx.AsyncClient bound to the given base URL."""
+    import httpx
+    headers = {}
+    if _GPU_API_KEY:
+        headers["x-api-key"] = _GPU_API_KEY
+    return httpx.AsyncClient(
+        base_url=url,
+        headers=headers,
+        verify=_GPU_VERIFY,
+        timeout=httpx.Timeout(connect=10, read=900, write=60, pool=10),
+    )
+
+
+def _server_selection_required_error() -> str:
+    """Return the JSON payload shown when no vision3d server is selected yet.
+
+    The LLM is expected to present `available` to the user, ask which server
+    to use, and then call `maya_vision3d(action="select_server", ...)` before
+    retrying the original action.
+    """
+    servers = _load_vision3d_servers()
+    return json.dumps({
+        "error": "server_selection_required",
+        "available": servers,
+        "hint": (
+            "No Vision3D server has been selected for this session. "
+            "Ask the user which server to use (show the URLs in 'available') "
+            "and then call "
+            "maya_vision3d(action='select_server', params={'url': '<chosen-url>'}). "
+            "The selection is cached for the rest of this MCP session."
+        ),
+    }, indent=2)
+
+
+def _resolve_client_or_error() -> tuple:
+    """Return ``(client, error_json)``.
+
+    - If a server has been selected: ``(AsyncClient, None)``.
+      The client is created lazily on first use and cached in `_http_clients`.
+    - If no server has been selected yet: ``(None, json_error_string)``.
+      The caller must return the error string verbatim to the MCP caller.
+    """
+    if _selected_vision3d is None:
+        return None, _server_selection_required_error()
+    url = _selected_vision3d
+    client = _http_clients.get(url)
+    if client is None:
+        client = _build_http_client(url)
+        _http_clients[url] = client
+    return client, None
 
 
 async def _download_file(job_id: str, filename: str, dest: Path) -> bool:
-    """Download a single file from a completed job."""
-    client = _get_http_client()
+    """Download a single file from a completed job.
+
+    Precondition: a vision3d server must already be selected. The caller is
+    responsible for surfacing the selection error; this helper assumes a
+    client is available.
+    """
+    client, err = _resolve_client_or_error()
+    if err is not None or client is None:
+        return False
     resp = await client.get(f"/api/jobs/{job_id}/files/{filename}")
     if resp.status_code == 200:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1207,31 +1299,109 @@ class Vision3DDownloadInput(BaseModel):
     )
 
 
+# ── Tools: server selection (per-session) ──────────────────────
+
+
+async def _do_v3d_list_servers(params: dict, ctx: Context) -> str:
+    """List the Vision3D server URLs configured for this install.
+
+    Reads the list from `config.json → vision3d_servers`. Also reports which
+    server (if any) is currently selected for this session.
+    """
+    servers = _load_vision3d_servers()
+    return json.dumps({
+        "servers": servers,
+        "selected": _selected_vision3d,
+        "hint": (
+            "Ask the user which server to use, then call "
+            "maya_vision3d(action='select_server', params={'url': '<chosen-url>'})."
+            if _selected_vision3d is None else
+            f"Currently using {_selected_vision3d}. Call select_server with a "
+            "different URL to switch for the rest of the session."
+        ),
+    }, indent=2)
+
+
+async def _do_v3d_select_server(params: dict, ctx: Context) -> str:
+    """Pick a Vision3D server URL for the rest of this MCP session.
+
+    Required param: ``url`` — must be one of the URLs returned by
+    ``list_servers``. The selection is cached in ``_selected_vision3d`` until
+    the MCP process is restarted. Subsequent vision3d calls will automatically
+    use the selected server without prompting again.
+
+    Trailing slashes in the supplied URL are tolerated (normalized out) so the
+    user can paste URLs in any common form.
+    """
+    global _selected_vision3d
+
+    raw_url = (params or {}).get("url")
+    if not raw_url or not isinstance(raw_url, str):
+        return json.dumps({
+            "error": "Missing required param 'url'.",
+            "available": _load_vision3d_servers(),
+            "hint": "Call with params={'url': '<one-of-the-urls-above>'}.",
+        })
+
+    url = raw_url.strip().rstrip("/")
+    servers = _load_vision3d_servers()
+
+    if url not in servers:
+        return json.dumps({
+            "error": f"URL '{url}' is not in the configured vision3d_servers list.",
+            "available": servers,
+            "hint": (
+                "Only URLs listed in config.json → vision3d_servers are accepted. "
+                "Edit config.json to add a new server, or call select_server with "
+                "one of the available URLs."
+            ),
+        })
+
+    _selected_vision3d = url
+    await ctx.info(f"Vision3D server set to {url} for this session.")
+    return json.dumps({
+        "status": "selected",
+        "url": url,
+        "available": servers,
+        "note": (
+            "This selection is cached for the rest of the MCP session. "
+            "Restarting the MCP server will clear it."
+        ),
+    }, indent=2)
+
+
 # ── Tools: check Vision3D availability ─────────────────────────
 
 
 async def _do_v3d_health(params: dict, ctx: Context) -> str:
-    """Check if Vision3D server is available and responding.
+    """Check if the selected Vision3D server is available and responding.
 
     Returns GPU information, available models, and text-to-3D status.
-    Call this BEFORE offering AI generation options to the user.
+    Call this after selecting a server to confirm connectivity before
+    submitting generation jobs.
+
+    If no server has been selected yet, returns ``server_selection_required``
+    with the list of available URLs.
     """
+    client, err = _resolve_client_or_error()
+    if err is not None:
+        return err
+    selected = _selected_vision3d
     try:
-        client = _get_http_client()
-        await ctx.info("Checking Vision3D availability...")
+        await ctx.info(f"Checking Vision3D availability at {selected}...")
         resp = await client.get("/api/health", timeout=5.0)
 
         if resp.status_code != 200:
             return json.dumps({
                 "available": False,
                 "error": f"Vision3D responded with HTTP {resp.status_code}",
-                "url": _GPU_API_URL,
+                "url": selected,
             })
 
         health = resp.json()
         return json.dumps({
             "available": True,
-            "url": _GPU_API_URL,
+            "url": selected,
             "gpu": health.get("gpu", "unknown"),
             "vram_gb": health.get("vram_gb"),
             "models": health.get("models", []),
@@ -1241,8 +1411,8 @@ async def _do_v3d_health(params: dict, ctx: Context) -> str:
     except Exception as e:
         return json.dumps({
             "available": False,
-            "error": f"Could not connect to Vision3D ({_GPU_API_URL}): {e}",
-            "hint": "Verify that Vision3D server is running and accessible from this network.",
+            "error": f"Could not connect to Vision3D ({selected}): {e}",
+            "hint": "Verify that the selected Vision3D server is running and reachable from this host.",
         })
 
 
@@ -1260,6 +1430,11 @@ async def _do_v3d_generate_image(params: dict, ctx: Context) -> str:
         validated = ShapeGenerateInput(**params)
     except ValidationError as e:
         return json.dumps({"error": f"Invalid params for generate_image: {e}"})
+
+    client, err = _resolve_client_or_error()
+    if err is not None:
+        return err
+
     try:
         image_local = Path(validated.image_path)
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
@@ -1277,10 +1452,9 @@ async def _do_v3d_generate_image(params: dict, ctx: Context) -> str:
         input_copy = out_dir / "input.png"
         shutil.copy2(str(image_local), str(input_copy))
 
-        client = _get_http_client()
         quality_desc = validated.preset or f"model={validated.model or 'turbo'}"
 
-        await ctx.info(f"Uploading image to Vision3D ({quality_desc})...")
+        await ctx.info(f"Uploading image to Vision3D ({quality_desc}) at {_selected_vision3d}...")
 
         form_data = {"output_subdir": validated.output_subdir}
         form_data.update(_build_quality_form_data(validated))
@@ -1295,7 +1469,7 @@ async def _do_v3d_generate_image(params: dict, ctx: Context) -> str:
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verify Vision3D is running: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Verify Vision3D is running: curl -k {_selected_vision3d}/api/health"
             })
 
         job = resp.json()
@@ -1331,14 +1505,21 @@ async def _do_v3d_generate_text(params: dict, ctx: Context) -> str:
         validated = ShapeTextInput(**params)
     except ValidationError as e:
         return json.dumps({"error": f"Invalid params for generate_text: {e}"})
+
+    client, err = _resolve_client_or_error()
+    if err is not None:
+        return err
+
     try:
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        client = _get_http_client()
         quality_desc = validated.preset or f"model={validated.model or 'turbo'}"
 
-        await ctx.info(f"Sending prompt to Vision3D: '{validated.text_prompt}' ({quality_desc})...")
+        await ctx.info(
+            f"Sending prompt to Vision3D ({_selected_vision3d}): "
+            f"'{validated.text_prompt}' ({quality_desc})..."
+        )
 
         form_data = {
             "text_prompt": validated.text_prompt,
@@ -1351,7 +1532,7 @@ async def _do_v3d_generate_text(params: dict, ctx: Context) -> str:
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Verify Vision3D is running: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Verify Vision3D is running: curl -k {_selected_vision3d}/api/health"
             })
 
         job = resp.json()
@@ -1384,6 +1565,11 @@ async def _do_v3d_texture(params: dict, ctx: Context) -> str:
         validated = TextureRemoteInput(**params)
     except ValidationError as e:
         return json.dumps({"error": f"Invalid params for texture: {e}"})
+
+    client, err = _resolve_client_or_error()
+    if err is not None:
+        return err
+
     try:
         out_dir     = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
         mesh_local  = out_dir / validated.mesh_filename
@@ -1400,9 +1586,10 @@ async def _do_v3d_texture(params: dict, ctx: Context) -> str:
                 "hint":   f"Copy the image as '{validated.image_filename}' in {out_dir}"
             })
 
-        client = _get_http_client()
-
-        await ctx.info(f"Uploading {validated.mesh_filename} + {validated.image_filename} to Vision3D...")
+        await ctx.info(
+            f"Uploading {validated.mesh_filename} + {validated.image_filename} "
+            f"to Vision3D at {_selected_vision3d}..."
+        )
 
         with open(str(mesh_local), "rb") as mf, open(str(image_local), "rb") as imf:
             resp = await client.post(
@@ -1417,7 +1604,7 @@ async def _do_v3d_texture(params: dict, ctx: Context) -> str:
         if resp.status_code != 200:
             return json.dumps({
                 "error": f"GPU API error ({resp.status_code}): {resp.text}",
-                "hint": f"Check Vision3D: curl -k {_GPU_API_URL}/api/health"
+                "hint": f"Check Vision3D: curl -k {_selected_vision3d}/api/health"
             })
 
         job = resp.json()
@@ -1452,8 +1639,12 @@ async def _do_v3d_poll(params: dict, ctx: Context) -> str:
         validated = Vision3DPollInput(**params)
     except ValidationError as e:
         return json.dumps({"error": f"Invalid params for poll: {e}"})
+
+    client, err = _resolve_client_or_error()
+    if err is not None:
+        return err
+
     try:
-        client = _get_http_client()
         resp = await client.get(f"/api/jobs/{validated.job_id}")
 
         if resp.status_code == 404:
@@ -1516,11 +1707,20 @@ async def _do_v3d_download(params: dict, ctx: Context) -> str:
         validated = Vision3DDownloadInput(**params)
     except ValidationError as e:
         return json.dumps({"error": f"Invalid params for download: {e}"})
+
+    # Resolve early so an unselected session returns server_selection_required
+    # instead of a confusing bulk-download failure.
+    _client, err = _resolve_client_or_error()
+    if err is not None:
+        return err
+
     try:
         out_dir = Path(_MAC_BASE_DIR) / "reference" / "3d_output" / validated.output_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        await ctx.info(f"Downloading {len(validated.files)} files from Vision3D...")
+        await ctx.info(
+            f"Downloading {len(validated.files)} files from Vision3D at {_selected_vision3d}..."
+        )
 
         downloaded = []
         failed = []
@@ -1565,12 +1765,18 @@ async def _do_v3d_download(params: dict, ctx: Context) -> str:
 async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
     """AI-powered 3D asset generation via Vision3D server (requires GPU with Hunyuan3D-2).
 
-    Call health FIRST to check availability before offering generation.
-    Jobs are non-blocking: start → poll → download.
+    Server selection is per-session: the first action that needs a GPU call
+    will return a 'server_selection_required' error listing the configured
+    Vision3D servers. Ask the user which one to use, then call select_server
+    with the chosen URL; the choice is cached for the rest of the session.
+
+    After selection, jobs are non-blocking: start → poll → download.
 
     Available actions:
 
-    • health — Check if Vision3D is running and what GPU/models are available. No params.
+    • list_servers — Return the configured Vision3D server URLs and the one currently selected (if any). No params.
+    • select_server — Pick a Vision3D server URL for the rest of the session. Required params: {"url": "http://..."}. The URL must be one of the entries in config.json → vision3d_servers.
+    • health — Check if the selected Vision3D server is running and what GPU/models are available. No params.
     • generate_image — Start 3D generation from a reference image. Required params: {"image_path": "/path/to/image.png", "output_subdir": "my_asset"} Optional: {"preset": "medium", "model": "turbo", "octree_resolution": 384, "num_inference_steps": 20, "target_faces": 50000}
     • generate_text — Start 3D generation from a text prompt. Required params: {"text_prompt": "a medieval sword", "output_subdir": "sword"} Optional: {"preset": "medium", "model": "turbo", "octree_resolution": 384, "num_inference_steps": 20, "target_faces": 50000}
     • texture — Texture an existing mesh using a reference image. Required params: {"output_subdir": "my_asset"} Optional: {"mesh_filename": "mesh.glb", "image_filename": "input.png"}
@@ -1578,6 +1784,8 @@ async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
     • download — Download completed job results. Required params: {"job_id": "uuid", "output_subdir": "my_asset"} Optional: {"files": ["textured.glb", "mesh.glb"]}
     """
     dispatch = {
+        Vision3DAction.LIST_SERVERS: _do_v3d_list_servers,
+        Vision3DAction.SELECT_SERVER: _do_v3d_select_server,
         Vision3DAction.HEALTH: _do_v3d_health,
         Vision3DAction.GENERATE_IMAGE: _do_v3d_generate_image,
         Vision3DAction.GENERATE_TEXT: _do_v3d_generate_text,

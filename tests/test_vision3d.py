@@ -62,12 +62,23 @@ from maya_mcp import server as srv
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _reset_http_client():
-    """Reset the lazy httpx singleton before each test."""
-    srv._http_client = None
+def _reset_vision3d_state():
+    """Reset all vision3d server-selection state before each test.
+
+    The existing tests assume a server is already selected (they mock the
+    HTTP client directly). We pre-seed ``_selected_vision3d`` to the mock
+    base URL so ``_resolve_client_or_error`` returns the mocked client path
+    instead of ``server_selection_required``. Tests that want to exercise
+    the unselected path reset ``_selected_vision3d = None`` explicitly.
+    """
+    srv._selected_vision3d = _MOCK_BASE_URL
+    srv._vision3d_servers = [_MOCK_BASE_URL]
+    srv._http_clients.clear()
     srv._job_log_cursors.clear()
     yield
-    srv._http_client = None
+    srv._selected_vision3d = None
+    srv._vision3d_servers = []
+    srv._http_clients.clear()
     srv._job_log_cursors.clear()
 
 
@@ -91,7 +102,7 @@ class TestVision3dHealth:
             return _json_response(health_data)
 
         mock_client = _mock_client(handler)
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
         assert result["available"] is True
@@ -112,7 +123,7 @@ class TestVision3dHealth:
             )
 
         mock_client = _mock_client(handler)
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
         assert result["available"] is False
@@ -126,7 +137,7 @@ class TestVision3dHealth:
             raise httpx.ConnectError("Connection refused")
 
         mock_client = _mock_client(handler)
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
         assert result["available"] is False
@@ -157,7 +168,7 @@ class TestShapeGenerateRemote:
             preset="medium",
         )
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             result = json.loads(await srv._do_v3d_generate_image(params.model_dump(), mock_ctx))
 
@@ -192,7 +203,7 @@ class TestShapeGenerateRemote:
         mock_client = _mock_client(handler)
         params = srv.ShapeGenerateInput(image_path=str(image), output_subdir="t")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             result = json.loads(await srv._do_v3d_generate_image(params.model_dump(), mock_ctx))
 
@@ -221,7 +232,7 @@ class TestShapeGenerateText:
             preset="low",
         )
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             result = json.loads(await srv._do_v3d_generate_text(params.model_dump(), mock_ctx))
 
@@ -239,7 +250,7 @@ class TestShapeGenerateText:
         mock_client = _mock_client(handler)
         params = srv.ShapeTextInput(text_prompt="x", output_subdir="t")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             result = json.loads(await srv._do_v3d_generate_text(params.model_dump(), mock_ctx))
 
@@ -269,7 +280,7 @@ class TestVision3dPoll:
         mock_client = _mock_client(handler)
         params = srv.Vision3DPollInput(job_id="job-run-01")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert result["status"] == "running"
@@ -298,7 +309,7 @@ class TestVision3dPoll:
         mock_client = _mock_client(handler)
         params = srv.Vision3DPollInput(job_id="job-inc-01")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         # Should only have the 2 new lines (step 3, step 4)
@@ -326,7 +337,7 @@ class TestVision3dPoll:
         mock_client = _mock_client(handler)
         params = srv.Vision3DPollInput(job_id="job-done-01")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert result["status"] == "completed"
@@ -351,7 +362,7 @@ class TestVision3dPoll:
         mock_client = _mock_client(handler)
         params = srv.Vision3DPollInput(job_id="job-fail-01")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert result["status"] == "failed"
@@ -367,7 +378,7 @@ class TestVision3dPoll:
         mock_client = _mock_client(handler)
         params = srv.Vision3DPollInput(job_id="nonexistent-job")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             result = json.loads(await srv._do_v3d_poll(params.model_dump(), mock_ctx))
 
         assert "error" in result
@@ -401,7 +412,7 @@ class TestVision3dDownload:
             files=["textured.glb", "mesh.glb"],
         )
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             result = json.loads(await srv._do_v3d_download(params.model_dump(), mock_ctx))
 
@@ -431,7 +442,7 @@ class TestVision3dDownload:
             files=["textured.glb", "missing_file.obj"],
         )
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             result = json.loads(await srv._do_v3d_download(params.model_dump(), mock_ctx))
 
@@ -455,7 +466,7 @@ class TestVision3dDownload:
             files=["mesh.glb"],
         )
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             result = json.loads(await srv._do_v3d_download(params.model_dump(), mock_ctx))
 
@@ -475,7 +486,7 @@ class TestServerDown:
             raise httpx.ConnectError("Connection refused")
 
         mock_client = _mock_client(handler)
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             raw = await srv._do_v3d_health({}, mock_ctx)
 
         result = json.loads(raw)
@@ -492,7 +503,7 @@ class TestServerDown:
         mock_client = _mock_client(handler)
         params = srv.Vision3DPollInput(job_id="job-offline")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client):
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
             raw = await srv._do_v3d_poll(params.model_dump(), mock_ctx)
 
         result = json.loads(raw)
@@ -512,7 +523,7 @@ class TestServerDown:
             files=["mesh.glb"],
         )
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             raw = await srv._do_v3d_download(params.model_dump(), mock_ctx)
 
@@ -531,7 +542,7 @@ class TestServerDown:
         mock_client = _mock_client(handler)
         params = srv.ShapeGenerateInput(image_path=str(image), output_subdir="off")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             raw = await srv._do_v3d_generate_image(params.model_dump(), mock_ctx)
 
@@ -548,9 +559,258 @@ class TestServerDown:
         mock_client = _mock_client(handler)
         params = srv.ShapeTextInput(text_prompt="a chair", output_subdir="off")
 
-        with patch.object(srv, "_get_http_client", return_value=mock_client), \
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)), \
              patch.object(srv, "_MAC_BASE_DIR", str(tmp_path)):
             raw = await srv._do_v3d_generate_text(params.model_dump(), mock_ctx)
 
         result = json.loads(raw)
         assert "error" in result
+
+
+# ── 8. Vision3D server selection — per-session, ask-once ─────────────────
+
+class TestVision3dServerSelection:
+    """Per-session server selection: list, select, unselected state, fallbacks."""
+
+    # ── config loading ──────────────────────────────────────────────────
+
+    def test_load_servers_from_config(self, tmp_path, monkeypatch):
+        """_load_vision3d_servers reads the list from config.json when present."""
+        fake_cfg = {
+            "vision3d_servers": [
+                "http://host-a:8000",
+                "http://host-b:8000/",  # trailing slash — must be normalized
+            ]
+        }
+        monkeypatch.setattr(srv, "_vision3d_servers", [])
+        monkeypatch.setattr(srv, "_get_config", lambda: fake_cfg)
+
+        result = srv._load_vision3d_servers()
+
+        assert result == ["http://host-a:8000", "http://host-b:8000"]
+        # Cached on the module
+        assert srv._vision3d_servers == result
+
+    def test_load_servers_fallback_to_env(self, monkeypatch):
+        """If config.json lacks vision3d_servers, fall back to GPU_API_URL env var."""
+        monkeypatch.setattr(srv, "_vision3d_servers", [])
+        monkeypatch.setattr(srv, "_get_config", lambda: {})
+        monkeypatch.setenv("GPU_API_URL", "http://env-host:8000/")
+
+        result = srv._load_vision3d_servers()
+
+        assert result == ["http://env-host:8000"]
+
+    def test_load_servers_fallback_default_when_no_env(self, monkeypatch):
+        """When config is empty and GPU_API_URL is unset, fall back to localhost:8000."""
+        monkeypatch.setattr(srv, "_vision3d_servers", [])
+        monkeypatch.setattr(srv, "_get_config", lambda: {})
+        monkeypatch.delenv("GPU_API_URL", raising=False)
+
+        result = srv._load_vision3d_servers()
+
+        assert result == ["http://localhost:8000"]
+
+    def test_load_servers_ignores_non_string_entries(self, monkeypatch):
+        """Malformed entries (non-strings, empty strings) are dropped silently."""
+        monkeypatch.setattr(srv, "_vision3d_servers", [])
+        monkeypatch.setattr(
+            srv,
+            "_get_config",
+            lambda: {"vision3d_servers": ["http://valid:8000", 42, "", None, "  "]},
+        )
+
+        result = srv._load_vision3d_servers()
+
+        assert result == ["http://valid:8000"]
+
+    # ── _resolve_client_or_error ────────────────────────────────────────
+
+    def test_resolve_client_unselected_returns_error(self, monkeypatch):
+        """With no selection, _resolve_client_or_error returns (None, json_error)."""
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        client, err = srv._resolve_client_or_error()
+
+        assert client is None
+        assert err is not None
+        parsed = json.loads(err)
+        assert parsed["error"] == "server_selection_required"
+        assert parsed["available"] == ["http://a:8000", "http://b:8000"]
+        assert "select_server" in parsed["hint"]
+
+    def test_resolve_client_selected_returns_client(self, monkeypatch):
+        """With a selection, _resolve_client_or_error returns (client, None)."""
+        monkeypatch.setattr(srv, "_selected_vision3d", "http://chosen:8000")
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        client, err = srv._resolve_client_or_error()
+
+        assert err is None
+        assert client is not None
+        # Same client is cached and returned on the second call
+        client2, _ = srv._resolve_client_or_error()
+        assert client2 is client
+
+    def test_resolve_client_switch_creates_new_client(self, monkeypatch):
+        """Switching _selected_vision3d returns a different cached client."""
+        monkeypatch.setattr(srv, "_selected_vision3d", "http://first:8000")
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        client_a, _ = srv._resolve_client_or_error()
+
+        srv._selected_vision3d = "http://second:8000"
+        client_b, _ = srv._resolve_client_or_error()
+
+        assert client_a is not client_b
+        assert str(client_a.base_url).rstrip("/") == "http://first:8000"
+        assert str(client_b.base_url).rstrip("/") == "http://second:8000"
+
+    # ── list_servers action ─────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_list_servers_reports_selection(self, mock_ctx, monkeypatch):
+        """list_servers returns the configured list and the current selection."""
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
+        monkeypatch.setattr(srv, "_selected_vision3d", "http://a:8000")
+
+        result = json.loads(await srv._do_v3d_list_servers({}, mock_ctx))
+
+        assert result["servers"] == ["http://a:8000", "http://b:8000"]
+        assert result["selected"] == "http://a:8000"
+
+    @pytest.mark.asyncio
+    async def test_list_servers_unselected(self, mock_ctx, monkeypatch):
+        """list_servers with no selection hints at calling select_server."""
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+
+        result = json.loads(await srv._do_v3d_list_servers({}, mock_ctx))
+
+        assert result["selected"] is None
+        assert "select_server" in result["hint"]
+
+    # ── select_server action ────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_select_server_valid_url(self, mock_ctx, monkeypatch):
+        """select_server with a valid URL updates the session selection."""
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        result = json.loads(
+            await srv._do_v3d_select_server({"url": "http://b:8000"}, mock_ctx)
+        )
+
+        assert result["status"] == "selected"
+        assert result["url"] == "http://b:8000"
+        assert srv._selected_vision3d == "http://b:8000"
+
+    @pytest.mark.asyncio
+    async def test_select_server_normalises_trailing_slash(self, mock_ctx, monkeypatch):
+        """Trailing slashes in the supplied URL are stripped before matching."""
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+
+        result = json.loads(
+            await srv._do_v3d_select_server({"url": "http://a:8000/"}, mock_ctx)
+        )
+
+        assert result["status"] == "selected"
+        assert srv._selected_vision3d == "http://a:8000"
+
+    @pytest.mark.asyncio
+    async def test_select_server_unknown_url_rejected(self, mock_ctx, monkeypatch):
+        """select_server rejects URLs not in the configured list."""
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+
+        result = json.loads(
+            await srv._do_v3d_select_server({"url": "http://rogue:9000"}, mock_ctx)
+        )
+
+        assert "error" in result
+        assert "not in the configured" in result["error"]
+        assert result["available"] == ["http://a:8000"]
+        # Selection must remain unchanged
+        assert srv._selected_vision3d is None
+
+    @pytest.mark.asyncio
+    async def test_select_server_missing_url_param(self, mock_ctx, monkeypatch):
+        """select_server without 'url' param returns an error with the available list."""
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+
+        result = json.loads(await srv._do_v3d_select_server({}, mock_ctx))
+
+        assert "error" in result
+        assert "Missing required param" in result["error"]
+        assert result["available"] == ["http://a:8000"]
+
+    # ── end-to-end: unselected action returns server_selection_required ──
+
+    @pytest.mark.asyncio
+    async def test_unselected_health_returns_selection_error(self, mock_ctx, monkeypatch):
+        """Calling health without selecting a server returns server_selection_required."""
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        result = json.loads(await srv._do_v3d_health({}, mock_ctx))
+
+        assert result["error"] == "server_selection_required"
+        assert result["available"] == ["http://a:8000", "http://b:8000"]
+
+    @pytest.mark.asyncio
+    async def test_unselected_generate_image_returns_selection_error(
+        self, mock_ctx, tmp_path, monkeypatch
+    ):
+        """Calling generate_image without selecting a server returns the error."""
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        image = tmp_path / "ref.png"
+        image.write_bytes(b"\x89PNG fake")
+        params = srv.ShapeGenerateInput(image_path=str(image), output_subdir="t")
+
+        result = json.loads(
+            await srv._do_v3d_generate_image(params.model_dump(), mock_ctx)
+        )
+
+        assert result["error"] == "server_selection_required"
+
+    @pytest.mark.asyncio
+    async def test_select_then_health_uses_selected_client(self, mock_ctx, monkeypatch):
+        """After select_server, health reaches the selected URL."""
+        url = "http://chosen-host:8000"
+        monkeypatch.setattr(srv, "_vision3d_servers", [url])
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        # 1. Select the server
+        sel = json.loads(
+            await srv._do_v3d_select_server({"url": url}, mock_ctx)
+        )
+        assert sel["status"] == "selected"
+        assert srv._selected_vision3d == url
+
+        # 2. Now health uses the resolved client (which we mock per-test)
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({
+                "gpu": "MPS",
+                "vram_gb": 48,
+                "models": ["fast"],
+                "text_to_3d": "disabled",
+            })
+
+        mock_client = _mock_client(handler)
+        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
+            health = json.loads(await srv._do_v3d_health({}, mock_ctx))
+
+        assert health["available"] is True
+        assert health["gpu"] == "MPS"
+        assert health["url"] == url

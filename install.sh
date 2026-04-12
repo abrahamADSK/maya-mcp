@@ -276,8 +276,10 @@ TOOLS = [
     "maya_create_camera", "maya_execute_python", "maya_new_scene", "maya_save_scene",
     "maya_mesh_operation", "maya_set_keyframe", "maya_import_file",
     "maya_viewport_capture", "maya_scene_snapshot", "maya_shelf_button",
-    "vision3d_health", "shape_generate_remote", "shape_generate_text",
-    "texture_mesh_remote", "vision3d_poll", "vision3d_download",
+    # Vision3D actions all live behind the single `maya_vision3d` dispatch tool:
+    # list_servers, select_server, health, generate_image, generate_text,
+    # texture, poll, download. Pre-approving the dispatch tool covers them all.
+    "maya_vision3d",
     "search_maya_docs", "learn_pattern", "session_stats",
 ]
 PREFIX = "mcp__maya-mcp__"

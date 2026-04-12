@@ -1,6 +1,6 @@
 # maya-mcp — Critical Context for Claude
 
-> **Last updated**: 2026-03-31
+> **Last updated**: 2026-04-12 — added per-session Vision3D server selection (`list_servers` / `select_server` actions, config-driven URL list, no hardcoded defaults).
 > This document persists across Claude Code sessions. Consult here to understand the architecture, configuration, and workflows of maya-mcp.
 
 ---
@@ -14,10 +14,11 @@
    - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
    - All operations use undo chunks for safe rollback
 
-2. **Vision3D Integration** (6 tools) — Optional addon for AI-powered 3D generation via [Vision3D](https://github.com/abrahamADSK/vision3d)
+2. **Vision3D Integration** (8 actions behind the `maya_vision3d` dispatch tool) — Optional addon for AI-powered 3D generation via [Vision3D](https://github.com/abrahamADSK/vision3d)
    - Communicates via **HTTP REST API** with Vision3D (port 8000)
    - Supports image-to-3D, text-to-3D, and texture painting
    - Non-blocking async pattern: submit → poll → download
+   - **Per-session server selection**: the first call that needs a GPU returns `server_selection_required` with the list of configured Vision3D server URLs. The LLM asks the user, calls `select_server`, and the choice is cached for the rest of the session. No hardcoded defaults, no restart needed to switch servers.
    - **Not required** — maya-mcp works fully without Vision3D
 
 3. **RAG & Intelligence** (3 tools) — Documentation search, self-learning, analytics
@@ -84,9 +85,20 @@ Short queries like "set keyframe tangent" are automatically expanded with domain
 ```bash
 MAYA_HOST=localhost          # Host where Maya is running
 MAYA_PORT=7001              # Command Port
-GPU_API_URL=http://gpu-host:8000  # Vision3D HTTP endpoint
+GPU_API_URL=http://gpu-host:8000  # Vision3D HTTP endpoint (fallback only — prefer config.json)
 GPU_API_KEY=                      # Leave empty for open LAN access
 ```
+
+**Vision3D server list (`config.json`)** — preferred way to configure one or more Vision3D servers:
+```json
+{
+  "vision3d_servers": [
+    "http://localhost:8000",
+    "http://glorfindel:8000"
+  ]
+}
+```
+The user picks which server to use at runtime via the `select_server` action. `GPU_API_URL` is only used as a fallback when `vision3d_servers` is absent (preserves pre-selector behavior).
 
 ### Requirements
 - **macOS Ventura+** with Apple Silicon (Intel support available)
@@ -123,16 +135,18 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 | `maya_scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
 | `maya_shelf_button` | Create shelf buttons with custom Python commands |
 
-### Vision3D Tools (6 tools — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
+### Vision3D Actions (8 actions behind `maya_vision3d` dispatch — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
 
-| Tool | Description |
-|------|-------------|
-| `vision3d_health` | Checks GPU server availability, models, text-to-3D status |
-| `shape_generate_remote` | Image-to-3D generation (non-blocking, returns job_id) |
-| `shape_generate_text` | Text-to-3D generation (non-blocking, returns job_id) |
-| `texture_mesh_remote` | Texture existing mesh (non-blocking, returns job_id) |
-| `vision3d_poll` | Poll job status with incremental log lines |
-| `vision3d_download` | Download completed results to local directory |
+| Action | Description |
+|--------|-------------|
+| `list_servers` | List configured Vision3D server URLs and report which one (if any) is selected for this session |
+| `select_server` | Pick a Vision3D server URL for the rest of this MCP session. Cached until process restart. |
+| `health` | Check availability, GPU info, models, and text-to-3D status of the selected server |
+| `generate_image` | Image-to-3D generation (non-blocking, returns job_id) |
+| `generate_text` | Text-to-3D generation (non-blocking, returns job_id) |
+| `texture` | Texture existing mesh (non-blocking, returns job_id) |
+| `poll` | Poll job status with incremental log lines |
+| `download` | Download completed results to local directory |
 
 ### RAG & Intelligence Tools (3 tools)
 
@@ -192,12 +206,16 @@ Integrated into: `maya_execute_python`, `maya_delete`. Returns explanation + saf
 ## 7. Vision3D Flow (Optional Addon — Non-Blocking)
 
 ```
-Step 1: vision3d_health() → verify GPU server
-Step 2: shape_generate_remote(image_path=...) → returns job_id
-Step 3: vision3d_poll(job_id=...) → poll until completed
-Step 4: vision3d_download(job_id=...) → download GLB, OBJ, textures
+Step 0: maya_vision3d(action='list_servers')              → see configured URLs + current selection
+        maya_vision3d(action='select_server', params={'url': '...'})  → ask-once per session
+Step 1: maya_vision3d(action='health')                    → verify the selected GPU server
+Step 2: maya_vision3d(action='generate_image', params={'image_path': ...}) → returns job_id
+Step 3: maya_vision3d(action='poll', params={'job_id': ...}) → poll until completed
+Step 4: maya_vision3d(action='download', params={'job_id': ...}) → download GLB, OBJ, textures
 Step 5: maya_execute_python(...) → import into Maya
 ```
+
+**Step 0 is mandatory on the first Vision3D call of the session.** Any Vision3D action called before selection returns a `server_selection_required` error with the list of available URLs from `config.json → vision3d_servers`. Present those URLs to the user, let them choose, then call `select_server` before proceeding. The choice is cached until the MCP process restarts.
 
 Quality presets: `low` (~1 min), `medium` (~2 min), `high` (~8 min), `ultra` (~12 min).
 
