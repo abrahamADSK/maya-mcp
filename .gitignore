@@ -2,9 +2,12 @@
 .env
 *.env.local
 
-# ── Per-user runtime config (hostnames, backend choice, etc.) ─
-# Only config.example.json is committed. The live config.json is
-# populated by each user/machine and must never enter the repo.
+# ── Per-user runtime config ──────────────────────────────────
+# config.json holds machine-local settings (backend, model choice,
+# Ollama URLs, etc.). Only config.example.json is committed. The
+# live config.json is populated by each user/machine and must
+# never enter the repo. Vision3D endpoints are NOT stored in
+# config.json — they are asked per-session at runtime.
 src/maya_mcp/config.json
 
 # ── Pipeline outputs ─────────────────────────────────────────

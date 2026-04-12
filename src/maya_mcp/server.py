@@ -269,7 +269,6 @@ class SessionDispatchInput(BaseModel):
 
 class Vision3DAction(str, Enum):
     """Actions available in the maya_vision3d dispatch tool."""
-    LIST_SERVERS = "list_servers"
     SELECT_SERVER = "select_server"
     HEALTH = "health"
     GENERATE_IMAGE = "generate_image"
@@ -1053,66 +1052,45 @@ _GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "false").lower() in ("true", "1
 _MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
                                 str(_PROJECT_ROOT))                          # project root on Mac
 
-# ── Vision3D server selection (per-session, ask-once) ─────────────────────
+# ── Vision3D server selection (per-session, fully runtime) ────────────────
 #
 # Policy (see memory project_vision3d_server_selection.md):
-#   1. The list of available vision3d servers lives in config.json under
-#      "vision3d_servers" as a flat list of URLs. Nothing is hardcoded.
-#   2. At process start no server is selected. The first handler that needs
-#      to talk to the GPU returns a structured "server_selection_required"
-#      error with the list of URLs, and the LLM asks the user.
-#   3. The user picks a URL; the LLM calls
-#      maya_vision3d(action="select_server", params={"url": "..."}).
-#      The choice is cached in _selected_vision3d for the rest of the process.
-#   4. Subsequent calls reuse the chosen client from _http_clients.
-#   5. On restart of the MCP server, the selection is forgotten by design.
+#   1. **Nothing about Vision3D servers is persisted anywhere.** No config
+#      file field, no hardcoded defaults, no list of candidates. The URL
+#      lives only in the running process's memory for the duration of the
+#      session, and only after the user explicitly types it.
+#   2. At process start no server is selected. The first handler that
+#      needs to talk to the GPU returns ``vision3d_url_required``. The LLM
+#      asks the user "which Vision3D URL?", the user types it into the
+#      chat, the LLM calls ``select_server`` with that URL. Selection is
+#      cached in ``_selected_vision3d`` for the rest of the process.
+#   3. Subsequent calls reuse the chosen client from ``_http_clients``.
+#   4. On restart of the MCP server, the selection is forgotten by design.
 #
-# Retro-compat: if config.json has no "vision3d_servers" list (or the file is
-# absent), we fall back to a single-entry list built from the GPU_API_URL env
-# var — same behavior as before the selector existed, one implicit server.
+# Retro-compat: ``GPU_API_URL`` env var is honored as a **suggested default**
+# the LLM can surface in the prompt, but it is NOT auto-selected — the user
+# still has to confirm/override via ``select_server``. This keeps pre-
+# selector installs working without muting the per-session policy.
 
-_vision3d_servers: list[str] = []       # loaded from config.json at first use
 _selected_vision3d: Optional[str] = None  # URL picked for this session (None = ask)
-_http_clients: dict = {}                # URL -> httpx.AsyncClient (lazy cache)
+_http_clients: dict = {}                  # URL -> httpx.AsyncClient (lazy cache)
 
 # Track log cursors per job (for incremental log delivery)
 _job_log_cursors: dict[str, int] = {}
 
 
-def _load_vision3d_servers() -> list[str]:
-    """Return the list of vision3d server URLs configured for this install.
+def _is_valid_http_url(url: str) -> bool:
+    """Return True if ``url`` parses as an http/https URL with a host.
 
-    Source of truth is ``config.json → vision3d_servers`` (a flat list of
-    URLs, user-populated). **There are no hardcoded defaults**: if the key
-    is missing or empty the function returns an empty list and every
-    handler that needs a GPU call will surface ``vision3d_not_configured``.
-
-    As a single-server retrocompat escape hatch, if ``config.json`` has no
-    ``vision3d_servers`` entry AND the ``GPU_API_URL`` environment variable
-    is set to a non-empty value, that value is used as a one-element list.
-    When ``GPU_API_URL`` is unset or empty, the list stays empty — we never
-    fabricate a localhost default.
-
-    The result is cached in ``_vision3d_servers`` so the list is read from
-    disk only once per process.
+    This is the only validation applied to the URL the user provides via
+    ``select_server``. There is no whitelist.
     """
-    global _vision3d_servers
-    if _vision3d_servers:
-        return _vision3d_servers
-
-    cfg = _get_config()
-    raw = cfg.get("vision3d_servers", [])
-    urls = [str(u).rstrip("/") for u in raw if isinstance(u, str) and u.strip()]
-
-    # Retrocompat escape hatch: single-URL env override when nothing is
-    # configured. No fabricated localhost fallback.
-    if not urls:
-        env_url = os.environ.get("GPU_API_URL", "").strip().rstrip("/")
-        if env_url:
-            urls = [env_url]
-
-    _vision3d_servers = urls
-    return _vision3d_servers
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
 def _build_http_client(url: str):
@@ -1129,59 +1107,47 @@ def _build_http_client(url: str):
     )
 
 
-def _server_selection_required_error() -> str:
-    """Return the JSON payload shown when no vision3d server is available.
+def _vision3d_url_required_error() -> str:
+    """Return the JSON payload shown when no Vision3D URL has been picked.
 
-    Two distinct cases:
-
-    1. ``vision3d_servers`` is empty (no config entry, no env fallback): the
-       install has not been configured for Vision3D at all. The payload is
-       ``vision3d_not_configured`` with a pointer to ``config.json``. The
-       LLM should tell the user to edit the config; no ``select_server``
-       call will work until the file is populated.
-
-    2. ``vision3d_servers`` has entries but none has been picked for this
-       session: the payload is ``server_selection_required`` with the list
-       of URLs. The LLM presents them to the user and calls
-       ``select_server`` with the chosen URL.
+    Nothing is persisted anywhere: the LLM must ask the user for the URL
+    in the chat on the first Vision3D call of the session. If the
+    ``GPU_API_URL`` env var is set it is surfaced as a *suggested default*
+    for the user to confirm or override — it is never auto-selected.
     """
-    servers = _load_vision3d_servers()
-    if not servers:
-        return json.dumps({
-            "error": "vision3d_not_configured",
-            "available": [],
-            "hint": (
-                "No Vision3D servers are configured for this install. "
-                "Edit src/maya_mcp/config.json and add a 'vision3d_servers' "
-                "list with the URLs of the Vision3D hosts you want to use, "
-                "or set the GPU_API_URL environment variable for a "
-                "single-server fallback. Restart the MCP server after "
-                "editing the config."
-            ),
-        }, indent=2)
-    return json.dumps({
-        "error": "server_selection_required",
-        "available": servers,
+    suggested = os.environ.get("GPU_API_URL", "").strip().rstrip("/")
+    payload = {
+        "error": "vision3d_url_required",
         "hint": (
-            "No Vision3D server has been selected for this session. "
-            "Ask the user which server to use (show the URLs in 'available') "
-            "and then call "
-            "maya_vision3d(action='select_server', params={'url': '<chosen-url>'}). "
-            "The selection is cached for the rest of this MCP session."
+            "No Vision3D server URL has been set for this MCP session. "
+            "Ask the user which Vision3D endpoint to use (e.g. the local "
+            "MPS server or a remote CUDA host) and have them type the full "
+            "URL into the chat. Then call "
+            "maya_vision3d(action='select_server', params={'url': '<the-url>'}). "
+            "The URL is cached in memory for the rest of this session and "
+            "forgotten when the MCP server restarts."
         ),
-    }, indent=2)
+    }
+    if suggested:
+        payload["suggested_default"] = suggested
+        payload["hint"] += (
+            f" A suggested default is available via GPU_API_URL=\"{suggested}\", "
+            "but it is NOT auto-selected — the user must confirm it explicitly."
+        )
+    return json.dumps(payload, indent=2)
 
 
 def _resolve_client_or_error() -> tuple:
     """Return ``(client, error_json)``.
 
-    - If a server has been selected: ``(AsyncClient, None)``.
-      The client is created lazily on first use and cached in `_http_clients`.
-    - If no server has been selected yet: ``(None, json_error_string)``.
+    - If a URL has been selected: ``(AsyncClient, None)``.
+      The client is created lazily on first use and cached in
+      ``_http_clients``.
+    - If no URL has been selected yet: ``(None, json_error_string)``.
       The caller must return the error string verbatim to the MCP caller.
     """
     if _selected_vision3d is None:
-        return None, _server_selection_required_error()
+        return None, _vision3d_url_required_error()
     url = _selected_vision3d
     client = _http_clients.get(url)
     if client is None:
@@ -1328,50 +1294,19 @@ class Vision3DDownloadInput(BaseModel):
     )
 
 
-# ── Tools: server selection (per-session) ──────────────────────
-
-
-async def _do_v3d_list_servers(params: dict, ctx: Context) -> str:
-    """List the Vision3D server URLs configured for this install.
-
-    Reads the list from ``config.json → vision3d_servers``. Also reports
-    which server (if any) is currently selected for this session.
-    """
-    servers = _load_vision3d_servers()
-    if not servers:
-        hint = (
-            "No Vision3D servers are configured. Edit "
-            "src/maya_mcp/config.json and add entries to 'vision3d_servers', "
-            "or set GPU_API_URL in the environment for a single-server fallback. "
-            "Restart the MCP server after editing the config."
-        )
-    elif _selected_vision3d is None:
-        hint = (
-            "Ask the user which server to use, then call "
-            "maya_vision3d(action='select_server', params={'url': '<chosen-url>'})."
-        )
-    else:
-        hint = (
-            f"Currently using {_selected_vision3d}. Call select_server with a "
-            "different URL to switch for the rest of the session."
-        )
-    return json.dumps({
-        "servers": servers,
-        "selected": _selected_vision3d,
-        "hint": hint,
-    }, indent=2)
+# ── Tools: server selection (per-session, freeform URL) ────────
 
 
 async def _do_v3d_select_server(params: dict, ctx: Context) -> str:
-    """Pick a Vision3D server URL for the rest of this MCP session.
+    """Set the Vision3D server URL for the rest of this MCP session.
 
-    Required param: ``url`` — must be one of the URLs returned by
-    ``list_servers``. The selection is cached in ``_selected_vision3d`` until
-    the MCP process is restarted. Subsequent vision3d calls will automatically
-    use the selected server without prompting again.
+    Required param: ``url`` — any valid ``http://`` or ``https://`` URL.
+    There is **no whitelist and no predefined pool**: the LLM must have
+    asked the user for the URL in the chat and passed whatever they typed
+    straight into this call. The selection is cached in
+    ``_selected_vision3d`` until the MCP process is restarted.
 
-    Trailing slashes in the supplied URL are tolerated (normalized out) so the
-    user can paste URLs in any common form.
+    Trailing slashes in the supplied URL are tolerated (normalized out).
     """
     global _selected_vision3d
 
@@ -1379,21 +1314,19 @@ async def _do_v3d_select_server(params: dict, ctx: Context) -> str:
     if not raw_url or not isinstance(raw_url, str):
         return json.dumps({
             "error": "Missing required param 'url'.",
-            "available": _load_vision3d_servers(),
-            "hint": "Call with params={'url': '<one-of-the-urls-above>'}.",
+            "hint": (
+                "Call with params={'url': '<http-or-https-url>'}. "
+                "Ask the user for the URL if you do not have it yet."
+            ),
         })
 
     url = raw_url.strip().rstrip("/")
-    servers = _load_vision3d_servers()
-
-    if url not in servers:
+    if not _is_valid_http_url(url):
         return json.dumps({
-            "error": f"URL '{url}' is not in the configured vision3d_servers list.",
-            "available": servers,
+            "error": f"Invalid URL: {raw_url!r}",
             "hint": (
-                "Only URLs listed in config.json → vision3d_servers are accepted. "
-                "Edit config.json to add a new server, or call select_server with "
-                "one of the available URLs."
+                "Expected an http:// or https:// URL with a host. "
+                "Ask the user to retype it."
             ),
         })
 
@@ -1402,10 +1335,10 @@ async def _do_v3d_select_server(params: dict, ctx: Context) -> str:
     return json.dumps({
         "status": "selected",
         "url": url,
-        "available": servers,
         "note": (
-            "This selection is cached for the rest of the MCP session. "
-            "Restarting the MCP server will clear it."
+            "This URL is cached in memory for the rest of this MCP session. "
+            "Restarting the MCP server will clear it — the user will be "
+            "asked again on the next run."
         ),
     }, indent=2)
 
@@ -1805,17 +1738,17 @@ async def _do_v3d_download(params: dict, ctx: Context) -> str:
 async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
     """AI-powered 3D asset generation via Vision3D server (requires GPU with Hunyuan3D-2).
 
-    Server selection is per-session: the first action that needs a GPU call
-    will return a 'server_selection_required' error listing the configured
-    Vision3D servers. Ask the user which one to use, then call select_server
-    with the chosen URL; the choice is cached for the rest of the session.
+    Server selection is fully per-session and runtime-only: the first
+    action that needs a GPU call returns ``vision3d_url_required``. The
+    LLM must ask the user for the Vision3D URL in the chat and then call
+    ``select_server`` with that URL. Nothing is persisted to disk — the
+    URL lives only in process memory until the MCP server restarts.
 
     After selection, jobs are non-blocking: start → poll → download.
 
     Available actions:
 
-    • list_servers — Return the configured Vision3D server URLs and the one currently selected (if any). No params.
-    • select_server — Pick a Vision3D server URL for the rest of the session. Required params: {"url": "http://..."}. The URL must be one of the entries in config.json → vision3d_servers.
+    • select_server — Set the Vision3D server URL for the rest of the session. Required params: {"url": "http://..."}. Accepts any valid http/https URL; ask the user first.
     • health — Check if the selected Vision3D server is running and what GPU/models are available. No params.
     • generate_image — Start 3D generation from a reference image. Required params: {"image_path": "/path/to/image.png", "output_subdir": "my_asset"} Optional: {"preset": "medium", "model": "turbo", "octree_resolution": 384, "num_inference_steps": 20, "target_faces": 50000}
     • generate_text — Start 3D generation from a text prompt. Required params: {"text_prompt": "a medieval sword", "output_subdir": "sword"} Optional: {"preset": "medium", "model": "turbo", "octree_resolution": 384, "num_inference_steps": 20, "target_faces": 50000}
@@ -1824,7 +1757,6 @@ async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
     • download — Download completed job results. Required params: {"job_id": "uuid", "output_subdir": "my_asset"} Optional: {"files": ["textured.glb", "mesh.glb"]}
     """
     dispatch = {
-        Vision3DAction.LIST_SERVERS: _do_v3d_list_servers,
         Vision3DAction.SELECT_SERVER: _do_v3d_select_server,
         Vision3DAction.HEALTH: _do_v3d_health,
         Vision3DAction.GENERATE_IMAGE: _do_v3d_generate_image,

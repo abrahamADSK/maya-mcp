@@ -1,6 +1,6 @@
 # maya-mcp — Critical Context for Claude
 
-> **Last updated**: 2026-04-12 — added per-session Vision3D server selection (`list_servers` / `select_server` actions, config-driven URL list, no hardcoded defaults).
+> **Last updated**: 2026-04-12 — per-session Vision3D URL is now fully runtime-only: Claude asks the user for the URL on the first Vision3D call, caches it in memory for the rest of the session, and forgets it on MCP restart. No config file field, no pool, no persisted URLs anywhere.
 > This document persists across Claude Code sessions. Consult here to understand the architecture, configuration, and workflows of maya-mcp.
 
 ---
@@ -14,11 +14,12 @@
    - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
    - All operations use undo chunks for safe rollback
 
-2. **Vision3D Integration** (8 actions behind the `maya_vision3d` dispatch tool) — Optional addon for AI-powered 3D generation via [Vision3D](https://github.com/abrahamADSK/vision3d)
+2. **Vision3D Integration** (7 actions behind the `maya_vision3d` dispatch tool) — Optional addon for AI-powered 3D generation via [Vision3D](https://github.com/abrahamADSK/vision3d)
    - Communicates via **HTTP REST API** with Vision3D (port 8000)
    - Supports image-to-3D, text-to-3D, and texture painting
    - Non-blocking async pattern: submit → poll → download
-   - **Per-session server selection**: the first call that needs a GPU returns `server_selection_required` with the list of configured Vision3D server URLs. The LLM asks the user, calls `select_server`, and the choice is cached for the rest of the session. No hardcoded defaults, no restart needed to switch servers.
+   - **Fully per-session URL**: the first call that needs a GPU returns `vision3d_url_required`. The LLM asks the user for the Vision3D URL in the chat, the user types it, the LLM calls `select_server` with that URL, and it is cached in memory for the rest of the session. Nothing is written to disk — no config field, no pool, no whitelist. Restarting the MCP server clears the selection.
+   - **`GPU_API_URL` env var** is honored as a *suggested default* the LLM can surface in the prompt, but it is never auto-selected. The user still has to confirm it explicitly via `select_server`.
    - **Not required** — maya-mcp works fully without Vision3D
 
 3. **RAG & Intelligence** (3 tools) — Documentation search, self-learning, analytics
@@ -85,20 +86,11 @@ Short queries like "set keyframe tangent" are automatically expanded with domain
 ```bash
 MAYA_HOST=localhost          # Host where Maya is running
 MAYA_PORT=7001              # Command Port
-GPU_API_URL=http://gpu-host:8000  # Vision3D HTTP endpoint (fallback only — prefer config.json)
-GPU_API_KEY=                      # Leave empty for open LAN access
+GPU_API_URL=                 # Optional: suggested default for Vision3D URL prompt (never auto-selected)
+GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empty for open LAN
 ```
 
-**Vision3D server list (`config.json`)** — preferred way to configure one or more Vision3D servers:
-```json
-{
-  "vision3d_servers": [
-    "http://<your-local-host>:8000",
-    "http://<your-gpu-host>:8000"
-  ]
-}
-```
-`config.json` is a **per-user** file: it lives under `src/maya_mcp/config.json`, is gitignored, and must be populated manually by each user/machine. Only `config.example.json` (empty `vision3d_servers: []`) is committed. There are **no hardcoded URL defaults in code**: if neither `config.json → vision3d_servers` nor the `GPU_API_URL` env var is set, every Vision3D action returns `vision3d_not_configured` with a hint pointing back to this config file. The user picks which server to use at runtime via the `select_server` action.
+**Vision3D URL is NOT stored anywhere.** There is no `vision3d_servers` config field, no pool, no whitelist. On the first Vision3D call of the session, the dispatch returns `vision3d_url_required`; Claude asks the user for the URL in the chat, the user types it, Claude calls `select_server` with that URL, and it is cached in the MCP process memory until restart. If `GPU_API_URL` is set in the environment, Claude surfaces it as a *suggested default* in the prompt — the user still has to confirm it explicitly. `config.json` only holds backend/model/Ollama settings; it does NOT hold Vision3D endpoints.
 
 ### Requirements
 - **macOS Ventura+** with Apple Silicon (Intel support available)
@@ -135,12 +127,11 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 | `maya_scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
 | `maya_shelf_button` | Create shelf buttons with custom Python commands |
 
-### Vision3D Actions (8 actions behind `maya_vision3d` dispatch — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
+### Vision3D Actions (7 actions behind `maya_vision3d` dispatch — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
 
 | Action | Description |
 |--------|-------------|
-| `list_servers` | List configured Vision3D server URLs and report which one (if any) is selected for this session |
-| `select_server` | Pick a Vision3D server URL for the rest of this MCP session. Cached until process restart. |
+| `select_server` | Set the Vision3D server URL for the rest of this MCP session. Accepts any valid http/https URL — the LLM must have asked the user for it in the chat first. Cached in memory until process restart. |
 | `health` | Check availability, GPU info, models, and text-to-3D status of the selected server |
 | `generate_image` | Image-to-3D generation (non-blocking, returns job_id) |
 | `generate_text` | Text-to-3D generation (non-blocking, returns job_id) |
@@ -206,8 +197,11 @@ Integrated into: `maya_execute_python`, `maya_delete`. Returns explanation + saf
 ## 7. Vision3D Flow (Optional Addon — Non-Blocking)
 
 ```
-Step 0: maya_vision3d(action='list_servers')              → see configured URLs + current selection
-        maya_vision3d(action='select_server', params={'url': '...'})  → ask-once per session
+Step 0: (first Vision3D call of the session only)
+        Any action → returns vision3d_url_required
+        Claude asks the user: "Which Vision3D URL should I use?"
+        User types the URL in the chat.
+        Claude → maya_vision3d(action='select_server', params={'url': '<the-url>'})
 Step 1: maya_vision3d(action='health')                    → verify the selected GPU server
 Step 2: maya_vision3d(action='generate_image', params={'image_path': ...}) → returns job_id
 Step 3: maya_vision3d(action='poll', params={'job_id': ...}) → poll until completed
@@ -215,7 +209,14 @@ Step 4: maya_vision3d(action='download', params={'job_id': ...}) → download GL
 Step 5: maya_execute_python(...) → import into Maya
 ```
 
-**Step 0 is mandatory on the first Vision3D call of the session.** Any Vision3D action called before selection returns a `server_selection_required` error with the list of available URLs from `config.json → vision3d_servers`. Present those URLs to the user, let them choose, then call `select_server` before proceeding. The choice is cached until the MCP process restarts.
+**Step 0 is mandatory on the first Vision3D call of the session.** Any Vision3D action called before `select_server` returns `vision3d_url_required`. The LLM must:
+
+1. **Ask the user** which Vision3D URL to use. The user types the URL into the chat.
+2. If `GPU_API_URL` is set in the environment, the error payload includes a `suggested_default` field. Surface that default to the user as a hint — but it is NOT auto-selected, the user still has to confirm or override.
+3. Call `select_server` with the URL the user provided.
+4. Retry the original action.
+
+The URL is cached in memory for the rest of the session. Restarting the MCP server clears it and the cycle begins again.
 
 Quality presets: `low` (~1 min), `medium` (~2 min), `high` (~8 min), `ultra` (~12 min).
 

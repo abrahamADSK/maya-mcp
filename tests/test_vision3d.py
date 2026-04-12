@@ -63,21 +63,19 @@ from maya_mcp import server as srv
 
 @pytest.fixture(autouse=True)
 def _reset_vision3d_state():
-    """Reset all vision3d server-selection state before each test.
+    """Reset all vision3d per-session state before each test.
 
-    The existing tests assume a server is already selected (they mock the
+    The existing tests assume a URL is already selected (they mock the
     HTTP client directly). We pre-seed ``_selected_vision3d`` to the mock
-    base URL so ``_resolve_client_or_error`` returns the mocked client path
-    instead of ``server_selection_required``. Tests that want to exercise
+    base URL so ``_resolve_client_or_error`` returns the mocked client
+    path instead of ``vision3d_url_required``. Tests that want to exercise
     the unselected path reset ``_selected_vision3d = None`` explicitly.
     """
     srv._selected_vision3d = _MOCK_BASE_URL
-    srv._vision3d_servers = [_MOCK_BASE_URL]
     srv._http_clients.clear()
     srv._job_log_cursors.clear()
     yield
     srv._selected_vision3d = None
-    srv._vision3d_servers = []
     srv._http_clients.clear()
     srv._job_log_cursors.clear()
 
@@ -567,112 +565,85 @@ class TestServerDown:
         assert "error" in result
 
 
-# ── 8. Vision3D server selection — per-session, ask-once ─────────────────
+# ── 8. Vision3D per-session URL — freeform, no pool, no config ───────────
 
-class TestVision3dServerSelection:
-    """Per-session server selection: list, select, unselected state, fallbacks."""
+class TestVision3dUrlSelection:
+    """Per-session, runtime-only URL flow. No config pool, no whitelist."""
 
-    # ── config loading ──────────────────────────────────────────────────
+    # ── _is_valid_http_url ──────────────────────────────────────────────
 
-    def test_load_servers_from_config(self, tmp_path, monkeypatch):
-        """_load_vision3d_servers reads the list from config.json when present."""
-        fake_cfg = {
-            "vision3d_servers": [
-                "http://host-a:8000",
-                "http://host-b:8000/",  # trailing slash — must be normalized
-            ]
-        }
-        monkeypatch.setattr(srv, "_vision3d_servers", [])
-        monkeypatch.setattr(srv, "_get_config", lambda: fake_cfg)
+    def test_is_valid_http_url_accepts_http(self):
+        assert srv._is_valid_http_url("http://example.com:8000") is True
 
-        result = srv._load_vision3d_servers()
+    def test_is_valid_http_url_accepts_https(self):
+        assert srv._is_valid_http_url("https://example.com") is True
 
-        assert result == ["http://host-a:8000", "http://host-b:8000"]
-        # Cached on the module
-        assert srv._vision3d_servers == result
+    def test_is_valid_http_url_accepts_localhost(self):
+        # Localhost is a valid URL even though we never fabricate it as a default
+        assert srv._is_valid_http_url("http://localhost:8000") is True
 
-    def test_load_servers_fallback_to_env(self, monkeypatch):
-        """If config.json lacks vision3d_servers, fall back to GPU_API_URL env var."""
-        monkeypatch.setattr(srv, "_vision3d_servers", [])
-        monkeypatch.setattr(srv, "_get_config", lambda: {})
-        monkeypatch.setenv("GPU_API_URL", "http://env-host:8000/")
+    def test_is_valid_http_url_rejects_empty(self):
+        assert srv._is_valid_http_url("") is False
 
-        result = srv._load_vision3d_servers()
+    def test_is_valid_http_url_rejects_non_http_scheme(self):
+        assert srv._is_valid_http_url("ftp://example.com") is False
 
-        assert result == ["http://env-host:8000"]
+    def test_is_valid_http_url_rejects_missing_scheme(self):
+        assert srv._is_valid_http_url("example.com:8000") is False
 
-    def test_load_servers_empty_when_nothing_configured(self, monkeypatch):
-        """When config has no entry and GPU_API_URL is unset, the list stays empty.
+    def test_is_valid_http_url_rejects_missing_host(self):
+        assert srv._is_valid_http_url("http://") is False
 
-        Policy: no fabricated localhost defaults. The handlers must surface
-        `vision3d_not_configured` instead of silently aiming at localhost.
-        """
-        monkeypatch.setattr(srv, "_vision3d_servers", [])
-        monkeypatch.setattr(srv, "_get_config", lambda: {})
-        monkeypatch.delenv("GPU_API_URL", raising=False)
-
-        result = srv._load_vision3d_servers()
-
-        assert result == []
-
-    def test_load_servers_empty_when_env_is_empty_string(self, monkeypatch):
-        """GPU_API_URL set to an empty string does NOT count as a fallback."""
-        monkeypatch.setattr(srv, "_vision3d_servers", [])
-        monkeypatch.setattr(srv, "_get_config", lambda: {})
-        monkeypatch.setenv("GPU_API_URL", "   ")
-
-        result = srv._load_vision3d_servers()
-
-        assert result == []
-
-    def test_load_servers_ignores_non_string_entries(self, monkeypatch):
-        """Malformed entries (non-strings, empty strings) are dropped silently."""
-        monkeypatch.setattr(srv, "_vision3d_servers", [])
-        monkeypatch.setattr(
-            srv,
-            "_get_config",
-            lambda: {"vision3d_servers": ["http://valid:8000", 42, "", None, "  "]},
-        )
-
-        result = srv._load_vision3d_servers()
-
-        assert result == ["http://valid:8000"]
+    def test_is_valid_http_url_rejects_garbage(self):
+        assert srv._is_valid_http_url("not a url at all") is False
 
     # ── _resolve_client_or_error ────────────────────────────────────────
 
-    def test_resolve_client_unselected_returns_error(self, monkeypatch):
-        """With no selection, _resolve_client_or_error returns (None, json_error)."""
+    def test_resolve_client_unselected_returns_url_required(self, monkeypatch):
+        """With no selection, resolver returns vision3d_url_required."""
         monkeypatch.setattr(srv, "_selected_vision3d", None)
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
         monkeypatch.setattr(srv, "_http_clients", {})
-
-        client, err = srv._resolve_client_or_error()
-
-        assert client is None
-        assert err is not None
-        parsed = json.loads(err)
-        assert parsed["error"] == "server_selection_required"
-        assert parsed["available"] == ["http://a:8000", "http://b:8000"]
-        assert "select_server" in parsed["hint"]
-
-    def test_resolve_client_no_servers_configured(self, monkeypatch):
-        """With no configured servers at all, error is vision3d_not_configured."""
-        monkeypatch.setattr(srv, "_selected_vision3d", None)
-        monkeypatch.setattr(srv, "_vision3d_servers", [])
-        monkeypatch.setattr(srv, "_get_config", lambda: {})
         monkeypatch.delenv("GPU_API_URL", raising=False)
-        monkeypatch.setattr(srv, "_http_clients", {})
 
         client, err = srv._resolve_client_or_error()
 
         assert client is None
         parsed = json.loads(err)
-        assert parsed["error"] == "vision3d_not_configured"
-        assert parsed["available"] == []
-        assert "config.json" in parsed["hint"]
+        assert parsed["error"] == "vision3d_url_required"
+        assert "select_server" in parsed["hint"]
+        # No persistent list — the payload does NOT expose a pool
+        assert "available" not in parsed
+        assert "suggested_default" not in parsed
+
+    def test_resolve_client_unselected_surfaces_env_suggestion(self, monkeypatch):
+        """If GPU_API_URL is set, it is surfaced as a suggestion (not auto-selected)."""
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_http_clients", {})
+        monkeypatch.setenv("GPU_API_URL", "http://env-host:8000/")
+
+        client, err = srv._resolve_client_or_error()
+
+        assert client is None
+        parsed = json.loads(err)
+        assert parsed["error"] == "vision3d_url_required"
+        assert parsed["suggested_default"] == "http://env-host:8000"
+        # And the selection state is NOT mutated by the suggestion
+        assert srv._selected_vision3d is None
+
+    def test_resolve_client_empty_env_is_no_suggestion(self, monkeypatch):
+        """Whitespace GPU_API_URL does not count as a suggestion."""
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_http_clients", {})
+        monkeypatch.setenv("GPU_API_URL", "   ")
+
+        client, err = srv._resolve_client_or_error()
+
+        parsed = json.loads(err)
+        assert parsed["error"] == "vision3d_url_required"
+        assert "suggested_default" not in parsed
 
     def test_resolve_client_selected_returns_client(self, monkeypatch):
-        """With a selection, _resolve_client_or_error returns (client, None)."""
+        """With a selection, resolver returns (client, None) and caches it."""
         monkeypatch.setattr(srv, "_selected_vision3d", "http://chosen:8000")
         monkeypatch.setattr(srv, "_http_clients", {})
 
@@ -698,110 +669,105 @@ class TestVision3dServerSelection:
         assert str(client_a.base_url).rstrip("/") == "http://first:8000"
         assert str(client_b.base_url).rstrip("/") == "http://second:8000"
 
-    # ── list_servers action ─────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_list_servers_reports_selection(self, mock_ctx, monkeypatch):
-        """list_servers returns the configured list and the current selection."""
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
-        monkeypatch.setattr(srv, "_selected_vision3d", "http://a:8000")
-
-        result = json.loads(await srv._do_v3d_list_servers({}, mock_ctx))
-
-        assert result["servers"] == ["http://a:8000", "http://b:8000"]
-        assert result["selected"] == "http://a:8000"
-
-    @pytest.mark.asyncio
-    async def test_list_servers_unselected(self, mock_ctx, monkeypatch):
-        """list_servers with no selection hints at calling select_server."""
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
-        monkeypatch.setattr(srv, "_selected_vision3d", None)
-
-        result = json.loads(await srv._do_v3d_list_servers({}, mock_ctx))
-
-        assert result["selected"] is None
-        assert "select_server" in result["hint"]
-
     # ── select_server action ────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_select_server_valid_url(self, mock_ctx, monkeypatch):
-        """select_server with a valid URL updates the session selection."""
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
+    async def test_select_server_accepts_any_valid_url(self, mock_ctx, monkeypatch):
+        """select_server accepts any valid http URL — no whitelist."""
         monkeypatch.setattr(srv, "_selected_vision3d", None)
         monkeypatch.setattr(srv, "_http_clients", {})
 
         result = json.loads(
-            await srv._do_v3d_select_server({"url": "http://b:8000"}, mock_ctx)
+            await srv._do_v3d_select_server(
+                {"url": "http://some-user-host:8000"}, mock_ctx
+            )
         )
 
         assert result["status"] == "selected"
-        assert result["url"] == "http://b:8000"
-        assert srv._selected_vision3d == "http://b:8000"
+        assert result["url"] == "http://some-user-host:8000"
+        assert srv._selected_vision3d == "http://some-user-host:8000"
+
+    @pytest.mark.asyncio
+    async def test_select_server_accepts_https(self, mock_ctx, monkeypatch):
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+
+        result = json.loads(
+            await srv._do_v3d_select_server(
+                {"url": "https://secure-host.example.com"}, mock_ctx
+            )
+        )
+
+        assert result["status"] == "selected"
+        assert srv._selected_vision3d == "https://secure-host.example.com"
 
     @pytest.mark.asyncio
     async def test_select_server_normalises_trailing_slash(self, mock_ctx, monkeypatch):
-        """Trailing slashes in the supplied URL are stripped before matching."""
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
         monkeypatch.setattr(srv, "_selected_vision3d", None)
 
         result = json.loads(
-            await srv._do_v3d_select_server({"url": "http://a:8000/"}, mock_ctx)
+            await srv._do_v3d_select_server(
+                {"url": "http://some-host:8000/"}, mock_ctx
+            )
         )
 
         assert result["status"] == "selected"
-        assert srv._selected_vision3d == "http://a:8000"
+        assert srv._selected_vision3d == "http://some-host:8000"
 
     @pytest.mark.asyncio
-    async def test_select_server_unknown_url_rejected(self, mock_ctx, monkeypatch):
-        """select_server rejects URLs not in the configured list."""
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
+    async def test_select_server_rejects_malformed_url(self, mock_ctx, monkeypatch):
+        """Malformed / non-http URLs are rejected; selection unchanged."""
         monkeypatch.setattr(srv, "_selected_vision3d", None)
 
         result = json.loads(
-            await srv._do_v3d_select_server({"url": "http://rogue:9000"}, mock_ctx)
+            await srv._do_v3d_select_server({"url": "not a real url"}, mock_ctx)
         )
 
         assert "error" in result
-        assert "not in the configured" in result["error"]
-        assert result["available"] == ["http://a:8000"]
-        # Selection must remain unchanged
+        assert "Invalid URL" in result["error"]
+        assert srv._selected_vision3d is None
+
+    @pytest.mark.asyncio
+    async def test_select_server_rejects_ftp_scheme(self, mock_ctx, monkeypatch):
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+
+        result = json.loads(
+            await srv._do_v3d_select_server(
+                {"url": "ftp://file-host:21"}, mock_ctx
+            )
+        )
+
+        assert "error" in result
         assert srv._selected_vision3d is None
 
     @pytest.mark.asyncio
     async def test_select_server_missing_url_param(self, mock_ctx, monkeypatch):
-        """select_server without 'url' param returns an error with the available list."""
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
         monkeypatch.setattr(srv, "_selected_vision3d", None)
 
         result = json.loads(await srv._do_v3d_select_server({}, mock_ctx))
 
         assert "error" in result
         assert "Missing required param" in result["error"]
-        assert result["available"] == ["http://a:8000"]
+        assert srv._selected_vision3d is None
 
-    # ── end-to-end: unselected action returns server_selection_required ──
+    # ── end-to-end: unselected action returns vision3d_url_required ─────
 
     @pytest.mark.asyncio
-    async def test_unselected_health_returns_selection_error(self, mock_ctx, monkeypatch):
-        """Calling health without selecting a server returns server_selection_required."""
+    async def test_unselected_health_returns_url_required(self, mock_ctx, monkeypatch):
         monkeypatch.setattr(srv, "_selected_vision3d", None)
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000", "http://b:8000"])
         monkeypatch.setattr(srv, "_http_clients", {})
+        monkeypatch.delenv("GPU_API_URL", raising=False)
 
         result = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
-        assert result["error"] == "server_selection_required"
-        assert result["available"] == ["http://a:8000", "http://b:8000"]
+        assert result["error"] == "vision3d_url_required"
 
     @pytest.mark.asyncio
-    async def test_unselected_generate_image_returns_selection_error(
+    async def test_unselected_generate_image_returns_url_required(
         self, mock_ctx, tmp_path, monkeypatch
     ):
-        """Calling generate_image without selecting a server returns the error."""
         monkeypatch.setattr(srv, "_selected_vision3d", None)
-        monkeypatch.setattr(srv, "_vision3d_servers", ["http://a:8000"])
         monkeypatch.setattr(srv, "_http_clients", {})
+        monkeypatch.delenv("GPU_API_URL", raising=False)
 
         image = tmp_path / "ref.png"
         image.write_bytes(b"\x89PNG fake")
@@ -811,24 +777,21 @@ class TestVision3dServerSelection:
             await srv._do_v3d_generate_image(params.model_dump(), mock_ctx)
         )
 
-        assert result["error"] == "server_selection_required"
+        assert result["error"] == "vision3d_url_required"
 
     @pytest.mark.asyncio
-    async def test_select_then_health_uses_selected_client(self, mock_ctx, monkeypatch):
+    async def test_select_then_health_uses_selected_url(self, mock_ctx, monkeypatch):
         """After select_server, health reaches the selected URL."""
-        url = "http://chosen-host:8000"
-        monkeypatch.setattr(srv, "_vision3d_servers", [url])
+        url = "http://user-typed-host:8000"
         monkeypatch.setattr(srv, "_selected_vision3d", None)
         monkeypatch.setattr(srv, "_http_clients", {})
 
-        # 1. Select the server
         sel = json.loads(
             await srv._do_v3d_select_server({"url": url}, mock_ctx)
         )
         assert sel["status"] == "selected"
         assert srv._selected_vision3d == url
 
-        # 2. Now health uses the resolved client (which we mock per-test)
         async def handler(request: httpx.Request) -> httpx.Response:
             return _json_response({
                 "gpu": "MPS",
@@ -838,7 +801,9 @@ class TestVision3dServerSelection:
             })
 
         mock_client = _mock_client(handler)
-        with patch.object(srv, "_resolve_client_or_error", return_value=(mock_client, None)):
+        with patch.object(
+            srv, "_resolve_client_or_error", return_value=(mock_client, None)
+        ):
             health = json.loads(await srv._do_v3d_health({}, mock_ctx))
 
         assert health["available"] is True
