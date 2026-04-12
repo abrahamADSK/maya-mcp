@@ -2,6 +2,11 @@
 .env
 *.env.local
 
+# ── Per-user runtime config (hostnames, backend choice, etc.) ─
+# Only config.example.json is committed. The live config.json is
+# populated by each user/machine and must never enter the repo.
+src/maya_mcp/config.json
+
 # ── Pipeline outputs ─────────────────────────────────────────
 reference/3d_output/
 renders/

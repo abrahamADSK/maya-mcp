@@ -93,12 +93,12 @@ GPU_API_KEY=                      # Leave empty for open LAN access
 ```json
 {
   "vision3d_servers": [
-    "http://localhost:8000",
-    "http://glorfindel:8000"
+    "http://<your-local-host>:8000",
+    "http://<your-gpu-host>:8000"
   ]
 }
 ```
-The user picks which server to use at runtime via the `select_server` action. `GPU_API_URL` is only used as a fallback when `vision3d_servers` is absent (preserves pre-selector behavior).
+`config.json` is a **per-user** file: it lives under `src/maya_mcp/config.json`, is gitignored, and must be populated manually by each user/machine. Only `config.example.json` (empty `vision3d_servers: []`) is committed. There are **no hardcoded URL defaults in code**: if neither `config.json → vision3d_servers` nor the `GPU_API_URL` env var is set, every Vision3D action returns `vision3d_not_configured` with a hint pointing back to this config file. The user picks which server to use at runtime via the `select_server` action.
 
 ### Requirements
 - **macOS Ventura+** with Apple Silicon (Intel support available)

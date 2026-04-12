@@ -601,15 +601,29 @@ class TestVision3dServerSelection:
 
         assert result == ["http://env-host:8000"]
 
-    def test_load_servers_fallback_default_when_no_env(self, monkeypatch):
-        """When config is empty and GPU_API_URL is unset, fall back to localhost:8000."""
+    def test_load_servers_empty_when_nothing_configured(self, monkeypatch):
+        """When config has no entry and GPU_API_URL is unset, the list stays empty.
+
+        Policy: no fabricated localhost defaults. The handlers must surface
+        `vision3d_not_configured` instead of silently aiming at localhost.
+        """
         monkeypatch.setattr(srv, "_vision3d_servers", [])
         monkeypatch.setattr(srv, "_get_config", lambda: {})
         monkeypatch.delenv("GPU_API_URL", raising=False)
 
         result = srv._load_vision3d_servers()
 
-        assert result == ["http://localhost:8000"]
+        assert result == []
+
+    def test_load_servers_empty_when_env_is_empty_string(self, monkeypatch):
+        """GPU_API_URL set to an empty string does NOT count as a fallback."""
+        monkeypatch.setattr(srv, "_vision3d_servers", [])
+        monkeypatch.setattr(srv, "_get_config", lambda: {})
+        monkeypatch.setenv("GPU_API_URL", "   ")
+
+        result = srv._load_vision3d_servers()
+
+        assert result == []
 
     def test_load_servers_ignores_non_string_entries(self, monkeypatch):
         """Malformed entries (non-strings, empty strings) are dropped silently."""
@@ -640,6 +654,22 @@ class TestVision3dServerSelection:
         assert parsed["error"] == "server_selection_required"
         assert parsed["available"] == ["http://a:8000", "http://b:8000"]
         assert "select_server" in parsed["hint"]
+
+    def test_resolve_client_no_servers_configured(self, monkeypatch):
+        """With no configured servers at all, error is vision3d_not_configured."""
+        monkeypatch.setattr(srv, "_selected_vision3d", None)
+        monkeypatch.setattr(srv, "_vision3d_servers", [])
+        monkeypatch.setattr(srv, "_get_config", lambda: {})
+        monkeypatch.delenv("GPU_API_URL", raising=False)
+        monkeypatch.setattr(srv, "_http_clients", {})
+
+        client, err = srv._resolve_client_or_error()
+
+        assert client is None
+        parsed = json.loads(err)
+        assert parsed["error"] == "vision3d_not_configured"
+        assert parsed["available"] == []
+        assert "config.json" in parsed["hint"]
 
     def test_resolve_client_selected_returns_client(self, monkeypatch):
         """With a selection, _resolve_client_or_error returns (client, None)."""

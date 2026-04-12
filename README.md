@@ -212,8 +212,9 @@ The installer creates a virtual environment, installs dependencies, builds the R
 git clone https://github.com/abrahamADSK/maya-mcp.git
 cd maya-mcp
 cp .env.example .env
-# Edit .env and set GPU_API_URL to your Vision3D server address
-# Example: GPU_API_URL=http://glorfindel:8000
+# Optional single-server fallback: set GPU_API_URL to your Vision3D server address
+# Example: GPU_API_URL=http://<your-gpu-host>:8000
+# For multi-server setups, populate vision3d_servers in src/maya_mcp/config.json instead.
 ```
 
 ### 2. Install dependencies
@@ -290,20 +291,22 @@ Or for Claude Desktop, add to `~/Library/Application Support/Claude/claude_deskt
 
 maya-mcp can optionally integrate with [Vision3D](https://github.com/abrahamADSK/vision3d) for image-to-3D and text-to-3D generation. This is **not required** for core Maya functionality.
 
-**Multi-server configuration (per-session selection):** maya-mcp can target several Vision3D servers (e.g. a local Mac MPS instance and a remote CUDA host) and let you pick which one to use on a per-session basis. List the candidate URLs in `src/maya_mcp/config.json`:
+**Multi-server configuration (per-session selection):** maya-mcp can target several Vision3D servers (e.g. a local Mac MPS instance and a remote CUDA host) and let you pick which one to use on a per-session basis. Copy `src/maya_mcp/config.example.json` to `src/maya_mcp/config.json` and edit the `vision3d_servers` list with **your own** URLs:
 
 ```json
 {
   "vision3d_servers": [
-    "http://localhost:8000",
-    "http://glorfindel:8000"
+    "http://<your-local-host>:8000",
+    "http://<your-gpu-host>:8000"
   ]
 }
 ```
 
+`config.json` is **per-user** and **gitignored** — it never enters the repository. Only the empty template `config.example.json` is committed. Each machine/install populates its own `config.json`.
+
 At the first call that needs a GPU (e.g. `maya_vision3d(action="health")`), the tool returns `server_selection_required` with the list of URLs. Claude asks you which server to use, you pick one, Claude calls `maya_vision3d(action="select_server", params={"url": "<chosen-url>"})`, and the choice is cached for the rest of the MCP session. Restarting the MCP server clears the selection by design.
 
-If `vision3d_servers` is missing from `config.json`, maya-mcp falls back to a single-server setup using the `GPU_API_URL` environment variable (backward compatible with pre-selector installs). You only need `GPU_API_KEY` if your Vision3D server has an API key configured.
+**No hardcoded URL defaults.** If `vision3d_servers` is empty and the `GPU_API_URL` environment variable is unset, every Vision3D action returns `vision3d_not_configured` with a pointer back to `config.json`. `GPU_API_URL` remains as a single-server escape hatch for backward compatibility with pre-selector installs. You only need `GPU_API_KEY` if your Vision3D server has an API key configured.
 
 ---
 

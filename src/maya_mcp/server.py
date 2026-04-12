@@ -1082,14 +1082,19 @@ _job_log_cursors: dict[str, int] = {}
 def _load_vision3d_servers() -> list[str]:
     """Return the list of vision3d server URLs configured for this install.
 
-    Source of truth is `config.json` → `vision3d_servers` (a flat list of URLs,
-    user-populated, no hardcoded defaults). If the key is missing or empty the
-    function falls back to a single-entry list built from the `GPU_API_URL`
-    env var (defaulting to http://localhost:8000) for backward compatibility
-    with the pre-selector setup.
+    Source of truth is ``config.json → vision3d_servers`` (a flat list of
+    URLs, user-populated). **There are no hardcoded defaults**: if the key
+    is missing or empty the function returns an empty list and every
+    handler that needs a GPU call will surface ``vision3d_not_configured``.
 
-    The result is cached in `_vision3d_servers` so the list is read from disk
-    only once per process.
+    As a single-server retrocompat escape hatch, if ``config.json`` has no
+    ``vision3d_servers`` entry AND the ``GPU_API_URL`` environment variable
+    is set to a non-empty value, that value is used as a one-element list.
+    When ``GPU_API_URL`` is unset or empty, the list stays empty — we never
+    fabricate a localhost default.
+
+    The result is cached in ``_vision3d_servers`` so the list is read from
+    disk only once per process.
     """
     global _vision3d_servers
     if _vision3d_servers:
@@ -1099,10 +1104,12 @@ def _load_vision3d_servers() -> list[str]:
     raw = cfg.get("vision3d_servers", [])
     urls = [str(u).rstrip("/") for u in raw if isinstance(u, str) and u.strip()]
 
+    # Retrocompat escape hatch: single-URL env override when nothing is
+    # configured. No fabricated localhost fallback.
     if not urls:
-        # Fallback: single-server retrocompat via env var
-        fallback = os.environ.get("GPU_API_URL", "http://localhost:8000").rstrip("/")
-        urls = [fallback]
+        env_url = os.environ.get("GPU_API_URL", "").strip().rstrip("/")
+        if env_url:
+            urls = [env_url]
 
     _vision3d_servers = urls
     return _vision3d_servers
@@ -1123,13 +1130,35 @@ def _build_http_client(url: str):
 
 
 def _server_selection_required_error() -> str:
-    """Return the JSON payload shown when no vision3d server is selected yet.
+    """Return the JSON payload shown when no vision3d server is available.
 
-    The LLM is expected to present `available` to the user, ask which server
-    to use, and then call `maya_vision3d(action="select_server", ...)` before
-    retrying the original action.
+    Two distinct cases:
+
+    1. ``vision3d_servers`` is empty (no config entry, no env fallback): the
+       install has not been configured for Vision3D at all. The payload is
+       ``vision3d_not_configured`` with a pointer to ``config.json``. The
+       LLM should tell the user to edit the config; no ``select_server``
+       call will work until the file is populated.
+
+    2. ``vision3d_servers`` has entries but none has been picked for this
+       session: the payload is ``server_selection_required`` with the list
+       of URLs. The LLM presents them to the user and calls
+       ``select_server`` with the chosen URL.
     """
     servers = _load_vision3d_servers()
+    if not servers:
+        return json.dumps({
+            "error": "vision3d_not_configured",
+            "available": [],
+            "hint": (
+                "No Vision3D servers are configured for this install. "
+                "Edit src/maya_mcp/config.json and add a 'vision3d_servers' "
+                "list with the URLs of the Vision3D hosts you want to use, "
+                "or set the GPU_API_URL environment variable for a "
+                "single-server fallback. Restart the MCP server after "
+                "editing the config."
+            ),
+        }, indent=2)
     return json.dumps({
         "error": "server_selection_required",
         "available": servers,
@@ -1305,20 +1334,31 @@ class Vision3DDownloadInput(BaseModel):
 async def _do_v3d_list_servers(params: dict, ctx: Context) -> str:
     """List the Vision3D server URLs configured for this install.
 
-    Reads the list from `config.json → vision3d_servers`. Also reports which
-    server (if any) is currently selected for this session.
+    Reads the list from ``config.json → vision3d_servers``. Also reports
+    which server (if any) is currently selected for this session.
     """
     servers = _load_vision3d_servers()
+    if not servers:
+        hint = (
+            "No Vision3D servers are configured. Edit "
+            "src/maya_mcp/config.json and add entries to 'vision3d_servers', "
+            "or set GPU_API_URL in the environment for a single-server fallback. "
+            "Restart the MCP server after editing the config."
+        )
+    elif _selected_vision3d is None:
+        hint = (
+            "Ask the user which server to use, then call "
+            "maya_vision3d(action='select_server', params={'url': '<chosen-url>'})."
+        )
+    else:
+        hint = (
+            f"Currently using {_selected_vision3d}. Call select_server with a "
+            "different URL to switch for the rest of the session."
+        )
     return json.dumps({
         "servers": servers,
         "selected": _selected_vision3d,
-        "hint": (
-            "Ask the user which server to use, then call "
-            "maya_vision3d(action='select_server', params={'url': '<chosen-url>'})."
-            if _selected_vision3d is None else
-            f"Currently using {_selected_vision3d}. Call select_server with a "
-            "different URL to switch for the rest of the session."
-        ),
+        "hint": hint,
     }, indent=2)
 
 
