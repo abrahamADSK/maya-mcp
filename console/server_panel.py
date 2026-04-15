@@ -133,7 +133,7 @@ class HealthChecker(QThread):
 
             if name == "maya-mcp":
                 host = env.get("MAYA_HOST", "localhost")
-                port = int(env.get("MAYA_PORT", "7001"))
+                port = int(env.get("MAYA_PORT", "8100"))
                 connected = _tcp_check(host, port)
                 info["status"] = "connected" if connected else "offline"
                 info["detail"] = f"TCP {host}:{port}"

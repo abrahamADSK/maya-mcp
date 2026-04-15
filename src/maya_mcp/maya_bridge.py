@@ -24,7 +24,7 @@ logger = logging.getLogger("maya_mcp.bridge")
 
 # Default configuration
 DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 7001
+DEFAULT_PORT = 8100
 DEFAULT_TIMEOUT = 10.0
 
 
@@ -151,8 +151,7 @@ class MayaBridge:
     )
 
     # Diagnostic appended to MayaExecutionError when the wrapper does not
-    # produce a result file. Reproduces the user-facing remediation snippet
-    # from the Chat 41 incident.
+    # produce a result file. Reproduces the user-facing remediation snippet.
     _RESULT_FILE_MISSING_HINT = (
         "Maya accepted the wrapper command but no result file was produced. "
         "The Python interpreter inside Maya may be blocked (modal dialog, "
@@ -160,9 +159,9 @@ class MayaBridge:
         "(orphaned after a crash, or opened without the right options).\n\n"
         "To recover, run this in Maya's Script Editor (Python tab):\n"
         "    import maya.cmds as cmds\n"
-        "    if cmds.commandPort(':7001', query=True):\n"
-        "        cmds.commandPort(':7001', close=True)\n"
-        "    cmds.commandPort(':7001', sourceType='python', echoOutput=True)\n"
+        "    if cmds.commandPort('localhost:8100', query=True):\n"
+        "        cmds.commandPort('localhost:8100', close=True)\n"
+        "    cmds.commandPort('localhost:8100', sourceType='python', echoOutput=True)\n"
         "    print('Command port restarted')"
     )
 

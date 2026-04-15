@@ -41,7 +41,7 @@ FastMCP server (src/maya_mcp/server.py) — 27 tools
     ├── Safety module (src/maya_mcp/safety.py)
     │     └── 14+ dangerous pattern detectors
     ├── Maya bridge (src/maya_mcp/maya_bridge.py)
-    │     └── TCP socket → Command Port :7001
+    │     └── TCP socket → Command Port :8100
     └── Vision3D client (HTTP)
           └── GPU server for 3D generation
 ```
@@ -129,7 +129,7 @@ maya-mcp/
 │       ├── __init__.py
 │       ├── __main__.py
 │       ├── server.py              # FastMCP server — all 27 tools
-│       ├── maya_bridge.py         # TCP bridge → Maya Command Port :7001
+│       ├── maya_bridge.py         # TCP bridge → Maya Command Port :8100
 │       ├── safety.py              # Dangerous pattern detection (14+ patterns)
 │       ├── config.example.json
 │       ├── rag/
@@ -247,17 +247,19 @@ Add to your Maya `userSetup.py` (create it if it doesn't exist):
 import maya.cmds as cmds
 
 def open_command_port():
-    port_name = ":7001"
+    port_name = "localhost:8100"
     try:
         if cmds.commandPort(port_name, query=True):
             cmds.commandPort(name=port_name, close=True)
     except RuntimeError:
         pass
-    cmds.commandPort(name=port_name, sourceType="mel")
+    cmds.commandPort(name=port_name, sourceType="python", echoOutput=True)
     print(f"[MCP] Command Port open on {port_name}")
 
 cmds.evalDeferred(open_command_port)
 ```
+
+> **Port 8100 default rationale**: maya-mcp historically used port 7001, the Maya convention. On hosts with Autodesk Flame installed, port 7001 is already held by Flame's S+W Service Discovery and S+W Probe Server, and connections silently succeed against Flame instead of Maya — producing empty responses that the bridge (prior to v1.4.2) misinterpreted as successful no-ops. The default was moved to 8100 to coexist with Flame. Override via `MAYA_PORT` env var if your environment still uses 7001.
 
 **The MCP Pipeline Console panel installs itself automatically.** The first time Claude connects to Maya (via `maya_ping` or `maya_launch`), the server injects the panel menu and UI through the Command Port — no additional `userSetup.py` configuration needed. The panel docks next to the Attribute Editor and persists across sessions.
 
@@ -328,7 +330,7 @@ All operations go through the safety scanner before reaching Maya. Dangerous pat
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MAYA_HOST` | Maya host | `localhost` |
-| `MAYA_PORT` | Maya Command Port | `7001` |
+| `MAYA_PORT` | Maya Command Port | `8100` |
 | `GPU_API_URL` | **Optional** suggested default for the Vision3D URL prompt. Never auto-selected — Claude asks the user to confirm or override at the first Vision3D call of each session. | — |
 | `GPU_API_KEY` | Vision3D API key | — |
 | `SHAPE_TIMEOUT` | Shape generation timeout (seconds) | `900` |
@@ -346,7 +348,7 @@ All three MCP servers (maya-mcp, fpt-mcp, flame-mcp) share the same architecture
 
 ## Troubleshooting
 
-**Maya Command Port not responding** — Verify in Maya's Script Editor: `cmds.commandPort(':7001', query=True)`. If `False`, run the `open_command_port()` snippet.
+**Maya Command Port not responding** — Verify in Maya's Script Editor: `cmds.commandPort('localhost:8100', query=True)`. If `False`, run the `open_command_port()` snippet.
 
 **RAG search returns "index not found"** — Run `python -m maya_mcp.rag.build_index` to build the index.
 

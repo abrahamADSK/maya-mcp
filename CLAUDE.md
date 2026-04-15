@@ -10,7 +10,7 @@
 **maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **27 tools** organized in three layers:
 
 1. **Maya Control** (18 tools) — Scene manipulation, modeling, animation, I/O, rendering
-   - Communicates with Maya via **TCP Command Port** (default port 7001)
+   - Communicates with Maya via **TCP Command Port** (default port 8100; moved from the historical 7001 because that port is held by Flame's S+W services on hosts with Autodesk Flame installed)
    - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
    - All operations use undo chunks for safe rollback
 
@@ -45,7 +45,7 @@
 ├───────┼───────────┼────────────────────────────────┤
 │  Maya Bridge (TCP)     Vision3D REST Client        │
 └────┬───────────────────────┬──────────────────────┘
-     │ :7001 Command Port    │ HTTP :8000
+     │ :8100 Command Port    │ HTTP :8000
      │                       │
 ┌────▼──────────────┐   ┌───▼──────────────────┐
 │ Autodesk Maya     │   │ Vision3D GPU Server  │
@@ -85,7 +85,7 @@ Short queries like "set keyframe tangent" are automatically expanded with domain
 ### Environment Variables (`.env`)
 ```bash
 MAYA_HOST=localhost          # Host where Maya is running
-MAYA_PORT=7001              # Command Port
+MAYA_PORT=8100              # Command Port (historically 7001; moved to avoid Flame S+W port collision)
 GPU_API_URL=                 # Optional: suggested default for Vision3D URL prompt (never auto-selected)
 GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empty for open LAN
 ```

@@ -21,7 +21,7 @@ Usage:
 
 Environment variables (see .env.example):
     MAYA_HOST          — host where Maya is running (default: localhost)
-    MAYA_PORT          — Maya Command Port (default: 7001)
+    MAYA_PORT          — Maya Command Port (default: 8100)
     GPU_API_URL        — GPU API server URL (e.g. http://your-gpu-host:8000)
     GPU_API_KEY        — API key for authentication (empty for open LAN access)
 """
@@ -51,7 +51,7 @@ _PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
 # ---------------------------------------------------------------------------
 
 MAYA_HOST = os.environ.get("MAYA_HOST", "localhost")
-MAYA_PORT = int(os.environ.get("MAYA_PORT", "7001"))
+MAYA_PORT = int(os.environ.get("MAYA_PORT", "8100"))
 MAYA_APP  = os.environ.get("MAYA_APP", "Maya")  # macOS app name for `open -a`
 
 # ---------------------------------------------------------------------------
@@ -377,7 +377,7 @@ async def _do_launch(params: dict) -> str:
 
     return json.dumps({
         "error": f"Maya opened but Command Port did not respond in {max_wait}s.",
-        "hint": "Verify that you have Command Port in userSetup.py: cmds.commandPort(name=':7001', sourceType='mel')"
+        "hint": "Verify that you have Command Port in userSetup.py: cmds.commandPort(name='localhost:8100', sourceType='python', echoOutput=True)"
     }, ensure_ascii=False)
 
 
