@@ -587,6 +587,15 @@ class TestFileBasedReturn:
         call("second")
         assert results == ["first", "second"]
 
+    def test_send_python_raises_when_send_raw_raises(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """If _send_raw itself raises (silent Maya), send_python propagates."""
+        mock_maya_server.silent = True
+        bridge_to_mock.timeout = 0.3
+        with pytest.raises(MayaConnectionError):
+            bridge_to_mock.send_python("result = cmds.ls()")
+
     def test_wrapper_body_writes_to_result_path(self):
         """Sanity check: the wrapper body opens _MCP_RESULT_PATH for writing.
 
@@ -599,3 +608,85 @@ class TestFileBasedReturn:
         assert ".write(_mcp_payload)" in body
         # And no longer relies on a module-level _mcp_result global being read.
         assert "print(_mcp_result)" not in body
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4.1.8 — Silent Maya recv timeout (Bug 1 regression suite)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSilentMayaRecvTimeout:
+    """
+    Regression suite for the ``_send_raw`` recv-loop hardening.
+
+    Previously the recv() loop treated ``socket.timeout`` as end-of-stream,
+    so a Maya whose Command Port accepted connections but never replied
+    would silently produce empty strings — and the caller would treat that
+    as success. The fix tracks whether recv() ever returned and raises
+    MayaConnectionError when the buffer is still empty at timeout time.
+    """
+
+    def test_send_raw_raises_on_silent_maya(self, mock_maya_server, bridge_to_mock):
+        """Mock that holds the connection open without ever sending data triggers
+        the new MayaConnectionError path."""
+        mock_maya_server.silent = True
+        bridge_to_mock.timeout = 0.3
+        with pytest.raises(MayaConnectionError, match="returned no data"):
+            bridge_to_mock.send_mel("about -v")
+
+    def test_send_raw_diagnostic_mentions_known_causes(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """The error message lists the three known causes so the user has a
+        starting point without having to read the source."""
+        mock_maya_server.silent = True
+        bridge_to_mock.timeout = 0.2
+        with pytest.raises(MayaConnectionError) as exc_info:
+            bridge_to_mock.send_mel("about -v")
+        msg = str(exc_info.value)
+        assert "modal dialog" in msg
+        assert "long-running" in msg or "long" in msg
+        assert "orphan" in msg.lower()
+
+    def test_send_raw_returns_data_then_recv_timeout(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """Regression guard: data arrives → next recv times out → return data,
+        do NOT raise. This is the normal Maya protocol behavior since the
+        command port has no message terminator."""
+        # Default mock behavior: send response then close. recv() returns
+        # bytes once, then 0 on next iteration (clean close). got_any=True.
+        mock_maya_server.default_response = "Maya 2027"
+        bridge_to_mock.timeout = 0.5
+        result = bridge_to_mock.send_mel("about -v")
+        assert result == "Maya 2027"
+
+    def test_send_raw_clean_close_with_empty_payload_does_not_raise(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """If Maya returns an empty payload but closes the connection cleanly
+        (got_any=True via recv()=b''), keep current behavior: return ''.
+
+        This is distinct from the silent-hang case the fix protects against.
+        """
+        mock_maya_server.default_response = ""  # send 0 bytes then close
+        result = bridge_to_mock.send_mel("noop")
+        assert result == ""
+
+    def test_ping_raises_against_silent_maya(self, mock_maya_server, bridge_to_mock):
+        """End-to-end regression of the false-positive cascade: ping() against
+        a silent Command Port must raise, NOT report status='connected' with
+        empty version (the bug that caused _do_launch to enter already_running)."""
+        mock_maya_server.silent = True
+        bridge_to_mock.timeout = 0.3
+        with pytest.raises(MayaConnectionError):
+            bridge_to_mock.ping()
+
+    def test_execute_raises_against_silent_maya(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """End-to-end: execute() also surfaces the connection error instead of
+        returning empty string."""
+        mock_maya_server.silent = True
+        bridge_to_mock.timeout = 0.3
+        with pytest.raises(MayaConnectionError):
+            bridge_to_mock.execute("result = cmds.ls()")

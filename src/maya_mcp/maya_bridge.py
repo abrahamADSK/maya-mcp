@@ -63,7 +63,23 @@ class MayaBridge:
         self.timeout = timeout
 
     def _send_raw(self, command: str) -> str:
-        """Sends a raw MEL command to Maya and returns the response."""
+        """Sends a raw MEL command to Maya and returns the response.
+
+        Distinguishes three cases on the recv loop:
+
+        - The peer sends data, then closes (or stops sending). Normal happy
+          path; we return the collected bytes.
+        - The peer sends nothing and never closes. The recv() call hits its
+          socket timeout with an empty buffer. This is the "silent Maya"
+          condition (orphaned port after a crash, modal dialog blocking the
+          interpreter, long-running command in the queue) — we raise
+          MayaConnectionError instead of returning an empty string, which
+          the caller would otherwise misinterpret as a successful no-op.
+        - The peer sends data, then stops. We have data already, the
+          subsequent recv() times out — return what we have. This is how
+          Maya's command port behaves in normal operation since the
+          protocol has no terminator.
+        """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(self.timeout)
@@ -71,13 +87,23 @@ class MayaBridge:
                 sock.sendall((command + '\n').encode('utf-8'))
 
                 response = b''
+                got_any = False  # True once recv() has returned at least once
                 while True:
                     try:
                         chunk = sock.recv(4096)
+                        got_any = True
                         if not chunk:
-                            break
+                            break  # peer closed cleanly
                         response += chunk
                     except socket.timeout:
+                        if not got_any:
+                            raise MayaConnectionError(
+                                f"Maya Command Port at {self.host}:{self.port} "
+                                f"accepted the connection but returned no data "
+                                f"within {self.timeout}s. Maya may be blocked by a "
+                                "modal dialog, executing a long-running command, "
+                                "or the Command Port may be orphaned after a crash."
+                            )
                         break
 
                 return response.decode('utf-8').strip()
