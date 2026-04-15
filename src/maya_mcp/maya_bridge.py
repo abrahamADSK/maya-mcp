@@ -132,16 +132,23 @@ class MayaBridge:
     # in an isolated namespace, stringifies the result, and writes it to
     # _MCP_RESULT_PATH so the bridge can read it from the local filesystem
     # without depending on Maya's command-port stdout capture.
+    #
+    # Pre-populates the user namespace with ``cmds`` and ``json``: every
+    # server.py tool generates Python that assumes ``cmds`` is in scope, and
+    # direct ``bridge.execute()`` callers expect the same. Before this was
+    # fixed the wrapper imported cmds at its own module level which did NOT
+    # reach the user exec namespace, so callers had to redundantly import
+    # maya.cmds themselves; any code that did not was greeted with a NameError.
     _WRAPPER_BODY = (
-        "import maya.cmds as cmds\n"
-        "import json\n"
+        "import maya.cmds as _mcp_cmds\n"
+        "import json as _mcp_json\n"
         "try:\n"
-        "    _mcp_result_ns = {}\n"
+        "    _mcp_result_ns = {'cmds': _mcp_cmds, 'json': _mcp_json}\n"
         "    _mcp_user_code = open(_MCP_SCRIPT_PATH).read()\n"
         "    exec(_mcp_user_code, _mcp_result_ns)\n"
         "    _mcp_result = _mcp_result_ns.get('result', 'OK')\n"
         "    if isinstance(_mcp_result, (list, dict, tuple)):\n"
-        "        _mcp_payload = json.dumps(_mcp_result)\n"
+        "        _mcp_payload = _mcp_json.dumps(_mcp_result)\n"
         "    else:\n"
         "        _mcp_payload = str(_mcp_result)\n"
         "except Exception as _mcp_e:\n"

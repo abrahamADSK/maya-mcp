@@ -611,6 +611,66 @@ class TestFileBasedReturn:
         # And no longer relies on a module-level _mcp_result global being read.
         assert "print(_mcp_result)" not in body
 
+    def test_wrapper_body_runs_user_code_with_cmds_preloaded(self, tmp_path, monkeypatch):
+        """Simulate Maya's side: prepare wrapper files, exec the wrapper
+        inside this Python process with a stub `maya.cmds` module, and verify
+        that user code that references `cmds` without importing it still
+        produces the right result file content.
+
+        This is the regression test for the Chat 41 wrapper NameError issue
+        — before the fix, ``bridge.execute('result = cmds.ls()')`` raised
+        ``NameError: name 'cmds' is not defined`` because the wrapper's
+        module-level import never reached the exec namespace.
+        """
+        import sys
+        import types
+
+        # Stub maya.cmds with the smallest API surface the test exercises
+        fake_maya = types.ModuleType("maya")
+        fake_cmds = types.ModuleType("maya.cmds")
+        fake_cmds.ls = lambda *a, **kw: ["pCubeShape1", "pSphereShape1"]
+        fake_maya.cmds = fake_cmds
+        monkeypatch.setitem(sys.modules, "maya", fake_maya)
+        monkeypatch.setitem(sys.modules, "maya.cmds", fake_cmds)
+
+        # Redirect tempfile default dir into the pytest tmp_path so we don't
+        # litter /tmp with regression artefacts, then prepare the wrapper.
+        monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+
+        user_path, wrapper_path, result_path = MayaBridge._prepare_wrapper_files(
+            "result = cmds.ls(type='mesh')"
+        )
+        try:
+            # Run the wrapper as Maya would: exec its contents. The wrapper
+            # writes to result_path on success.
+            exec(open(wrapper_path).read(), {"__name__": "__main__"})
+            assert os.path.exists(result_path), "wrapper did not write result file"
+            payload = open(result_path).read()
+            # The wrapper json.dumps the list
+            assert payload == '["pCubeShape1", "pSphereShape1"]'
+        finally:
+            MayaBridge._cleanup_temp_files(user_path, wrapper_path, result_path)
+
+    def test_wrapper_body_prepopulates_cmds_and_json(self):
+        """User code must be able to reference ``cmds`` and ``json`` without
+        re-importing them. The wrapper pre-populates _mcp_result_ns with
+        both before exec — a fix for the historical NameError gotcha where
+        the wrapper imported cmds at its own module level and it never
+        reached the user's exec globals."""
+        body = MayaBridge._WRAPPER_BODY
+        # Internal imports use _mcp_ prefixed aliases to avoid shadowing user
+        # names inside the wrapper's own frame.
+        assert "import maya.cmds as _mcp_cmds" in body
+        assert "import json as _mcp_json" in body
+        # The exec namespace dict must expose them under the un-prefixed
+        # names that every existing caller (server.py tools + direct
+        # bridge.execute users) assumes.
+        assert "'cmds': _mcp_cmds" in body
+        assert "'json': _mcp_json" in body
+        # The dumps call uses the prefixed alias so the wrapper itself
+        # keeps working even if user code rebinds a name called "json".
+        assert "_mcp_json.dumps" in body
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4.1.8 — Silent Maya recv timeout (Bug 1 regression suite)
