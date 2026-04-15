@@ -12,12 +12,15 @@ Provides:
 """
 
 import hashlib
+import logging
 import sys
 import json
 import socket
 import threading
+import time
 import types as _types
 from pathlib import Path
+from typing import Callable, Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -98,8 +101,9 @@ class MockMayaTCPServer:
     Lightweight TCP server that mimics Maya's Command Port.
 
     Accepts connections, records received commands, and replies
-    with a configurable response.  Supports the dual-connection
-    pattern used by MayaBridge.send_python().
+    with a configurable response. Supports the file-based result
+    return used by MayaBridge.send_python() via the ``on_receive``
+    side-effect hook.
     """
 
     def __init__(self, host: str = "localhost", port: int = 0):
@@ -113,6 +117,15 @@ class MockMayaTCPServer:
         self.received_commands: list[str] = []
         self.responses: list[str] = []       # FIFO queue of replies
         self.default_response: str = "OK"
+        # Optional side-effect hook: called with the received command BEFORE
+        # the mock sends its response. Tests use this to simulate Maya
+        # writing the wrapper result file to disk in response to a
+        # send_python() invocation.
+        self.on_receive: Optional[Callable[[str], None]] = None
+        # Optional silent mode: when True, the mock accepts the connection,
+        # never sends data, and never closes it from its side until shutdown.
+        # Used to test the bug-1 "silent Maya" timeout path.
+        self.silent: bool = False
         self._running = False
         self._thread: threading.Thread | None = None
 
@@ -154,13 +167,32 @@ class MockMayaTCPServer:
                 cmd = data.decode("utf-8").strip()
                 self.received_commands.append(cmd)
 
+                if self.on_receive is not None:
+                    try:
+                        self.on_receive(cmd)
+                    except Exception as exc:  # surface in test logs, don't crash thread
+                        logging.getLogger(__name__).warning(
+                            "MockMayaTCPServer.on_receive raised: %s", exc
+                        )
+
+                if self.silent:
+                    # Hold the connection open without ever replying so the
+                    # bridge's recv() loop hits its socket timeout with an
+                    # empty buffer. Loop until the test calls stop().
+                    while self._running:
+                        time.sleep(0.05)
+                    continue
+
                 # Pick response from queue, or use default
                 reply = self.responses.pop(0) if self.responses else self.default_response
                 conn.sendall(reply.encode("utf-8"))
             except Exception:
                 pass
             finally:
-                conn.close()
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 @pytest.fixture()
@@ -180,6 +212,47 @@ def bridge_to_mock(mock_maya_server):
         port=mock_maya_server.port,
         timeout=3.0,
     )
+
+
+def _build_wrapper_result_writer(payload: str) -> Callable[[str], None]:
+    """Return an ``on_receive`` callback that simulates Maya executing the
+    wrapper bootstrap and writing ``payload`` to the result file.
+
+    The bridge's send_python() embeds _MCP_RESULT_PATH inside the wrapper
+    file referenced by the MEL command; this helper parses that file and
+    writes ``payload`` to the path it declares. It is the test-side analogue
+    of Maya running the wrapper for real.
+
+    Tests pass the resulting callable to ``mock_maya_server.on_receive``.
+    """
+    import re
+
+    def _writer(cmd: str) -> None:
+        # The MEL command looks like: python("exec(open('/tmp/_mcp_wrap_xxx.py').read())")
+        match = re.search(r"open\('([^']+)'\)", cmd)
+        if not match:
+            return
+        wrapper_path = match.group(1)
+        try:
+            with open(wrapper_path, "r", encoding="utf-8") as fh:
+                wrapper_src = fh.read()
+        except FileNotFoundError:
+            return
+        # Wrapper writes _MCP_RESULT_PATH = '<path>' near its top.
+        path_match = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", wrapper_src)
+        if not path_match:
+            return
+        result_path = path_match.group(1)
+        with open(result_path, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+
+    return _writer
+
+
+@pytest.fixture()
+def wrapper_result_writer():
+    """Factory fixture returning :func:`_build_wrapper_result_writer`."""
+    return _build_wrapper_result_writer
 
 
 # ── RAG search fixtures ────────────────────────────────────────────────────
