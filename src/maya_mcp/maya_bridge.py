@@ -156,12 +156,15 @@ class MayaBridge:
         "Maya accepted the wrapper command but no result file was produced. "
         "The Python interpreter inside Maya may be blocked (modal dialog, "
         "long-running command) or the Command Port may be in a degraded state "
-        "(orphaned after a crash, or opened without the right options).\n\n"
+        "(orphaned after a crash, opened in the wrong sourceType, or the "
+        "wrapper file path is not reachable from Maya's process).\n\n"
+        "The bridge sends MEL commands and wraps Python in MEL python(...) "
+        "calls, so the Command Port MUST be opened with sourceType='mel'. "
         "To recover, run this in Maya's Script Editor (Python tab):\n"
         "    import maya.cmds as cmds\n"
         "    if cmds.commandPort('localhost:8100', query=True):\n"
         "        cmds.commandPort('localhost:8100', close=True)\n"
-        "    cmds.commandPort('localhost:8100', sourceType='python', echoOutput=True)\n"
+        "    cmds.commandPort('localhost:8100', sourceType='mel')\n"
         "    print('Command port restarted')"
     )
 

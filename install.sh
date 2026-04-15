@@ -12,7 +12,10 @@
 #   4. Builds the RAG index via maya_mcp.rag.build_index
 #   5. Registers (or updates) the MCP server entry in ~/.claude.json
 #   6. Pre-approves MCP tools in ~/.claude/settings.json
-#   7. Prints an installation summary
+#   7. Detects installed Maya versions and writes an idempotent guarded
+#      block into each userSetup.py that opens the Command Port and
+#      registers the MCP Pipeline menu on Maya startup
+#   8. Prints an installation summary
 #
 # Usage:
 #   chmod +x install.sh
@@ -60,7 +63,7 @@ echo ""
 # =============================================================================
 # STEP 1 — Verify Python 3.10+
 # =============================================================================
-info "Step 1/6 — Checking Python version..."
+info "Step 1/7 — Checking Python version..."
 
 # Try python3 first, fall back to python
 PYTHON_BIN=""
@@ -103,7 +106,7 @@ fi
 # =============================================================================
 # STEP 2 — Create virtual environment in .venv/ (if not already present)
 # =============================================================================
-info "Step 2/6 — Setting up virtual environment..."
+info "Step 2/7 — Setting up virtual environment..."
 
 if [[ -d "${VENV_DIR}" && -f "${VENV_DIR}/bin/python" ]]; then
     success "Virtual environment already exists at .venv/ — skipping creation"
@@ -122,7 +125,7 @@ VENV_PIP="${VENV_DIR}/bin/pip"
 # =============================================================================
 # STEP 3 — Install package in editable mode (pip install -e .)
 # =============================================================================
-info "Step 3/6 — Installing maya-mcp package..."
+info "Step 3/7 — Installing maya-mcp package..."
 
 # Upgrade pip silently first to avoid resolver warnings
 "${VENV_PIP}" install --quiet --upgrade pip
@@ -140,7 +143,7 @@ fi
 # =============================================================================
 # STEP 4 — Build the RAG index
 # =============================================================================
-info "Step 4/6 — Building RAG index..."
+info "Step 4/7 — Building RAG index..."
 
 # Check if index already exists and appears complete (has at least one file)
 INDEX_DIR="${PKG_DIR}/rag/index"
@@ -167,7 +170,7 @@ fi
 # =============================================================================
 # STEP 5 — Register MCP server in ~/.claude.json
 # =============================================================================
-info "Step 5/6 — Registering MCP server in ~/.claude.json..."
+info "Step 5/7 — Registering MCP server in ~/.claude.json..."
 
 # Entry uses `python -m maya_mcp.server` for a proper package invocation
 MCP_COMMAND="${VENV_DIR}/bin/python"
@@ -264,7 +267,7 @@ fi
 # =============================================================================
 # STEP 6 — Pre-approve MCP tools in ~/.claude/settings.json
 # =============================================================================
-info "Step 6/6 — Pre-approving maya-mcp tools in ~/.claude/settings.json..."
+info "Step 6/7 — Pre-approving maya-mcp tools in ~/.claude/settings.json..."
 
 "${VENV_PYTHON}" - <<'PYEOF'
 import json, os
@@ -348,6 +351,269 @@ else
 fi
 
 # =============================================================================
+# STEP 7 — Configure Maya userSetup.py for every detected Maya version
+# =============================================================================
+# Historical gap: prior to this step, install.sh stopped after registering
+# the MCP server in ~/.claude.json and told the user to manually paste a
+# snippet into Maya's userSetup.py. Users who skipped that step ended up
+# with a registered-but-non-functional maya-mcp whose failure mode was a
+# silent empty response from maya_ping (see the bridge Chat 41 incident).
+#
+# This step scans for installed Maya versions on this host and writes an
+# idempotent guarded block to each version's user scripts/userSetup.py.
+# The block:
+#   - adds this repo root to sys.path for maya-mcp / console imports
+#   - opens the Command Port on MAYA_PORT (from .env, or default 8100)
+#     using sourceType='mel' and the name= kwarg form (Maya 2027 silently
+#     ignores the positional form when sourceType is given)
+#   - installs the MCP Pipeline menu via executeDeferred
+#
+# Reruns are safe: the block is bounded by sentinel markers and the
+# installer replaces the whole region when the markers are found.
+# =============================================================================
+info "Step 7/7 — Configuring Maya userSetup.py for auto-bootstrap..."
+
+# Resolve the port the userSetup snippet should use, honoring .env override.
+# set -e + pipefail: grep may legitimately return 1 (no match in .env), which
+# would abort the installer; the `|| true` short-circuit keeps the pipeline
+# non-fatal and we inspect `_env_port` afterwards.
+USERSETUP_PORT="8100"
+if [[ -f "${REPO_ROOT}/.env" ]]; then
+    _env_port=$( (grep -E '^MAYA_PORT=' "${REPO_ROOT}/.env" || true) \
+                | tail -1 | cut -d= -f2 | tr -d ' "')
+    if [[ -n "${_env_port}" ]]; then
+        USERSETUP_PORT="${_env_port}"
+    fi
+fi
+
+"${VENV_PYTHON}" - "${REPO_ROOT}" "${USERSETUP_PORT}" <<'PYEOF'
+"""
+Scan for installed Maya versions, locate each version's user scripts dir,
+and write an idempotent maya-mcp guarded block into userSetup.py.
+"""
+import glob
+import os
+import re
+import sys
+from pathlib import Path
+
+REPO_ROOT = sys.argv[1]
+PORT = sys.argv[2]
+
+SENTINEL_START = "# --- MCP Pipeline Console auto-setup ---"
+SENTINEL_END = "# --- end MCP Pipeline Console ---"
+
+
+def detect_maya_versions() -> list[str]:
+    """Return a sorted list of Maya version strings that are actually
+    installed on this host.
+
+    Only trust filesystem evidence of the *application binary*:
+
+      - macOS:   /Applications/Autodesk/maya<version>/Maya.app
+      - Linux:   /usr/autodesk/maya<version>-x64
+
+    Preference directories under ``~/Library/Preferences/Autodesk/maya/``
+    or ``~/maya/`` are deliberately NOT considered signs of an install:
+    uninstalling Maya leaves the prefs tree behind, and writing a
+    userSetup.py into a stale prefs dir would be misleading and churn
+    the next install.sh --doctor run.
+    """
+    versions: set[str] = set()
+
+    for path in glob.glob("/Applications/Autodesk/maya*/Maya.app"):
+        match = re.search(r"/maya(\d{4}(?:\.\d+)?)/", path)
+        if match:
+            versions.add(match.group(1))
+
+    for path in glob.glob("/usr/autodesk/maya*-x64"):
+        match = re.search(r"/maya(\d{4}(?:\.\d+)?)-x64", path)
+        if match:
+            versions.add(match.group(1))
+
+    return sorted(versions)
+
+
+def scripts_dir_for(version: str) -> Path | None:
+    """Return the per-user scripts dir for a Maya version, creating it if the
+    parent exists. Returns None if no preference directory is available."""
+    candidates = [
+        Path.home() / "Library" / "Preferences" / "Autodesk" / "maya" / version / "scripts",
+        Path.home() / "maya" / version / "scripts",
+    ]
+    for d in candidates:
+        if d.is_dir():
+            return d
+        # Auto-create the scripts dir if the per-version parent exists. We do
+        # NOT create the entire preference tree — that is Maya's job on first
+        # launch. Only fill the gap when the parent is present.
+        if d.parent.is_dir():
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+    return None
+
+
+def build_block(repo_root: str, port: str) -> str:
+    """Return the guarded block to write into userSetup.py.
+
+    Rationale for each piece:
+      - sys.path insertion: lets ``from console.maya_panel import ...`` work
+        for the panel install path — this is the persistence mechanism for
+        the retain=True workspaceControl restore that .mod files could not
+        solve on Maya 2026.
+      - _mcp_open_command_port uses name= kwarg on the open call because
+        Maya 2027 silently ignores cmds.commandPort(":8100", sourceType=...)
+        when the first arg is positional. The query form is unaffected.
+      - Both helpers are wrapped in executeDeferred so Maya's main loop is
+        ready before we touch UI / networking.
+      - Every exception is swallowed: a broken userSetup.py would prevent
+        Maya from starting at all, so fail-open is the only responsible
+        choice. The doctor subcommand handles detection instead.
+    """
+    lines = [
+        SENTINEL_START,
+        "import sys as _mcp_sys",
+        "",
+        f'_mcp_root = r"{repo_root}"',
+        "if _mcp_root not in _mcp_sys.path:",
+        "    _mcp_sys.path.insert(0, _mcp_root)",
+        "",
+        "import maya.utils as _mcp_utils",
+        "",
+        "",
+        "def _mcp_open_command_port():",
+        '    """Open the maya-mcp Command Port (mel sourceType, name= kwarg)."""',
+        "    try:",
+        "        import maya.cmds as _mc",
+        f'        if not _mc.commandPort(":{port}", query=True):',
+        f'            _mc.commandPort(name=":{port}", sourceType="mel")',
+        "    except Exception:",
+        "        pass",
+        "",
+        "",
+        "def _mcp_menu_startup():",
+        '    """Register the MCP Pipeline menu if the panel module is importable."""',
+        "    try:",
+        "        from console.maya_panel import install_menu",
+        "        import maya.cmds as _mc",
+        '        if not _mc.menu("mcpPipelineMenu", exists=True):',
+        "            install_menu()",
+        "    except Exception:",
+        "        pass",
+        "",
+        "",
+        "_mcp_utils.executeDeferred(_mcp_open_command_port)",
+        "_mcp_utils.executeDeferred(_mcp_menu_startup)",
+        SENTINEL_END,
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def upsert_block(user_setup_path: Path, block: str) -> str:
+    """Write the block into user_setup_path idempotently.
+
+    Returns one of: 'created', 'updated', 'unchanged'.
+    """
+    existing = ""
+    if user_setup_path.is_file():
+        existing = user_setup_path.read_text(encoding="utf-8", errors="replace")
+
+    if SENTINEL_START in existing:
+        start = existing.index(SENTINEL_START)
+        if SENTINEL_END in existing[start:]:
+            end_rel = existing[start:].index(SENTINEL_END) + len(SENTINEL_END)
+            before = existing[:start].rstrip("\n")
+            after = existing[start + end_rel:].lstrip("\n")
+            if before and not before.endswith("\n"):
+                before += "\n"
+            if before:
+                before += "\n"
+            new_content = before + block
+            if after:
+                new_content += "\n" + after
+            if new_content == existing:
+                return "unchanged"
+            user_setup_path.write_text(new_content, encoding="utf-8")
+            return "updated"
+        # Malformed: start without end. Append a fresh end marker after the
+        # block we're about to write, preserving content before the start.
+        before = existing[:start].rstrip("\n")
+        if before:
+            before += "\n\n"
+        user_setup_path.write_text(before + block, encoding="utf-8")
+        return "updated"
+
+    # No existing block — append the block, preserving any prior content.
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    if existing:
+        existing += "\n"
+    user_setup_path.write_text(existing + block, encoding="utf-8")
+    return "created" if not existing else "updated"
+
+
+def main() -> int:
+    versions = detect_maya_versions()
+    if not versions:
+        print(
+            "[maya-mcp] No Maya installations detected in "
+            "/Applications/Autodesk/ or ~/maya/. Skipping userSetup.py step.",
+            flush=True,
+        )
+        print("[maya-mcp] Install Maya first, then rerun ./install.sh.", flush=True)
+        return 0
+
+    block = build_block(REPO_ROOT, PORT)
+    wrote_any = False
+    skipped_versions: list[str] = []
+
+    for version in versions:
+        scripts_dir = scripts_dir_for(version)
+        if scripts_dir is None:
+            skipped_versions.append(version)
+            continue
+        target = scripts_dir / "userSetup.py"
+        try:
+            action = upsert_block(target, block)
+        except OSError as exc:
+            print(f"[maya-mcp] FAILED to write {target}: {exc}", flush=True)
+            continue
+        wrote_any = True
+        symbol = {"created": "+", "updated": "~", "unchanged": "="}[action]
+        print(
+            f"[maya-mcp] {symbol} Maya {version}: {target} ({action})",
+            flush=True,
+        )
+
+    if skipped_versions:
+        print(
+            "[maya-mcp] Skipped (no user preference dir yet, launch Maya "
+            "once to create it, then rerun install): " + ", ".join(skipped_versions),
+            flush=True,
+        )
+
+    if wrote_any:
+        print(
+            f"[maya-mcp] Command Port will open on :{PORT} (sourceType=mel) "
+            "on the next Maya launch.",
+            flush=True,
+        )
+    return 0
+
+
+sys.exit(main())
+PYEOF
+_us_rc=$?
+
+if [[ $_us_rc -eq 0 ]]; then
+    success "Maya userSetup.py configured (see lines above for per-version status)"
+    STEPS_OK+=("Maya userSetup.py configured (Command Port :${USERSETUP_PORT}, menu install, sys.path)")
+else
+    warn "userSetup.py write step exited with code ${_us_rc} — see output above"
+    STEPS_WARN+=("userSetup.py configuration had non-fatal errors — inspect output")
+fi
+
+# =============================================================================
 # CHECK — .env file (informational, non-blocking)
 # =============================================================================
 ENV_FILE="${REPO_ROOT}/.env"
@@ -405,10 +671,16 @@ if [[ ${#STEPS_ERR[@]} -eq 0 ]]; then
     echo -e "  ${BOLD}Next steps:${RESET}"
     echo -e "  1. Copy ${CYAN}.env.example${RESET} → ${CYAN}.env${RESET} and fill in your values"
     echo -e "     ${CYAN}cp .env.example .env${RESET}"
-    echo -e "  2. Add the Command Port snippet to your Maya ${CYAN}userSetup.py${RESET}"
-    echo -e "     (see README.md → Installation → Step 4)"
+    echo -e "  2. Restart Maya once (Step 7 wrote a bootstrap block into"
+    echo -e "     ${CYAN}userSetup.py${RESET} for every detected version — Maya picks it"
+    echo -e "     up on the next launch)."
     echo -e "  3. Restart Claude Code (or run ${CYAN}claude${RESET}) — maya-mcp will appear"
     echo -e "     in your MCP server list."
+    echo ""
+    echo -e "  ${BOLD}Verify the install:${RESET} run ${CYAN}./install.sh --doctor${RESET} for a"
+    echo -e "  5-check sanity sweep (claude.json entry, .env contents,"
+    echo -e "  userSetup.py bootstrap, Maya Command Port reachability,"
+    echo -e "  package importable)."
     echo ""
     echo -e "  ${BOLD}Verify the entry in ~/.claude.json:${RESET}"
     if command -v jq &>/dev/null; then
