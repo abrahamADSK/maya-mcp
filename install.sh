@@ -51,6 +51,369 @@ VENV_DIR="${REPO_ROOT}/.venv"
 PKG_DIR="${REPO_ROOT}/src/maya_mcp"
 CLAUDE_JSON="${HOME}/.claude.json"
 
+# =============================================================================
+# DOCTOR — verify install completeness without re-running the installer
+# =============================================================================
+# Usage: ./install.sh --doctor
+#
+# Sweeps the install state in 5 independent checks. Each check prints PASS,
+# FAIL or WARN with a concrete remediation sentence. Exit code is 0 if all
+# checks pass and 1 otherwise — safe to chain in CI or pre-session hooks.
+#
+# The doctor is designed so that a future Claude Code session opening this
+# repo can run `./install.sh --doctor` as a Phase 0 verification step BEFORE
+# attempting any smoke test against Maya. This is the lesson of Chat 41:
+# spending an hour diagnosing symptoms of a broken install is a waste when a
+# 2-second doctor sweep would have revealed the root cause immediately.
+#
+# Checks:
+#   1. ~/.claude.json has mcpServers.maya-mcp with a valid cwd pointing
+#      at this repo.
+#   2. .env file exists at repo root and does not contain placeholder
+#      values like "http://your-gpu-host:8000".
+#   3. For each Maya version detected (same rule as Step 7), the
+#      user scripts/userSetup.py exists and contains the sentinel block
+#      with the current repo root path.
+#   4. If Maya is running on MAYA_PORT, TCP probe + `about -v` returns
+#      real version output (not empty bytes — the Chat 41 silent cascade
+#      symptom). If Maya is not running, this check is SKIP, not FAIL.
+#   5. The maya-mcp package is importable from the venv (``python -c
+#      "import maya_mcp.maya_bridge"`` succeeds).
+# =============================================================================
+
+run_doctor() {
+    echo ""
+    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}  maya-mcp — doctor${RESET}"
+    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    info "Repo root : ${REPO_ROOT}"
+
+    local venv_python="${VENV_DIR}/bin/python"
+    local exit_code=0
+
+    if [[ ! -x "${venv_python}" ]]; then
+        error "Venv is missing: ${venv_python}"
+        error "  Run './install.sh' to create it."
+        return 1
+    fi
+
+    # Resolve MAYA_PORT from .env (or default 8100), used by checks 3 and 4.
+    local doctor_port="8100"
+    if [[ -f "${REPO_ROOT}/.env" ]]; then
+        local _env_port
+        _env_port=$( (grep -E '^MAYA_PORT=' "${REPO_ROOT}/.env" || true) \
+                    | tail -1 | cut -d= -f2 | tr -d ' "')
+        if [[ -n "${_env_port}" ]]; then
+            doctor_port="${_env_port}"
+        fi
+    fi
+
+    "${venv_python}" - "${REPO_ROOT}" "${CLAUDE_JSON}" "${doctor_port}" <<'PYEOF'
+"""
+Doctor implementation. Each check is a single function returning a
+(status, message) tuple where status is one of 'PASS', 'FAIL', 'WARN',
+'SKIP'. Messages must include a remediation sentence on FAIL so a user
+(or a Claude session) can act on the report without reading the source.
+"""
+import glob
+import json
+import os
+import re
+import socket
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(sys.argv[1])
+CLAUDE_JSON = Path(sys.argv[2])
+MAYA_PORT = int(sys.argv[3])
+
+SENTINEL_START = "# --- MCP Pipeline Console auto-setup ---"
+SENTINEL_END = "# --- end MCP Pipeline Console ---"
+
+RESET = "\033[0m"
+RED = "\033[0;31m"
+GREEN = "\033[0;32m"
+YELLOW = "\033[1;33m"
+CYAN = "\033[0;36m"
+BOLD = "\033[1m"
+
+
+def _symbol(status: str) -> str:
+    return {
+        "PASS": f"{GREEN}✓{RESET}",
+        "FAIL": f"{RED}✗{RESET}",
+        "WARN": f"{YELLOW}⚠{RESET}",
+        "SKIP": f"{CYAN}·{RESET}",
+    }[status]
+
+
+def check_claude_json() -> tuple[str, str]:
+    if not CLAUDE_JSON.is_file():
+        return (
+            "FAIL",
+            f"{CLAUDE_JSON} does not exist. "
+            f"Run ./install.sh to create the MCP server entry.",
+        )
+    try:
+        data = json.loads(CLAUDE_JSON.read_text())
+    except json.JSONDecodeError as exc:
+        return ("FAIL", f"{CLAUDE_JSON} is not valid JSON ({exc}). "
+                        f"Restore from a backup or run ./install.sh.")
+    entry = data.get("mcpServers", {}).get("maya-mcp")
+    if not entry:
+        return (
+            "FAIL",
+            f"~/.claude.json has no mcpServers.maya-mcp entry. "
+            f"Run ./install.sh to register it.",
+        )
+    entry_cwd = entry.get("cwd", "")
+    if Path(entry_cwd) != REPO_ROOT:
+        return (
+            "WARN",
+            f"mcpServers.maya-mcp.cwd = {entry_cwd!r} but repo root is "
+            f"{str(REPO_ROOT)!r}. Another maya-mcp clone may be active; "
+            f"rerun ./install.sh from THIS repo if that is wrong.",
+        )
+    command = entry.get("command", "")
+    if "/.venv/bin/python" not in command:
+        return (
+            "WARN",
+            f"mcpServers.maya-mcp.command = {command!r} does not point at a "
+            f"venv python. Rerun ./install.sh to regenerate the entry.",
+        )
+    return ("PASS", f"mcpServers.maya-mcp points at {entry_cwd}")
+
+
+def check_env_file() -> tuple[str, str]:
+    env = REPO_ROOT / ".env"
+    if not env.is_file():
+        return (
+            "WARN",
+            f".env not found at {env}. Copy .env.example → .env and set "
+            f"GPU_API_URL if you plan to use Vision3D.",
+        )
+    content = env.read_text(errors="replace")
+    placeholder_patterns = [
+        r"your[-_]gpu[-_]host",
+        r"your[-_]api[-_]key",
+        r"<your.*>",
+    ]
+    hits = []
+    for pat in placeholder_patterns:
+        if re.search(pat, content, re.IGNORECASE):
+            hits.append(pat)
+    if hits:
+        return (
+            "FAIL",
+            f".env contains unexpanded placeholders ({', '.join(hits)}). "
+            f"Edit {env} and replace with real values.",
+        )
+    return ("PASS", f"{env} present, no placeholder markers found")
+
+
+def detect_maya_versions() -> list[str]:
+    """Mirror Step 7's detection: only trust application binary evidence."""
+    versions = set()
+    for path in glob.glob("/Applications/Autodesk/maya*/Maya.app"):
+        match = re.search(r"/maya(\d{4}(?:\.\d+)?)/", path)
+        if match:
+            versions.add(match.group(1))
+    for path in glob.glob("/usr/autodesk/maya*-x64"):
+        match = re.search(r"/maya(\d{4}(?:\.\d+)?)-x64", path)
+        if match:
+            versions.add(match.group(1))
+    return sorted(versions)
+
+
+def check_user_setup() -> tuple[str, str]:
+    versions = detect_maya_versions()
+    if not versions:
+        return (
+            "SKIP",
+            "No Maya installation detected on this host — Step 7 has nothing "
+            "to configure. Install Maya and rerun ./install.sh.",
+        )
+
+    missing: list[str] = []
+    stale: list[str] = []
+    ok: list[str] = []
+    expected_root = f'r"{REPO_ROOT}"'
+
+    for version in versions:
+        scripts_dir = Path.home() / "Library/Preferences/Autodesk/maya" / version / "scripts"
+        if not scripts_dir.is_dir():
+            scripts_dir = Path.home() / "maya" / version / "scripts"
+        us = scripts_dir / "userSetup.py"
+        if not us.is_file():
+            missing.append(f"Maya {version}: {us}")
+            continue
+        content = us.read_text(errors="replace")
+        if SENTINEL_START not in content or SENTINEL_END not in content:
+            missing.append(f"Maya {version}: {us} has no maya-mcp sentinel block")
+            continue
+        if expected_root not in content:
+            stale.append(f"Maya {version}: {us} references a different repo path")
+            continue
+        ok.append(f"Maya {version}")
+
+    if missing:
+        return (
+            "FAIL",
+            "userSetup.py bootstrap missing for: " + "; ".join(missing)
+            + ". Run ./install.sh to write the block.",
+        )
+    if stale:
+        return (
+            "FAIL",
+            "userSetup.py block references a different clone for: "
+            + "; ".join(stale)
+            + ". Rerun ./install.sh from this repo to upsert.",
+        )
+    return ("PASS", f"userSetup.py configured for {', '.join(ok)}")
+
+
+def check_command_port() -> tuple[str, str]:
+    """Probe Maya's Command Port. SKIP cleanly if Maya is not running."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        s.connect(("localhost", MAYA_PORT))
+    except ConnectionRefusedError:
+        return (
+            "SKIP",
+            f"Maya Command Port :{MAYA_PORT} is not listening. Either Maya "
+            f"is not running or userSetup.py has not bootstrapped yet — "
+            f"launch Maya once and rerun the doctor.",
+        )
+    except Exception as exc:
+        return (
+            "WARN",
+            f"TCP probe to localhost:{MAYA_PORT} raised {type(exc).__name__}: {exc}. "
+            f"Investigate firewall / port conflict.",
+        )
+    try:
+        s.sendall(b"about -v\n")
+        s.settimeout(2.0)
+        data = b""
+        try:
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        except socket.timeout:
+            pass
+    finally:
+        s.close()
+
+    if not data:
+        return (
+            "FAIL",
+            f"Command Port :{MAYA_PORT} accepted the connection but returned "
+            f"no data. Either Maya is blocked (modal dialog, long operation), "
+            f"the port is in Python sourceType instead of MEL, or another "
+            f"service is holding the TCP port (e.g. Flame S+W on 7001). "
+            f"Inspect Maya's Script Editor for errors and rerun ./install.sh "
+            f"to rewrite userSetup.py.",
+        )
+    # If the response looks like a Python NameError, the port is in python
+    # mode. The bridge expects mel mode.
+    decoded = data.decode("utf-8", errors="replace")
+    if "is not defined" in decoded or "NameError" in decoded:
+        return (
+            "FAIL",
+            f"Command Port :{MAYA_PORT} is in sourceType='python' — the "
+            f"bridge sends MEL and the port must be 'mel'. Restart Maya (the "
+            f"Step 7 userSetup.py opens it in the right mode) or manually "
+            f"reopen it with cmds.commandPort(name=\":{MAYA_PORT}\", "
+            f"sourceType=\"mel\").",
+        )
+    # Strip trailing nulls / newlines for the display
+    version = decoded.strip("\x00\n ")
+    return ("PASS", f"Command Port :{MAYA_PORT} returned Maya version {version!r}")
+
+
+def check_package_importable() -> tuple[str, str]:
+    try:
+        import maya_mcp.maya_bridge as _  # noqa: F401
+    except Exception as exc:
+        return (
+            "FAIL",
+            f"Cannot import maya_mcp.maya_bridge from venv: "
+            f"{type(exc).__name__}: {exc}. Run ./install.sh to rebuild the venv.",
+        )
+    return ("PASS", "maya_mcp.maya_bridge imports cleanly from venv")
+
+
+CHECKS = [
+    ("claude.json entry", check_claude_json),
+    (".env file", check_env_file),
+    ("userSetup.py bootstrap", check_user_setup),
+    ("Command Port reachability", check_command_port),
+    ("maya_mcp importable", check_package_importable),
+]
+
+
+def main() -> int:
+    worst = "PASS"
+    rank = {"PASS": 0, "SKIP": 1, "WARN": 2, "FAIL": 3}
+    for i, (label, fn) in enumerate(CHECKS, start=1):
+        try:
+            status, msg = fn()
+        except Exception as exc:
+            status, msg = "FAIL", f"check raised {type(exc).__name__}: {exc}"
+        print(f"  {_symbol(status)} [{i}/{len(CHECKS)}] {BOLD}{label}{RESET}: {msg}")
+        if rank[status] > rank[worst]:
+            worst = status
+    print("")
+    if worst == "PASS":
+        print(f"{GREEN}{BOLD}All checks passed — install is ready.{RESET}")
+        return 0
+    if worst in ("WARN", "SKIP"):
+        print(f"{YELLOW}{BOLD}Install is usable but has warnings — review above.{RESET}")
+        return 0
+    print(f"{RED}{BOLD}Install is incomplete — fix the FAIL items above.{RESET}")
+    return 1
+
+
+sys.exit(main())
+PYEOF
+    exit_code=$?
+    echo ""
+    return ${exit_code}
+}
+
+# ── Argument parsing ─────────────────────────────────────────────────────────
+if [[ $# -gt 0 ]]; then
+    case "$1" in
+        --doctor|-d)
+            run_doctor
+            exit $?
+            ;;
+        --help|-h)
+            cat <<'HELPEOF'
+Usage: ./install.sh [--doctor]
+
+Commands:
+  (no args)       Run the full 7-step installer.
+  --doctor, -d    Sanity-check the install state without reinstalling.
+                  5 checks: claude.json entry, .env contents, userSetup.py
+                  bootstrap per detected Maya version, Maya Command Port
+                  reachability, and maya_mcp importable from venv.
+                  Exits 0 on PASS/WARN/SKIP, 1 on any FAIL.
+  --help, -h      Show this help.
+HELPEOF
+            exit 0
+            ;;
+        *)
+            error "Unknown argument: $1"
+            error "Run './install.sh --help' for usage."
+            exit 2
+            ;;
+    esac
+fi
+
 echo ""
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo -e "${BOLD}  maya-mcp — installation${RESET}"
