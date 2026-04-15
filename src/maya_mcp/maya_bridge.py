@@ -12,10 +12,12 @@ Features:
   - Batch execution: multiple code blocks in a single connection
 """
 
+import os
 import socket
 import json
 import logging
-from typing import Any, Optional
+import tempfile
+from typing import Any, Optional, Tuple
 
 logger = logging.getLogger("maya_mcp.bridge")
 
@@ -97,6 +99,63 @@ class MayaBridge:
         logger.debug(f"Result: {result[:200]}")
         return result
 
+    # ── Wrapper file body (module-level template) ───────────────────────────
+    # Uses _mcp_ prefix on every internal symbol to avoid collisions with
+    # user variables in the Script Editor. The wrapper exec()s the user code
+    # in an isolated namespace and stringifies the result.
+    _WRAPPER_BODY = (
+        "import maya.cmds as cmds\n"
+        "import json\n"
+        "try:\n"
+        "    _mcp_result_ns = {}\n"
+        "    _mcp_user_code = open(_MCP_SCRIPT_PATH).read()\n"
+        "    exec(_mcp_user_code, _mcp_result_ns)\n"
+        "    _mcp_result = _mcp_result_ns.get('result', 'OK')\n"
+        "    if isinstance(_mcp_result, (list, dict, tuple)):\n"
+        "        _mcp_result = json.dumps(_mcp_result)\n"
+        "    else:\n"
+        "        _mcp_result = str(_mcp_result)\n"
+        "except Exception as _mcp_e:\n"
+        "    _mcp_result = f'ERROR: {type(_mcp_e).__name__}: {_mcp_e}'\n"
+    )
+
+    @staticmethod
+    def _prepare_wrapper_files(code: str) -> Tuple[str, str]:
+        """Write user code + wrapper bootstrap to /tmp and return (user_path, wrapper_path).
+
+        The wrapper imports the user code via _MCP_SCRIPT_PATH so callers do not
+        have to inline-escape arbitrary Python through MEL.
+        """
+        tmp_user = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.py', prefix='_mcp_user_',
+            dir='/tmp', delete=False
+        )
+        tmp_user.write(code)
+        tmp_user.close()
+
+        tmp_wrapper = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.py', prefix='_mcp_wrap_',
+            dir='/tmp', delete=False
+        )
+        tmp_wrapper.write(f"_MCP_SCRIPT_PATH = {tmp_user.name!r}\n")
+        tmp_wrapper.write(MayaBridge._WRAPPER_BODY)
+        tmp_wrapper.close()
+
+        return tmp_user.name, tmp_wrapper.name
+
+    @staticmethod
+    def _cleanup_temp_files(*paths: Optional[str]) -> None:
+        """Best-effort unlink of every path. Missing files are silently ignored."""
+        for path in paths:
+            if not path:
+                continue
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.warning("Failed to remove temp file %s: %s", path, exc)
+
     def send_python(self, code: str) -> str:
         """
         Executes Python code in Maya.
@@ -109,51 +168,13 @@ class MayaBridge:
         This approach avoids all quote escaping, brace,
         and special character problems when passing code inline via MEL.
         """
-        import tempfile
-        import os
-
-        # Wrap the user code to capture result.
-        # All internal variables use _mcp_ prefix to avoid
-        # collisions with user variables in the Script Editor.
-        wrapper = (
-            "import maya.cmds as cmds\n"
-            "import json\n"
-            "try:\n"
-            "    _mcp_result_ns = {}\n"
-            "    _mcp_user_code = open(_MCP_SCRIPT_PATH).read()\n"
-            "    exec(_mcp_user_code, _mcp_result_ns)\n"
-            "    _mcp_result = _mcp_result_ns.get('result', 'OK')\n"
-            "    if isinstance(_mcp_result, (list, dict, tuple)):\n"
-            "        _mcp_result = json.dumps(_mcp_result)\n"
-            "    else:\n"
-            "        _mcp_result = str(_mcp_result)\n"
-            "except Exception as e:\n"
-            "    _mcp_result = f'ERROR: {type(e).__name__}: {e}'\n"
-        )
-
-        # Write user code to temporary file
-        tmp_user = None
-        tmp_wrapper = None
+        user_path: Optional[str] = None
+        wrapper_path: Optional[str] = None
         try:
-            # File with the user code
-            tmp_user = tempfile.NamedTemporaryFile(
-                mode='w', suffix='.py', prefix='_mcp_user_',
-                dir='/tmp', delete=False
-            )
-            tmp_user.write(code)
-            tmp_user.close()
-
-            # File with the wrapper that executes the user code
-            tmp_wrapper = tempfile.NamedTemporaryFile(
-                mode='w', suffix='.py', prefix='_mcp_wrap_',
-                dir='/tmp', delete=False
-            )
-            tmp_wrapper.write(f"_MCP_SCRIPT_PATH = '{tmp_user.name}'\n")
-            tmp_wrapper.write(wrapper)
-            tmp_wrapper.close()
+            user_path, wrapper_path = self._prepare_wrapper_files(code)
 
             # Connection 1: execute the wrapper (simple MEL command, no escaping)
-            mel_cmd = f'python("exec(open(\'{tmp_wrapper.name}\').read())")'
+            mel_cmd = f'python("exec(open(\'{wrapper_path}\').read())")'
             self._send_raw(mel_cmd)
 
             # Connection 2: retrieve result
@@ -165,11 +186,7 @@ class MayaBridge:
             return result
 
         finally:
-            # Clean up temporary files
-            if tmp_user and os.path.exists(tmp_user.name):
-                os.unlink(tmp_user.name)
-            if tmp_wrapper and os.path.exists(tmp_wrapper.name):
-                os.unlink(tmp_wrapper.name)
+            self._cleanup_temp_files(user_path, wrapper_path)
 
     def execute(self, code: str, as_json: bool = False) -> Any:
         """
