@@ -19,7 +19,10 @@ Test cases (aligned with TESTING_PLAN §4.1):
 
 import asyncio
 import json
+import os
+import re
 import socket
+import threading
 import unittest.mock
 import time
 
@@ -73,30 +76,31 @@ class TestSendReceive:
         result = bridge_to_mock.send_mel("polyCube")
         assert result == "pCube1"
 
-    def test_execute_returns_raw_string(self, mock_maya_server, bridge_to_mock):
-        """execute() without as_json returns a string."""
-        # send_python does 2 connections: execute + read result
-        mock_maya_server.responses = ["", '{"count": 42}']
+    def test_execute_returns_raw_string(self, mock_maya_server, bridge_to_mock, wrapper_result_writer):
+        """execute() without as_json returns the wrapper's result file content."""
+        mock_maya_server.on_receive = wrapper_result_writer('{"count": 42}')
         result = bridge_to_mock.execute("result = {'count': 42}")
         assert isinstance(result, str)
         assert "42" in result
 
-    def test_execute_as_json_parses(self, mock_maya_server, bridge_to_mock):
+    def test_execute_as_json_parses(self, mock_maya_server, bridge_to_mock, wrapper_result_writer):
         """execute(as_json=True) parses JSON response into dict."""
-        mock_maya_server.responses = ["", '{"count": 42}']
+        mock_maya_server.on_receive = wrapper_result_writer('{"count": 42}')
         result = bridge_to_mock.execute("result = {'count': 42}", as_json=True)
         assert isinstance(result, dict)
         assert result["count"] == 42
 
-    def test_execute_as_json_fallback(self, mock_maya_server, bridge_to_mock):
+    def test_execute_as_json_fallback(self, mock_maya_server, bridge_to_mock, wrapper_result_writer):
         """execute(as_json=True) returns raw string on invalid JSON."""
-        mock_maya_server.responses = ["", "not json"]
+        mock_maya_server.on_receive = wrapper_result_writer("not json")
         result = bridge_to_mock.execute("result = 'hello'", as_json=True)
         assert result == "not json"
 
-    def test_execute_error_raises(self, mock_maya_server, bridge_to_mock):
+    def test_execute_error_raises(self, mock_maya_server, bridge_to_mock, wrapper_result_writer):
         """execute() raises MayaExecutionError when result starts with ERROR:."""
-        mock_maya_server.responses = ["", "ERROR: NameError: name 'foo' is not defined"]
+        mock_maya_server.on_receive = wrapper_result_writer(
+            "ERROR: NameError: name 'foo' is not defined"
+        )
         with pytest.raises(MayaExecutionError, match="NameError"):
             bridge_to_mock.execute("result = foo")
 
@@ -144,17 +148,28 @@ class TestTimeout:
 class TestMayaPing:
     """Verify MayaBridge.ping() assembles version + scene info correctly."""
 
-    def test_ping_returns_complete_info(self, mock_maya_server, bridge_to_mock):
+    @staticmethod
+    def _wire_ping_responder(mock, writer_factory, version: str, os_name: str, scene_payload: str):
+        """Wire mock so the first 2 send_mel calls return version/os, then the
+        execute() call writes ``scene_payload`` to the wrapper result file."""
+        scene_writer = writer_factory(scene_payload)
+        call_count = {"n": 0}
+
+        def responder(cmd: str) -> None:
+            call_count["n"] += 1
+            if call_count["n"] >= 3:
+                scene_writer(cmd)
+
+        mock.on_receive = responder
+        # First two responses are direct send_mel returns.
+        mock.responses = [version, os_name]
+
+    def test_ping_returns_complete_info(self, mock_maya_server, bridge_to_mock, wrapper_result_writer):
         """ping() returns status, version, os, and scene dict."""
-        mock_maya_server.responses = [
-            # 1st call: send_mel("about -v")
-            "Maya 2025",
-            # 2nd call: send_mel("about -os")
-            "mac",
-            # 3rd+4th calls: execute() → send_python does 2 TCP connections
-            "",  # connection 1 of send_python (execute wrapper)
+        self._wire_ping_responder(
+            mock_maya_server, wrapper_result_writer, "Maya 2025", "mac",
             json.dumps({"objects": 10, "scene": "untitled", "renderer": "arnold"}),
-        ]
+        )
         info = bridge_to_mock.ping()
 
         assert info["status"] == "connected"
@@ -164,25 +179,20 @@ class TestMayaPing:
         assert info["scene"]["objects"] == 10
         assert info["scene"]["renderer"] == "arnold"
 
-    def test_ping_with_named_scene(self, mock_maya_server, bridge_to_mock):
+    def test_ping_with_named_scene(self, mock_maya_server, bridge_to_mock, wrapper_result_writer):
         """ping() correctly reports scene name."""
-        mock_maya_server.responses = [
-            "Maya 2024",
-            "linux",
-            "",
+        self._wire_ping_responder(
+            mock_maya_server, wrapper_result_writer, "Maya 2024", "linux",
             json.dumps({"objects": 3, "scene": "/projects/shot01.ma", "renderer": "arnold"}),
-        ]
+        )
         info = bridge_to_mock.ping()
         assert info["scene"]["scene"] == "/projects/shot01.ma"
 
-    def test_ping_scene_non_dict_fallback(self, mock_maya_server, bridge_to_mock):
+    def test_ping_scene_non_dict_fallback(self, mock_maya_server, bridge_to_mock, wrapper_result_writer):
         """ping() returns empty dict when scene info is not a dict."""
-        mock_maya_server.responses = [
-            "Maya 2025",
-            "mac",
-            "",
-            "not_json_at_all",
-        ]
+        self._wire_ping_responder(
+            mock_maya_server, wrapper_result_writer, "Maya 2025", "mac", "not_json_at_all"
+        )
         info = bridge_to_mock.ping()
         assert info["scene"] == {}
 
@@ -383,3 +393,209 @@ class TestMayaExecutePython:
 
         # _handle_error returns JSON with error key
         assert "error" in result.lower() or "Connection lost" in result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4.1.7 — File-based result return (Bug 2 regression suite)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestFileBasedReturn:
+    """
+    Regression suite for the file-based result return pattern.
+
+    The previous dual-connection implementation depended on Maya's command
+    port capturing the stdout of ``python("print(_mcp_result)")``, which is
+    fragile (echoOutput=False, broken stdout wiring, etc.). The current
+    implementation writes the wrapper result to a temp file from inside Maya
+    and the bridge reads that file locally — a single connection with no
+    dependency on stdout capture.
+    """
+
+    def test_send_python_uses_single_connection(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """send_python opens exactly ONE TCP connection (down from 2)."""
+        mock_maya_server.on_receive = wrapper_result_writer("OK")
+        bridge_to_mock.send_python("result = 'OK'")
+        assert len(mock_maya_server.received_commands) == 1, (
+            "send_python should use a single TCP connection after the file-based "
+            f"refactor, got {len(mock_maya_server.received_commands)}"
+        )
+
+    def test_send_python_reads_result_file(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """The result the bridge returns is the exact bytes the wrapper wrote."""
+        mock_maya_server.on_receive = wrapper_result_writer("hello world 42")
+        result = bridge_to_mock.send_python("result = 'hello world 42'")
+        assert result == "hello world 42"
+
+    def test_send_python_json_payload_roundtrip(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """Dict/list payloads serialized by the wrapper survive JSON roundtrip."""
+        payload = '{"objects": ["pCube1", "pSphere1"], "count": 2}'
+        mock_maya_server.on_receive = wrapper_result_writer(payload)
+        result = bridge_to_mock.execute("result = {'objects': ['pCube1', 'pSphere1'], 'count': 2}", as_json=True)
+        assert result == {"objects": ["pCube1", "pSphere1"], "count": 2}
+
+    def test_send_python_error_prefix_raises_execution_error(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """Result file content starting with 'ERROR:' raises MayaExecutionError."""
+        mock_maya_server.on_receive = wrapper_result_writer(
+            "ERROR: ZeroDivisionError: division by zero"
+        )
+        with pytest.raises(MayaExecutionError, match="ZeroDivisionError"):
+            bridge_to_mock.send_python("result = 1 / 0")
+
+    def test_send_python_raises_when_result_file_missing(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """If Maya accepts the command but no file is written, raise with diagnostic."""
+        # No on_receive callback → mock just ACKs the command, never writes a file.
+        # This mirrors the Chat 41 user scenario: Maya's command port responds
+        # but execute_python returns empty because the result return path is broken.
+        with pytest.raises(MayaExecutionError) as exc_info:
+            bridge_to_mock.send_python("result = cmds.ls()")
+        msg = str(exc_info.value)
+        assert "no result file" in msg.lower() or "did not produce" in msg.lower()
+        assert "commandPort" in msg, "diagnostic should include the recovery snippet"
+        assert "echoOutput=True" in msg, "diagnostic should suggest the fix"
+
+    def test_send_python_survives_silent_echo_output(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """Chat 41 scenario regression: Maya's command port does not echo stdout
+        but the wrapper still writes the result file. The bridge MUST read the
+        file and return the correct result, NOT empty string."""
+        # Mock returns empty string from the TCP connection (simulates a
+        # command port opened without echoOutput=True), but on_receive writes
+        # the result file as the real Maya would.
+        mock_maya_server.on_receive = wrapper_result_writer('["pCube1", "pSphere1"]')
+        mock_maya_server.default_response = ""  # broken echo
+        result = bridge_to_mock.execute("result = cmds.ls(geometry=True)", as_json=True)
+        assert result == ["pCube1", "pSphere1"]
+
+    def test_send_python_cleanup_on_success(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """All temp files (user, wrapper, result) are removed after a success."""
+        captured_paths = {"wrapper": None, "result": None}
+
+        def capture_and_write(cmd: str) -> None:
+            match = re.search(r"open\('([^']+)'\)", cmd)
+            if match:
+                captured_paths["wrapper"] = match.group(1)
+                with open(match.group(1)) as fh:
+                    src = fh.read()
+                m = re.search(r"_MCP_SCRIPT_PATH\s*=\s*'([^']+)'", src)
+                if m:
+                    captured_paths["user"] = m.group(1)
+                m2 = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", src)
+                if m2:
+                    captured_paths["result"] = m2.group(1)
+                    with open(m2.group(1), "w") as out:
+                        out.write("ok")
+
+        mock_maya_server.on_receive = capture_and_write
+        bridge_to_mock.send_python("result = 'ok'")
+
+        for kind, path in captured_paths.items():
+            assert path is not None, f"{kind} path was never captured"
+            assert not os.path.exists(path), f"{kind} temp file should be cleaned up: {path}"
+
+    def test_send_python_cleanup_on_error_path(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """Cleanup runs even when the wrapper writes an ERROR: payload."""
+        captured = {}
+
+        def writer_with_capture(cmd: str) -> None:
+            match = re.search(r"open\('([^']+)'\)", cmd)
+            if match:
+                captured["wrapper"] = match.group(1)
+                with open(match.group(1)) as fh:
+                    src = fh.read()
+                m = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", src)
+                if m:
+                    captured["result"] = m.group(1)
+                    with open(m.group(1), "w") as out:
+                        out.write("ERROR: NameError: foo")
+
+        mock_maya_server.on_receive = writer_with_capture
+        with pytest.raises(MayaExecutionError):
+            bridge_to_mock.send_python("result = foo")
+
+        assert not os.path.exists(captured["wrapper"])
+        assert not os.path.exists(captured["result"])
+
+    def test_send_python_cleanup_on_missing_file_path(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """Cleanup runs even when the result file is never created."""
+        captured = {}
+
+        def capture_only(cmd: str) -> None:
+            match = re.search(r"open\('([^']+)'\)", cmd)
+            if match:
+                captured["wrapper"] = match.group(1)
+                with open(match.group(1)) as fh:
+                    src = fh.read()
+                m = re.search(r"_MCP_SCRIPT_PATH\s*=\s*'([^']+)'", src)
+                if m:
+                    captured["user"] = m.group(1)
+
+        mock_maya_server.on_receive = capture_only
+        with pytest.raises(MayaExecutionError):
+            bridge_to_mock.send_python("result = cmds.ls()")
+
+        # Wrapper and user temp files should be cleaned up. Result file never
+        # existed, but cleanup tolerates that.
+        assert not os.path.exists(captured["wrapper"])
+        assert not os.path.exists(captured["user"])
+
+    def test_send_python_result_paths_unique_across_calls(self):
+        """Two prepared wrappers MUST get distinct result paths (uuid in name)."""
+        u1, w1, r1 = MayaBridge._prepare_wrapper_files("result = 1")
+        u2, w2, r2 = MayaBridge._prepare_wrapper_files("result = 2")
+        try:
+            assert r1 != r2
+            assert u1 != u2
+            assert w1 != w2
+            assert "_mcp_result_" in r1
+            assert r1.endswith(".json")
+        finally:
+            MayaBridge._cleanup_temp_files(u1, w1, r1, u2, w2, r2)
+
+    def test_send_python_result_paths_isolated_under_concurrency(
+        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+    ):
+        """Two threads invoking send_python in parallel never read each other's
+        result file (uuid path collision sanity check)."""
+        # Each call gets its own writer that returns a distinct payload. We
+        # don't actually need true thread parallelism — the fixture queues
+        # commands serially through the mock — but we exercise the path twice
+        # in quick succession and assert the results are not crossed.
+        results = []
+
+        def call(payload: str):
+            mock_maya_server.on_receive = wrapper_result_writer(payload)
+            results.append(bridge_to_mock.send_python(f"result = '{payload}'"))
+
+        call("first")
+        call("second")
+        assert results == ["first", "second"]
+
+    def test_wrapper_body_writes_to_result_path(self):
+        """Sanity check: the wrapper body opens _MCP_RESULT_PATH for writing.
+
+        This is a regression guard so that any future edit to the wrapper
+        template that drops the file-write line is caught immediately.
+        """
+        body = MayaBridge._WRAPPER_BODY
+        assert "_MCP_RESULT_PATH" in body
+        assert "open(_MCP_RESULT_PATH" in body
+        assert ".write(_mcp_payload)" in body
+        # And no longer relies on a module-level _mcp_result global being read.
+        assert "print(_mcp_result)" not in body
