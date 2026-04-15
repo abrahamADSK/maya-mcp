@@ -377,7 +377,7 @@ async def _do_launch(params: dict) -> str:
 
     return json.dumps({
         "error": f"Maya opened but Command Port did not respond in {max_wait}s.",
-        "hint": "Verify that you have Command Port in userSetup.py: cmds.commandPort(name='localhost:8100', sourceType='python', echoOutput=True)"
+        "hint": "Verify that you have Command Port in userSetup.py: cmds.commandPort(name='localhost:8100', sourceType='mel')"
     }, ensure_ascii=False)
 
 

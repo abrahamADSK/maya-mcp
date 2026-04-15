@@ -461,7 +461,9 @@ class TestFileBasedReturn:
         msg = str(exc_info.value)
         assert "no result file" in msg.lower() or "did not produce" in msg.lower()
         assert "commandPort" in msg, "diagnostic should include the recovery snippet"
-        assert "echoOutput=True" in msg, "diagnostic should suggest the fix"
+        assert "sourceType='mel'" in msg, (
+            "diagnostic should point at mel sourceType (the bridge's hard requirement)"
+        )
 
     def test_send_python_survives_silent_echo_output(
         self, mock_maya_server, bridge_to_mock, wrapper_result_writer

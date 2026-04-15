@@ -236,34 +236,67 @@ python -m maya_mcp.rag.build_index
 
 First run downloads the embedding model (~570 MB, cached afterwards). The index is stored in `src/maya_mcp/rag/index/` and can be committed to git.
 
-### 4. Set up Maya Command Port
+### 4. Set up Maya Command Port — automatic
 
-Add to your Maya `userSetup.py` (create it if it doesn't exist):
+**`install.sh` does this for you.** Step 7 of the installer detects every Maya version installed on the host, locates each version's user scripts dir, and writes an idempotent guarded block into `userSetup.py` that:
+
+- Adds the maya-mcp repo root to `sys.path`
+- Opens the Command Port on `MAYA_PORT` (from `.env`, default `8100`) using `sourceType='mel'` with the `name=` kwarg form (Maya 2027 silently ignores the positional form when `sourceType` is specified)
+- Registers the MCP Pipeline menu via `executeDeferred`
+
+The block is bounded by sentinel markers and reruns of `install.sh` are safe — the installer replaces the whole region when the markers are found.
+
+Run `./install.sh --doctor` after install to verify `userSetup.py` was written for every detected version (plus 4 other install-completeness checks).
+
+> **Port 8100 default rationale**: maya-mcp historically used port 7001, the Maya commandPort convention. On hosts with Autodesk Flame installed, port 7001 is already held by Flame's S+W Service Discovery and S+W Probe Server, and connections silently succeed against Flame instead of Maya — producing empty responses that the bridge (prior to v1.4.2) misinterpreted as successful no-ops. The default was moved to 8100 to coexist with Flame. Override via `MAYA_PORT` in `.env` if your environment still uses 7001.
+
+**The MCP Pipeline Console panel installs itself automatically.** The first time Claude connects to Maya (via `maya_ping` or `maya_launch`), the server injects the panel menu and UI through the Command Port. The panel docks next to the Attribute Editor and persists across sessions.
+
+<details>
+<summary><b>Manual fallback</b> (if Step 7 fails or you have an exotic Maya layout)</summary>
+
+Add to your Maya `userSetup.py`:
+
 - **Windows**: `%USERPROFILE%/Documents/maya/<version>/scripts/userSetup.py`
 - **macOS**: `~/Library/Preferences/Autodesk/maya/<version>/scripts/userSetup.py`
 - **Linux**: `~/maya/<version>/scripts/userSetup.py`
 
 ```python
-import maya.cmds as cmds
+# --- MCP Pipeline Console auto-setup ---
+import sys as _mcp_sys
 
-def open_command_port():
-    port_name = "localhost:8100"
+_mcp_root = r"/path/to/maya-mcp"  # replace with your clone path
+if _mcp_root not in _mcp_sys.path:
+    _mcp_sys.path.insert(0, _mcp_root)
+
+import maya.utils as _mcp_utils
+
+
+def _mcp_open_command_port():
     try:
-        if cmds.commandPort(port_name, query=True):
-            cmds.commandPort(name=port_name, close=True)
-    except RuntimeError:
+        import maya.cmds as _mc
+        if not _mc.commandPort(":8100", query=True):
+            _mc.commandPort(name=":8100", sourceType="mel")
+    except Exception:
         pass
-    cmds.commandPort(name=port_name, sourceType="python", echoOutput=True)
-    print(f"[MCP] Command Port open on {port_name}")
 
-cmds.evalDeferred(open_command_port)
+
+def _mcp_menu_startup():
+    try:
+        from console.maya_panel import install_menu
+        import maya.cmds as _mc
+        if not _mc.menu("mcpPipelineMenu", exists=True):
+            install_menu()
+    except Exception:
+        pass
+
+
+_mcp_utils.executeDeferred(_mcp_open_command_port)
+_mcp_utils.executeDeferred(_mcp_menu_startup)
+# --- end MCP Pipeline Console ---
 ```
 
-> **Port 8100 default rationale**: maya-mcp historically used port 7001, the Maya convention. On hosts with Autodesk Flame installed, port 7001 is already held by Flame's S+W Service Discovery and S+W Probe Server, and connections silently succeed against Flame instead of Maya — producing empty responses that the bridge (prior to v1.4.2) misinterpreted as successful no-ops. The default was moved to 8100 to coexist with Flame. Override via `MAYA_PORT` env var if your environment still uses 7001.
-
-**The MCP Pipeline Console panel installs itself automatically.** The first time Claude connects to Maya (via `maya_ping` or `maya_launch`), the server injects the panel menu and UI through the Command Port — no additional `userSetup.py` configuration needed. The panel docks next to the Attribute Editor and persists across sessions.
-
-> **Optional:** If you want the menu to be available even before Claude connects (e.g., on every Maya startup), see `console/userSetup_snippet.py` for additional `userSetup.py` entries.
+</details>
 
 ### 5. Configure Claude Code
 
