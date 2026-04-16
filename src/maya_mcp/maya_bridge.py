@@ -106,7 +106,7 @@ class MayaBridge:
                             )
                         break
 
-                return response.decode('utf-8').strip()
+                return response.decode('utf-8').strip().strip('\x00')
 
         except ConnectionRefusedError:
             raise MayaConnectionError(
