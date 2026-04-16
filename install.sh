@@ -56,7 +56,7 @@ CLAUDE_JSON="${HOME}/.claude.json"
 # =============================================================================
 # Usage: ./install.sh --doctor
 #
-# Sweeps the install state in 5 independent checks. Each check prints PASS,
+# Sweeps the install state in 8 independent checks. Each check prints PASS,
 # FAIL or WARN with a concrete remediation sentence. Exit code is 0 if all
 # checks pass and 1 otherwise — safe to chain in CI or pre-session hooks.
 #
@@ -71,14 +71,19 @@ CLAUDE_JSON="${HOME}/.claude.json"
 #      at this repo.
 #   2. .env file exists at repo root and does not contain placeholder
 #      values like "http://your-gpu-host:8000".
-#   3. For each Maya version detected (same rule as Step 7), the
+#   3. GPU_API_URL placeholder detection — warns if .env still has
+#      obvious placeholder values like "your-gpu-host" or "example.com".
+#   4. pyproject.toml existence — FAIL if missing (package uninstallable).
+#   5. For each Maya version detected (same rule as Step 7), the
 #      user scripts/userSetup.py exists and contains the sentinel block
 #      with the current repo root path.
-#   4. If Maya is running on MAYA_PORT, TCP probe + `about -v` returns
+#   6. If Maya is running on MAYA_PORT, TCP probe + `about -v` returns
 #      real version output (not empty bytes — the Chat 41 silent cascade
 #      symptom). If Maya is not running, this check is SKIP, not FAIL.
-#   5. The maya-mcp package is importable from the venv (``python -c
+#   7. The maya-mcp package is importable from the venv (``python -c
 #      "import maya_mcp.maya_bridge"`` succeeds).
+#   8. Optional Vision3D connectivity — if GPU_API_URL is set and
+#      non-placeholder, HTTP probe to /health or / with 3s timeout.
 # =============================================================================
 
 run_doctor() {
@@ -346,12 +351,134 @@ def check_package_importable() -> tuple[str, str]:
     return ("PASS", "maya_mcp.maya_bridge imports cleanly from venv")
 
 
+def check_placeholder_env() -> tuple[str, str]:
+    """Warn if GPU_API_URL still contains obvious placeholder values."""
+    env = REPO_ROOT / ".env"
+    if not env.is_file():
+        return (
+            "SKIP",
+            ".env not found — placeholder check skipped. Copy .env.example "
+            "to .env if you plan to use Vision3D.",
+        )
+    content = env.read_text(errors="replace")
+    # Extract the GPU_API_URL value (ignore commented lines)
+    gpu_url = ""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith("GPU_API_URL"):
+            _, _, val = stripped.partition("=")
+            gpu_url = val.strip().strip('"').strip("'")
+            break
+    if not gpu_url:
+        return (
+            "SKIP",
+            "GPU_API_URL is empty or not set in .env — Vision3D features "
+            "will be skipped at runtime.",
+        )
+    placeholder_patterns = [
+        r"your[-_]gpu[-_]host",
+        r"example\\.com",
+        r"<[^>]+>",
+        r"localhost:8000$",
+        r"127\\.0\\.0\\.1:8000$",
+    ]
+    for pat in placeholder_patterns:
+        if re.search(pat, gpu_url, re.IGNORECASE):
+            return (
+                "WARN",
+                f"GPU_API_URL looks like a placeholder ({gpu_url!r}). "
+                f"Edit .env and set GPU_API_URL to your actual Vision3D "
+                f"server, or leave empty to skip Vision3D features.",
+            )
+    return ("PASS", f"GPU_API_URL is set to {gpu_url!r} (non-placeholder)")
+
+
+def check_pyproject_toml() -> tuple[str, str]:
+    """Verify pyproject.toml exists in the repo root."""
+    toml_path = REPO_ROOT / "pyproject.toml"
+    if not toml_path.is_file():
+        return (
+            "FAIL",
+            f"pyproject.toml not found at {toml_path}. The package cannot "
+            f"be installed without it. Restore from git or re-clone the repo.",
+        )
+    return ("PASS", f"pyproject.toml present at {toml_path}")
+
+
+def check_vision3d_connectivity() -> tuple[str, str]:
+    """If GPU_API_URL is set and non-placeholder, probe it with HTTP."""
+    import urllib.request
+    import urllib.error
+
+    env = REPO_ROOT / ".env"
+    if not env.is_file():
+        return (
+            "SKIP",
+            "No .env file — Vision3D connectivity check skipped.",
+        )
+    content = env.read_text(errors="replace")
+    gpu_url = ""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith("GPU_API_URL"):
+            _, _, val = stripped.partition("=")
+            gpu_url = val.strip().strip('"').strip("'")
+            break
+    if not gpu_url:
+        return (
+            "SKIP",
+            "GPU_API_URL is empty — Vision3D connectivity check skipped.",
+        )
+    # Skip if placeholder
+    placeholder_patterns = [
+        r"your[-_]gpu[-_]host",
+        r"example\\.com",
+        r"<[^>]+>",
+    ]
+    for pat in placeholder_patterns:
+        if re.search(pat, gpu_url, re.IGNORECASE):
+            return (
+                "SKIP",
+                f"GPU_API_URL is a placeholder ({gpu_url!r}) — Vision3D "
+                f"connectivity check skipped.",
+            )
+    # Try /health first, then / as fallback
+    for endpoint in ["/health", "/"]:
+        url = gpu_url.rstrip("/") + endpoint
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status < 500:
+                    return (
+                        "PASS",
+                        f"Vision3D server at {gpu_url} is reachable "
+                        f"({endpoint} returned HTTP {resp.status}).",
+                    )
+        except urllib.error.URLError:
+            continue
+        except Exception:
+            continue
+    return (
+        "WARN",
+        f"Vision3D server at {gpu_url} is not reachable (tried /health "
+        f"and / with 3s timeout). Check that the server is running and "
+        f"the URL is correct, or leave GPU_API_URL empty to skip Vision3D.",
+    )
+
+
 CHECKS = [
     ("claude.json entry", check_claude_json),
     (".env file", check_env_file),
+    ("Placeholder env detection", check_placeholder_env),
+    ("pyproject.toml", check_pyproject_toml),
     ("userSetup.py bootstrap", check_user_setup),
     ("Command Port reachability", check_command_port),
     ("maya_mcp importable", check_package_importable),
+    ("Vision3D connectivity", check_vision3d_connectivity),
 ]
 
 
@@ -398,9 +525,11 @@ Usage: ./install.sh [--doctor]
 Commands:
   (no args)       Run the full 7-step installer.
   --doctor, -d    Sanity-check the install state without reinstalling.
-                  5 checks: claude.json entry, .env contents, userSetup.py
-                  bootstrap per detected Maya version, Maya Command Port
-                  reachability, and maya_mcp importable from venv.
+                  8 checks: claude.json entry, .env contents, GPU_API_URL
+                  placeholder detection, pyproject.toml existence,
+                  userSetup.py bootstrap per detected Maya version, Maya
+                  Command Port reachability, maya_mcp importable from
+                  venv, and optional Vision3D connectivity.
                   Exits 0 on PASS/WARN/SKIP, 1 on any FAIL.
   --help, -h      Show this help.
 HELPEOF
@@ -1041,7 +1170,7 @@ if [[ ${#STEPS_ERR[@]} -eq 0 ]]; then
     echo -e "     in your MCP server list."
     echo ""
     echo -e "  ${BOLD}Verify the install:${RESET} run ${CYAN}./install.sh --doctor${RESET} for a"
-    echo -e "  5-check sanity sweep (claude.json entry, .env contents,"
+    echo -e "  8-check sanity sweep (claude.json entry, .env contents,"
     echo -e "  userSetup.py bootstrap, Maya Command Port reachability,"
     echo -e "  package importable)."
     echo ""
