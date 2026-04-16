@@ -235,11 +235,11 @@ Typical publish workflow:
 ```
 1. fpt-mcp: sg_find → search for Asset in ShotGrid
 2. fpt-mcp: sg_download → download reference image
-3. maya-mcp: shape_generate_remote → generate 3D on Vision3D
-4. maya-mcp: vision3d_poll → monitor progress
-5. maya-mcp: vision3d_download → download results
-6. maya-mcp: maya_execute_python → import in Maya
-7. maya-mcp: maya_save_scene → save scene
+3. maya-mcp: maya_vision3d(action='generate_image') → generate 3D on Vision3D
+4. maya-mcp: maya_vision3d(action='poll') → monitor progress
+5. maya-mcp: maya_vision3d(action='download') → download results
+6. maya-mcp: maya_session(action='execute_python') → import in Maya
+7. maya-mcp: maya_session(action='save_scene') → save scene
 8. fpt-mcp: tk_publish → register PublishedFile in ShotGrid
 ```
 

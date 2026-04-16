@@ -8,7 +8,7 @@
 >
 > Executing AI-generated code inside a live Maya session carries real risks: **unexpected crashes, loss of unsaved work, unintended modifications to scenes, rigs, or assets.** Always work on a duplicate or test scene. Never run this on production material without a full backup. The author(s) accept no responsibility for data loss, corruption, or any other damage resulting from its use.
 
-> MCP server for Autodesk Maya — 27 tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
+> MCP server for Autodesk Maya — 14 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
 
 ---
 
@@ -33,7 +33,7 @@ Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow
 ```
 Claude / LLM
     ↕  MCP protocol (stdio)
-FastMCP server (src/maya_mcp/server.py) — 27 tools
+FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
     ├── RAG engine (src/maya_mcp/rag/)
     │     ├── ChromaDB + BM25 hybrid search
     │     ├── HyDE adaptive query expansion
@@ -48,31 +48,35 @@ FastMCP server (src/maya_mcp/server.py) — 27 tools
 
 ---
 
-## Tools (27 total)
+## Tools (14 MCP tools)
 
-### Maya Scene Operations (18 tools)
+### Maya Direct Tools (9 tools)
 | Tool | Description |
 |------|-------------|
-| `maya_ping` | Verify connection, returns Maya version and scene info |
-| `maya_launch` | Open Maya and wait for Command Port to respond |
 | `maya_create_primitive` | Create cube / sphere / cylinder / cone / plane / torus |
 | `maya_assign_material` | Create and assign material (lambert / blinn / phong / aiStandardSurface) |
 | `maya_transform` | Move / rotate / scale with world/object space and relative mode |
-| `maya_list_scene` | List scene objects with type and name filters |
-| `maya_delete` | Delete objects with safety checks on wildcards |
 | `maya_create_light` | Create directional / point / spot / area / ambient lights |
 | `maya_create_camera` | Create cameras with focal length and look-at target |
-| `maya_execute_python` | Execute arbitrary Python in Maya (with safety scanning) |
-| `maya_new_scene` | New empty scene |
-| `maya_save_scene` | Save current scene |
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control (auto/linear/flat/spline/step) |
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
-| `maya_scene_snapshot` | Full scene state: file, renderer, object counts, plugins, units |
-| `maya_shelf_button` | Create reusable shelf buttons with custom Python commands |
 
-### Vision3D Integration (7 actions behind `maya_vision3d` — optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
+### Maya Session Dispatcher (`maya_session` — 9 actions)
+| Action | Description |
+|--------|-------------|
+| `ping` | Verify connection, returns Maya version and scene info |
+| `launch` | Open Maya and wait for Command Port to respond |
+| `new_scene` | New empty scene |
+| `save_scene` | Save current scene |
+| `list_scene` | List scene objects with type and name filters |
+| `scene_snapshot` | Full scene state: file, renderer, object counts, plugins, units |
+| `delete` | Delete objects with safety checks on wildcards |
+| `execute_python` | Execute arbitrary Python in Maya (with safety scanning) |
+| `shelf_button` | Create reusable shelf buttons with custom Python commands |
+
+### Vision3D Dispatcher (`maya_vision3d` — 7 actions, optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
 | Action | Description |
 |--------|-------------|
 | `select_server` | Set the Vision3D server URL for the rest of this MCP session (runtime-only, asked from the user in the chat) |
@@ -128,7 +132,7 @@ maya-mcp/
 │   └── maya_mcp/
 │       ├── __init__.py
 │       ├── __main__.py
-│       ├── server.py              # FastMCP server — all 27 tools
+│       ├── server.py              # FastMCP server — 14 MCP tools
 │       ├── maya_bridge.py         # TCP bridge → Maya Command Port :8100
 │       ├── safety.py              # Dangerous pattern detection (14+ patterns)
 │       ├── config.example.json
@@ -351,7 +355,7 @@ Claude → maya_create_primitive (sphere) × 4 → maya_transform (position each
 
 ```
 You: "Generate a 3D model from this reference image and import it"
-Claude → shape_generate_remote (submit to Vision3D) → vision3d_poll (wait) → vision3d_download → maya_import_file → Result
+Claude → maya_vision3d(action='generate_image', ...) → maya_vision3d(action='poll', ...) → maya_vision3d(action='download', ...) → maya_import_file → Result
 ```
 
 All operations go through the safety scanner before reaching Maya. Dangerous patterns are blocked with an explanation and a safe alternative.
