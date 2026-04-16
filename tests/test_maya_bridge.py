@@ -752,3 +752,61 @@ class TestSilentMayaRecvTimeout:
         bridge_to_mock.timeout = 0.3
         with pytest.raises(MayaConnectionError):
             bridge_to_mock.execute("result = cmds.ls()")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4.1.9 — Trailing null bytes stripped from _send_raw response
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSendRawNullByteStripping:
+    """
+    Regression suite for trailing \\x00 null bytes in Maya Command Port
+    responses.
+
+    Maya's Command Port sometimes appends one or more \\x00 bytes after the
+    newline in its response payload. The previous ``.strip()`` call only
+    removed whitespace (\\n, \\r, \\t, space) but left \\x00 intact, which
+    could corrupt downstream JSON parsing or string comparisons.
+
+    The fix adds ``.strip('\\x00')`` after the whitespace strip.
+    """
+
+    def test_trailing_null_bytes_stripped(self, mock_maya_server, bridge_to_mock):
+        """Response with trailing \\x00 bytes is returned clean."""
+        mock_maya_server.default_response = "Maya 2025\x00\x00\x00"
+        result = bridge_to_mock.send_mel("about -v")
+        assert result == "Maya 2025"
+        assert "\x00" not in result
+
+    def test_null_bytes_after_newline_stripped(self, mock_maya_server, bridge_to_mock):
+        """Response with \\n then \\x00 bytes is fully cleaned."""
+        mock_maya_server.default_response = "pCube1\n\x00"
+        result = bridge_to_mock.send_mel("polyCube")
+        assert result == "pCube1"
+        assert "\x00" not in result
+
+    def test_null_bytes_mixed_whitespace_stripped(self, mock_maya_server, bridge_to_mock):
+        """Response with mixed trailing whitespace and nulls is fully cleaned."""
+        mock_maya_server.default_response = "42\r\n\x00 \x00\t\x00"
+        result = bridge_to_mock.send_mel("getAttr node.value")
+        assert result == "42"
+        assert "\x00" not in result
+
+    def test_clean_response_unaffected(self, mock_maya_server, bridge_to_mock):
+        """Clean response without null bytes is returned unchanged."""
+        mock_maya_server.default_response = "Maya 2025"
+        result = bridge_to_mock.send_mel("about -v")
+        assert result == "Maya 2025"
+
+    def test_only_null_bytes_returns_empty(self, mock_maya_server, bridge_to_mock):
+        """Response containing only null bytes returns empty string."""
+        mock_maya_server.default_response = "\x00\x00\x00"
+        result = bridge_to_mock.send_mel("noop")
+        assert result == ""
+
+    def test_embedded_nulls_preserved(self, mock_maya_server, bridge_to_mock):
+        """Null bytes embedded within valid content are NOT stripped (only trailing)."""
+        # This ensures .strip() only removes from edges, not inside
+        mock_maya_server.default_response = "a\x00b"
+        result = bridge_to_mock.send_mel("test")
+        assert result == "a\x00b"
