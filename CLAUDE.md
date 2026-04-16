@@ -7,9 +7,9 @@
 
 ## 1. Architecture
 
-**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **27 tools** organized in three layers:
+**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **14 MCP tools** organized in three layers:
 
-1. **Maya Control** (18 tools) — Scene manipulation, modeling, animation, I/O, rendering
+1. **Maya Control** (9 direct tools + 1 dispatch tool with 9 actions) — Scene manipulation, modeling, animation, I/O, rendering
    - Communicates with Maya via **TCP Command Port** (default port 8100; moved from the historical 7001 because that port is held by Flame's S+W services on hosts with Autodesk Flame installed)
    - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
    - All operations use undo chunks for safe rollback
@@ -35,7 +35,7 @@
 └────────┬─────────┘
          │ (MCP Protocol — stdio)
 ┌────────▼──────────────────────────────────────────┐
-│   maya-mcp FastMCP Server (27 tools)              │
+│   maya-mcp FastMCP Server (14 tools)              │
 │                                                    │
 │  ┌─────────┐ ┌─────────┐ ┌──────────────────────┐│
 │  │ RAG     │ │ Safety  │ │ Token Tracking       ││
@@ -102,30 +102,35 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 
 ---
 
-## 4. Available Tools (27 total)
+## 4. Available Tools (14 MCP tools)
 
-### Maya Tools (18 tools)
+### Maya Direct Tools (9 MCP tools)
 
 | Tool | Description |
 |------|-------------|
-| `maya_launch` | Opens Maya and waits for Command Port to respond (max 90s) |
-| `maya_ping` | Verifies connection, returns version, current scene, renderer |
 | `maya_create_primitive` | Creates 3D primitives (cube, sphere, cylinder, cone, plane, torus) |
 | `maya_assign_material` | Creates and assigns material (lambert, blinn, phong, aiStandardSurface) |
 | `maya_transform` | Moves, rotates, scales objects in world/object space |
-| `maya_list_scene` | Lists scene objects with filters by type or name |
-| `maya_delete` | Deletes objects (with safety checks on wildcards) |
 | `maya_create_light` | Creates lights (directional, point, spot, area, ambient) |
 | `maya_create_camera` | Creates camera with focal length and look-at target |
-| `maya_execute_python` | Executes arbitrary Python in Maya (with safety scanning) |
-| `maya_new_scene` | Creates new empty scene |
-| `maya_save_scene` | Saves current scene |
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control |
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
-| `maya_scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
-| `maya_shelf_button` | Create shelf buttons with custom Python commands |
+
+### Maya Session Actions (9 actions behind `maya_session` dispatch tool)
+
+| Action | Description |
+|--------|-------------|
+| `ping` | Verifies connection, returns version, current scene, renderer |
+| `launch` | Opens Maya and waits for Command Port to respond (max 90s) |
+| `new_scene` | Creates new empty scene |
+| `save_scene` | Saves current scene |
+| `list_scene` | Lists scene objects with filters by type or name |
+| `scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
+| `delete` | Deletes objects (with safety checks on wildcards) |
+| `execute_python` | Executes arbitrary Python in Maya (with safety scanning) |
+| `shelf_button` | Create shelf buttons with custom Python commands |
 
 ### Vision3D Actions (7 actions behind `maya_vision3d` dispatch — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
 
