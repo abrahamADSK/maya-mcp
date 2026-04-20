@@ -13,6 +13,76 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 _No unreleased changes._
 
+## [1.6.0] — 2026-04-20
+
+Rolls out Fase B of the ecosystem concept-registry pattern (originating in
+flame-mcp Chat 44). Every load-bearing cross-cutting concept — tool count,
+dispatcher action sets, Command Port default, Vision3D runtime-only URL
+policy, pyproject↔tag sync, CHANGELOG↔tag sync, Anthropic model catalogue
+freshness, RAG corpus inventory, release cadence — is now declared in
+`.concepts.yml` and machine-checked on every commit via a pre-commit hook.
+Also closes three real drifts discovered during the audit.
+
+### Added
+
+- **`.concepts.yml`** — 11 concepts, 24 invariants, strict: false (soft-launch
+  for ~2 weeks per ecosystem policy). Captures, among others: 14 `@mcp.tool`
+  decorators must match README + CLAUDE.md + `install.sh` TOOLS; the 9-member
+  SessionAction enum and 7-member Vision3DAction enum must match their
+  README/CLAUDE.md tables bidirectionally; Command Port default stays 8100
+  (Chat 41 Flame-collision fix); no `vision3d_servers` field or loader may
+  re-enter `src/` or `config.example.json` (Chat 40 per-session-URL design);
+  `pyproject.toml` version must match latest annotated git tag; Anthropic
+  model IDs in `console/claude_worker.py` must be a subset of the current
+  block in `~/Projects/.external_versions.yml` and that block must have
+  been reviewed within 14 days.
+- **`scripts/invariant_types.py`** — shared type library (originally verbatim
+  from flame-mcp). Extended with two backward-compatible source types:
+  `ast_decorator_kwarg` (for `@mcp.tool(name="public_name")` patterns where
+  the Python function name differs from the public tool name) and
+  `ast_enum_values` (for string-valued Enum classes used as dispatch tables).
+  Flame-mcp can resync on any future pass and gain the new capabilities
+  without behaviour change.
+- **`scripts/verify_concepts.py`** — engine (verbatim from flame-mcp).
+  Reports 24/24 PASS on HEAD.
+- **`.pre-commit-config.yaml`** — local hook runs `verify_concepts.py` on
+  every commit. `pre-commit install` wires it into `.git/hooks/pre-commit`.
+- **Concept anchors** in `README.md` (`mcp_tool_count`, `mcp_tool_table`,
+  `maya_session_actions`, `maya_vision3d_actions`), `CLAUDE.md` (inline
+  `mcp_tool_count`, `maya_session_actions`, `maya_vision3d_actions`), and
+  `install.sh` (`install_tools_list`).
+
+### Fixed
+
+- **`pyproject.toml` version drift**: bumped from stale `"0.1.0"` (left over
+  from the initial scaffold) to `"1.5.0"`, matching `git describe --tags
+  --abbrev=0`. Prevents the `pip show maya-mcp` / `pip install -e .` drift
+  that hit the sister repo flame-mcp at Chat 43.
+- **`install.sh` tool-count message**: the success line printed "27 maya-mcp
+  tools pre-approved" while only 14 tools exist in the TOOLS list (stale
+  since v1.4.0, when dispatch action names were correctly removed from the
+  pre-approval surface). Fixed to "14".
+- **Anthropic Opus model drift**: `console/claude_worker.py` had
+  `claude-opus-4-6` in `AVAILABLE_MODELS` and `VISION_MODELS`; the ecosystem
+  oracle (`~/Projects/.external_versions.yml`, reviewed 2026-04-17) lists
+  `claude-opus-4-7` as the current Opus. Updated both references.
+
+### Migration notes
+
+- **Run `pre-commit install`** once per clone (inside the repo venv) to
+  wire the hook:
+  ```bash
+  .venv/bin/pip install pre-commit
+  .venv/bin/pre-commit install
+  ```
+- **When editing any of the source-of-truth files** listed in `.concepts.yml`,
+  update the mirrors in the same commit. The pre-commit hook will report
+  drift under soft-launch but not block. After the ~2-week soft-launch
+  window, `strict: true` will be flipped in a separate commit and drift
+  becomes a hard block.
+- **Run `python scripts/verify_concepts.py --verbose`** at any time to see
+  which invariants are currently failing.
+
 ## [1.5.0] — 2026-04-15
 
 Two-half release that closes a family of Chat 41 incidents: the bridge
@@ -276,6 +346,7 @@ cleanup also ship in this window.
 - `install.sh` should be re-run so the corrected `TOOLS` pre-approval
   list updates your `~/.claude/settings.json`.
 
-[Unreleased]: https://github.com/abrahamADSK/maya-mcp/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/abrahamADSK/maya-mcp/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.3.0...v1.4.0
