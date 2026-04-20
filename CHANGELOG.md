@@ -13,6 +13,45 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 _No unreleased changes._
 
+## [1.6.1] — 2026-04-20
+
+Point release fixing silent context-window truncation on Mac-local Ollama and
+hardening the ecosystem release hygiene via a new concept invariant.
+
+### Fixed
+
+- **`ollama_mac` num_ctx preflight** (`console/claude_worker.py`). Ollama's
+  Anthropic-compatible `/v1/messages` endpoint ignores the Modelfile
+  `num_ctx` directive and silently defaults to 4096 tokens, truncating long
+  MCP prompts mid-stream with no error. The console worker now POSTs a
+  zero-prompt warm-up to `/api/generate` with `options.num_ctx=8192`,
+  `keep_alive="10m"`, and `stream=False` immediately before spawning the
+  `claude` subprocess on the Mac-local branch. The preflight uses stdlib
+  `urllib.request` (no new dependency), times out at 120 s, and is
+  non-fatal: network failures are logged and the subprocess spawn
+  proceeds. The `ollama` LAN backend (glorfindel) and hypothetical
+  `ollama_cloud` backend are deliberately NOT preflighted: LAN runs under
+  different Modelfile defaults and cloud runners manage context themselves.
+
+### Added
+
+- **`ollama_preflight_parity`** concept invariant (`.concepts.yml`): grep
+  check that `_preload_ollama_mac_model(` appears in `console/claude_worker.py`.
+  Prevents silent regression if the preflight call is ever removed.
+- **`github_release_per_tag`** ecosystem-wide concept invariant: every git
+  tag `vX.Y.Z` with `X >= 1` must have a corresponding published GitHub
+  Release. Pre-1.0 tags are excluded (v0.x was pre-release noise). Backfilled
+  missing releases for v1.0.0 and v1.1.0 during this release. Requires the
+  `gh` CLI authenticated; drifts are false-positive if `gh` is offline or
+  unauthenticated.
+
+### Infrastructure
+
+- Invariant count: 24 → 26. All green on HEAD.
+- Test count: 223 → 228. New `tests/test_ollama_mac_preflight.py` covers
+  the constant, the `urlopen` call shape, and the non-fatal behaviour on
+  both `URLError` and generic exceptions.
+
 ## [1.6.0] — 2026-04-20
 
 Rolls out Fase B of the ecosystem concept-registry pattern (originating in

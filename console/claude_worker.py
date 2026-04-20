@@ -13,9 +13,12 @@ Differences from fpt-mcp's worker:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from .qt_compat import QtCore
@@ -151,6 +154,12 @@ WRITE_ALLOWED_MODELS = ["claude-opus", "claude-sonnet"]
 DEFAULT_OLLAMA_URL = "http://glorfindel:11434"
 DEFAULT_OLLAMA_MAC_URL = "http://localhost:11434"
 
+# Context window forced when pre-loading the Mac-local Ollama model.
+# Ollama's Anthropic-compat /v1/messages ignores Modelfile num_ctx and
+# defaults to 4096 without an explicit preflight against /api/generate.
+# Tuned for 4B/9B models on Mac unified memory (24 GB).
+OLLAMA_MAC_NUM_CTX = 8192
+
 # Models with vision capability (for viewport_capture analysis)
 VISION_MODELS = {"claude-sonnet-4-6", "claude-opus-4-7", "qwen3.5-mcp", "qwen3.5:9b"}
 
@@ -196,6 +205,58 @@ def build_backend_env(model_id: str, backend: str) -> dict:
     # anthropic backend: no overrides needed, uses default env
 
     return env
+
+
+def _preload_ollama_mac_model(model: str, url: str, num_ctx: int) -> None:
+    """Pre-load the Mac-local Ollama model with an explicit ``num_ctx``.
+
+    Ollama's Anthropic-compatible ``/v1/messages`` endpoint silently ignores
+    the Modelfile ``num_ctx`` directive and falls back to the 4096-token
+    default, which truncates long MCP prompts mid-stream without error. The
+    only reliable workaround is to POST a zero-prompt warm-up request to the
+    native ``/api/generate`` endpoint with the desired ``options.num_ctx``
+    and ``keep_alive`` so the model stays loaded at the larger context for
+    the subsequent ``claude`` subprocess call.
+
+    This preflight is intentionally non-fatal: if Ollama is not running, the
+    URL is unreachable, or the request times out, we log and return. The
+    ``claude`` subprocess will then surface its own error, and the user is
+    no worse off than before the preflight existed.
+
+    Args:
+        model:    The Ollama model tag to warm up (e.g. ``qwen3.5-mcp``).
+        url:      Base URL of the Ollama server (no trailing slash).
+        num_ctx:  Context window size to force on the loaded model.
+    """
+    endpoint = url.rstrip("/") + "/api/generate"
+    payload = {
+        "model": model,
+        "prompt": "",
+        "stream": False,
+        "keep_alive": "10m",
+        "options": {"num_ctx": num_ctx},
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    log = logging.getLogger(__name__)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            resp.read()  # drain body so the socket closes cleanly
+        log.debug(
+            "ollama_mac preflight ok: model=%s num_ctx=%d", model, num_ctx,
+        )
+    except Exception as exc:  # urllib.error.URLError, timeouts, DNS, etc.
+        # Non-fatal by design: if preflight fails, let the subprocess spawn
+        # and surface its own error. Logging here helps post-mortem.
+        log.warning(
+            "ollama_mac preflight failed (non-fatal): model=%s url=%s err=%s",
+            model, url, exc,
+        )
 
 
 def model_has_vision(model_id: str) -> bool:
@@ -453,6 +514,22 @@ class ClaudeWorker(QThread):
                    "--append-system-prompt", system_prompt]
             if self._model_id:
                 cmd.extend(["--model", self._model_id])
+
+            # Preflight for Mac-local Ollama only. Ollama's Anthropic-compat
+            # /v1/messages endpoint ignores Modelfile num_ctx and defaults to
+            # 4096 tokens. We warm up the model on /api/generate with the
+            # desired context window before the claude subprocess starts.
+            # Deliberately NOT called for `ollama` (LAN glorfindel — different
+            # runtime config) or `ollama_cloud` (cloud runners manage context).
+            if self._backend == "ollama_mac" and self._model_id:
+                mac_url = _load_config().get(
+                    "ollama_mac_url", DEFAULT_OLLAMA_MAC_URL,
+                )
+                _preload_ollama_mac_model(
+                    model=self._model_id,
+                    url=mac_url,
+                    num_ctx=OLLAMA_MAC_NUM_CTX,
+                )
 
             proc = subprocess.Popen(
                 cmd,
