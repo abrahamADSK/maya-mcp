@@ -11,6 +11,12 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- `.concepts.yml` — `strict: false → true`. The pre-commit hook now blocks
+  commits on any unresolved invariant drift instead of only reporting it.
+  Ecosystem-wide flip on 2026-04-20 (Chat 46), unblocked by the
+  `changelog_tag_sync` release-in-progress tolerance shipped in v1.6.3.
+
 ## [1.6.3] — 2026-04-20
 
 ### Added

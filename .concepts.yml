@@ -24,8 +24,10 @@
 schema_version: 1
 repo: maya-mcp
 
-# Soft-launch: report drift, do not block commits.
-strict: false
+# Strict mode: pre-commit blocks commits on any unresolved drift.
+# Flipped from false → true on 2026-04-20 (Chat 46), after release-flow
+# tension was resolved via changelog_tag_sync tolerance + cut-release.sh.
+strict: true
 
 concepts:
 
