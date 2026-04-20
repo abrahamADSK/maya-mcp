@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.6.3] — 2026-04-20
+
 ### Added
 - `scripts/cut-release.sh` — ecosystem-shared release orchestrator. Validates
   clean tree + semver arg + non-empty `[Unreleased]`, edits CHANGELOG +
