@@ -11,6 +11,16 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- `MODEL_STRATEGY.md` §2b — the `qwen3.5-mcp` Modelfile snippet still
+  declared `PARAMETER num_ctx 8192`, inconsistent with the ecosystem-wide
+  bump to `16384` already applied in v1.6.2's `CLAUDE.md` §11 and `README.md`
+  fixes. Follow-up that closes Chat 45 Handoff gotcha #5. Since
+  `qwen3.5-mcp` is a single Ollama model shared across fpt-mcp and
+  maya-mcp, the Modelfile snippet must match the value documented
+  elsewhere. Added a one-line pointer to `fpt-mcp/MODEL_STRATEGY.md`
+  for the VRAM/headroom rationale (not duplicated here).
+
 ## [1.6.2] — 2026-04-20
 
 ### Fixed

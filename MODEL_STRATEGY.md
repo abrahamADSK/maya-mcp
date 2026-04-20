@@ -95,11 +95,17 @@ The ecosystem uses a custom Ollama model called `qwen3.5-mcp` based on `qwen3.5:
 
 ```
 FROM qwen3.5:9b
-PARAMETER num_ctx 8192
+PARAMETER num_ctx 16384
 PARAMETER temperature 0.7
 PARAMETER top_p 0.8
 PARAMETER top_k 20
 ```
+
+> `num_ctx 16384` is the ecosystem-wide value (bumped from 8192 in fpt-mcp
+> Bucket D). `qwen3.5-mcp` is a single Ollama model shared across fpt-mcp
+> and maya-mcp on the same machine, so the Modelfile must match. See
+> `fpt-mcp/MODEL_STRATEGY.md` for the full rationale (VRAM cost by
+> KV-cache dtype, headroom math for multi-turn 3D flows).
 
 **Create the model:**
 
