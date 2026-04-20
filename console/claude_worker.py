@@ -135,7 +135,7 @@ TIMEOUT_SECONDS = 900
 AVAILABLE_MODELS = [
     # ── Anthropic cloud (default — needs internet + API key) ─────────
     ("Claude Sonnet 4.6",     "claude-sonnet-4-6",         "anthropic"),
-    ("Claude Opus 4.6",       "claude-opus-4-6",           "anthropic"),
+    ("Claude Opus 4.7",       "claude-opus-4-7",           "anthropic"),
     # ── Self-hosted Ollama (glorfindel RTX 3090, LAN) ────────────────
     ("Qwen3.5 9B 🖥",         "qwen3.5-mcp",               "ollama"),
     ("GLM-4.7 Flash 🖥",      "glm-4.7-flash",             "ollama"),
@@ -152,7 +152,7 @@ DEFAULT_OLLAMA_URL = "http://glorfindel:11434"
 DEFAULT_OLLAMA_MAC_URL = "http://localhost:11434"
 
 # Models with vision capability (for viewport_capture analysis)
-VISION_MODELS = {"claude-sonnet-4-6", "claude-opus-4-6", "qwen3.5-mcp", "qwen3.5:9b"}
+VISION_MODELS = {"claude-sonnet-4-6", "claude-opus-4-7", "qwen3.5-mcp", "qwen3.5:9b"}
 
 
 def _load_config() -> dict:

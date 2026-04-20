@@ -788,6 +788,7 @@ from pathlib import Path
 # functions. The correct surface to pre-approve is the dispatch tool
 # name, which is what this list now uses.
 #
+# concept:install_tools_list start
 TOOLS = [
     # Tier-1 Maya operations (directly decorated with @mcp.tool)
     "maya_create_primitive",
@@ -807,6 +808,7 @@ TOOLS = [
     "learn_pattern",
     "session_stats",
 ]
+# concept:install_tools_list end
 PREFIX = "mcp__maya-mcp__"
 new_tools = {PREFIX + t for t in TOOLS}
 
@@ -835,8 +837,8 @@ print(f"[maya-mcp] {new_count} new tools pre-approved ({len(merged)} total in ~/
 PYEOF
 
 if [[ $? -eq 0 ]]; then
-    success "27 maya-mcp tools pre-approved in ~/.claude/settings.json"
-    STEPS_OK+=("MCP tools pre-approved in ~/.claude/settings.json (27 tools)")
+    success "14 maya-mcp tools pre-approved in ~/.claude/settings.json"
+    STEPS_OK+=("MCP tools pre-approved in ~/.claude/settings.json (14 tools)")
 else
     warn "Tool pre-approval failed — you may see permission prompts on first use"
     STEPS_WARN+=("MCP tool pre-approval failed — run manually or approve at first prompt")

@@ -1,0 +1,405 @@
+# Cross-cutting concept registry for maya-mcp.
+#
+# Purpose: declare every load-bearing concept that is replicated across code,
+# docs, configs, or external systems, together with a machine-checkable
+# invariant. The invariant is evaluated by `python scripts/verify_concepts.py`
+# and enforced by the pre-commit hook.
+#
+# Soft-launch mode: while `strict: false`, drifts are reported but commits are
+# NOT blocked. Flip to `strict: true` after soft-launch window (~2 weeks) and
+# all known drifts are resolved.
+#
+# Schema reference:
+#   schema_version : int
+#   repo           : str
+#   strict         : bool
+#   concepts       : mapping of <concept_name> -> concept definition
+#
+# Concept definition:
+#   description    : short human explanation
+#   source_of_truth: pointer to the canonical location
+#   mirrors        : list of doc/config locations that replicate it
+#   invariants     : list of checks (see scripts/invariant_types.py)
+
+schema_version: 1
+repo: maya-mcp
+
+# Soft-launch: report drift, do not block commits.
+strict: false
+
+concepts:
+
+  mcp_tool_inventory:
+    description: >
+      @mcp.tool()-decorated functions in server.py must match the count
+      declared in README.md ("## Tools (N)") and CLAUDE.md, and each
+      function name must appear in the README tool table (bidirectional).
+    source_of_truth:
+      file: src/maya_mcp/server.py
+      symbol: "@mcp.tool() decorators"
+    mirrors:
+      - file: README.md
+        section: "## Tools"
+        anchors: [mcp_tool_count, mcp_tool_table]
+      - file: CLAUDE.md
+        section: "## 4. Available Tools"
+        anchors: [mcp_tool_count]
+      - file: install.sh
+        kind: generated  # auto-extracted via ast.parse — no drift possible
+    invariants:
+
+      - id: readme_tool_count_matches_code
+        type: tool_count
+        code_file: src/maya_mcp/server.py
+        decorator: mcp.tool
+        doc_file: README.md
+        concept_id: mcp_tool_count
+
+      - id: claude_md_tool_count_matches_code
+        type: tool_count
+        code_file: src/maya_mcp/server.py
+        decorator: mcp.tool
+        doc_file: CLAUDE.md
+        concept_id: mcp_tool_count
+
+      - id: readme_tool_names_bidirectional
+        type: subset
+        direction: bidirectional
+        a_source:
+          # Public tool names come from the @mcp.tool(name="...") kwarg
+          # because several Python functions (learn_pattern_tool,
+          # search_maya_docs_tool, session_stats_tool) use a "_tool" suffix
+          # that is NOT part of the exposed MCP surface.
+          type: ast_decorator_kwarg
+          file: src/maya_mcp/server.py
+          decorator: mcp.tool
+          kwarg: name
+        b_source:
+          type: anchor_list
+          file: README.md
+          concept_id: mcp_tool_table
+          item_pattern: '`([a-z_][a-z0-9_]*)`'
+
+      - id: install_sh_tools_match_code
+        type: subset
+        direction: bidirectional
+        a_source:
+          type: ast_decorator_kwarg
+          file: src/maya_mcp/server.py
+          decorator: mcp.tool
+          kwarg: name
+        b_source:
+          type: anchor_list
+          file: install.sh
+          concept_id: install_tools_list
+          item_pattern: '"([a-z_][a-z0-9_]*)"'
+
+  maya_session_actions:
+    description: >
+      The `maya_session` dispatch tool exposes a fixed set of actions declared
+      by the SessionAction enum in server.py. README.md and CLAUDE.md list
+      those actions; the two lists must be identical (bidirectional).
+    source_of_truth:
+      file: src/maya_mcp/server.py
+      symbol: SessionAction
+    mirrors:
+      - file: README.md
+        anchors: [maya_session_actions]
+      - file: CLAUDE.md
+        anchors: [maya_session_actions]
+    invariants:
+
+      - id: readme_session_actions_bidirectional
+        type: subset
+        direction: bidirectional
+        a_source:
+          type: ast_enum_values
+          file: src/maya_mcp/server.py
+          symbol: SessionAction
+        b_source:
+          type: anchor_list
+          file: README.md
+          concept_id: maya_session_actions
+          item_pattern: '`([a-z_][a-z0-9_]*)`'
+
+  maya_vision3d_actions:
+    description: >
+      The `maya_vision3d` dispatch tool exposes a fixed set of actions
+      declared by the Vision3DAction enum in server.py. README.md and
+      CLAUDE.md must list those actions (bidirectional). The LIST_SERVERS
+      action was removed in v1.4.0 — if it reappears here it is a
+      regression.
+    source_of_truth:
+      file: src/maya_mcp/server.py
+      symbol: Vision3DAction
+    mirrors:
+      - file: README.md
+        anchors: [maya_vision3d_actions]
+      - file: CLAUDE.md
+        anchors: [maya_vision3d_actions]
+    invariants:
+
+      - id: readme_vision3d_actions_bidirectional
+        type: subset
+        direction: bidirectional
+        a_source:
+          type: ast_enum_values
+          file: src/maya_mcp/server.py
+          symbol: Vision3DAction
+        b_source:
+          type: anchor_list
+          file: README.md
+          concept_id: maya_vision3d_actions
+          item_pattern: '`([a-z_][a-z0-9_]*)`'
+
+  command_port_default:
+    description: >
+      Maya Command Port default is 8100 (moved from the historical 7001 in
+      v1.5.0 to avoid collision with Autodesk Flame's S+W service on the
+      same host; see CHANGELOG v1.5.0). Every doc that mentions the default
+      must say 8100; code references must match. Chat 41 cascade would
+      recur if this silently reverts to 7001.
+    source_of_truth:
+      file: src/maya_mcp/maya_bridge.py
+      symbol: DEFAULT_PORT
+    mirrors:
+      - file: src/maya_mcp/server.py
+        symbol: MAYA_PORT default
+      - file: README.md
+      - file: CLAUDE.md
+      - file: .env.example
+      - file: install.sh
+    invariants:
+
+      - id: bridge_default_port_is_8100
+        type: claim_verifies
+        claim: "maya_bridge.py DEFAULT_PORT = 8100 (Chat 41 Flame-collision fix)"
+        code_grep:
+          regex: '^DEFAULT_PORT\s*=\s*8100\b'
+          file_pattern: 'src/maya_mcp/maya_bridge.py'
+        expected: found
+
+      - id: server_maya_port_default_is_8100
+        type: claim_verifies
+        claim: "server.py MAYA_PORT default is 8100"
+        code_grep:
+          regex: 'MAYA_PORT\s*=\s*int\(os\.environ\.get\("MAYA_PORT",\s*"8100"\)\)'
+          file_pattern: 'src/maya_mcp/server.py'
+        expected: found
+
+      - id: no_7001_default_left_in_code
+        type: claim_verifies
+        claim: "no lingering 7001 default in src/ or install.sh (only documented as historical)"
+        code_grep:
+          regex: '(commandPort|MAYA_PORT|DEFAULT_PORT|default).{0,30}7001'
+          file_pattern: 'src/maya_mcp/maya_bridge.py'
+        expected: not_found
+
+  vision3d_runtime_only_url:
+    description: >
+      Vision3D URL is runtime-only: no `vision3d_servers` config field, no
+      persisted default anywhere. Chat 36/40 invariant — if someone reintroduces
+      a config-level URL pool, the per-session selector design collapses.
+      The only way to set the URL is `maya_vision3d(action='select_server')`
+      at runtime, or optionally suggesting via `GPU_API_URL` env var.
+    source_of_truth:
+      file: src/maya_mcp/server.py
+      symbol: _resolve_client_or_error / _vision3d_url_required_error
+    mirrors:
+      - file: src/maya_mcp/config.example.json
+      - file: .env.example
+      - file: CLAUDE.md
+      - file: README.md
+    invariants:
+
+      - id: no_vision3d_servers_field_in_config_example
+        type: claim_verifies
+        claim: "config.example.json MUST NOT contain a `vision3d_servers` field"
+        code_grep:
+          regex: 'vision3d_servers'
+          file_pattern: 'src/maya_mcp/config.example.json'
+        expected: not_found
+
+      - id: no_vision3d_servers_loader_in_src
+        type: claim_verifies
+        claim: "src/maya_mcp/ MUST NOT define _load_vision3d_servers or _vision3d_servers cache"
+        code_grep:
+          regex: '_load_vision3d_servers|^_vision3d_servers\b'
+          file_pattern: 'src/maya_mcp/server.py'
+        expected: not_found
+
+      - id: vision3d_url_required_error_exists
+        type: claim_verifies
+        claim: "server.py must raise vision3d_url_required when no URL is selected"
+        code_grep:
+          regex: 'vision3d_url_required'
+          file_pattern: 'src/maya_mcp/server.py'
+        expected: found
+
+  pyproject_version:
+    description: >
+      pyproject.toml version field must match the latest annotated git tag.
+      Prevents the release-vs-install drift seen at flame-mcp Chat 43
+      (pyproject stuck at v0.1.0 while code at v1.2.1, breaking `pip show`
+      and `pip install -e .`).
+    source_of_truth:
+      file: git
+      command: "git describe --tags --abbrev=0"
+    mirrors:
+      - file: pyproject.toml
+        field: '[project].version'
+    invariants:
+
+      - id: pyproject_matches_latest_tag
+        type: version_match
+        a:
+          source: file_regex
+          file: pyproject.toml
+          pattern: '^version\s*=\s*"([^"]+)"'
+        b:
+          source: command
+          cmd: "git describe --tags --abbrev=0 | sed 's/^v//'"
+
+  single_install_script_at_root:
+    description: >
+      Ecosystem rule (Chat 34, ratified Chat 44): each MCP repo has exactly
+      ONE install script at the repo root (`install.sh`). Helper scripts that
+      install something OTHER than the MCP itself live under scripts/ with
+      an explicit name.
+    source_of_truth:
+      file: ~/Projects/.ecosystem_concepts.yml
+      key: single_install_script_per_repo
+    invariants:
+
+      - id: one_install_script_at_root
+        type: glob_count
+        patterns:
+          - "install*.sh"
+          - "setup*.sh"
+        expected: 1
+
+  anthropic_models:
+    description: >
+      Anthropic model IDs exposed in console/claude_worker.py AVAILABLE_MODELS
+      must be a subset of the "current" block in ~/Projects/.external_versions.yml,
+      and that block must have been reviewed within its expiry_days (14 days).
+      Forces periodic human check against the Anthropic model catalogue.
+    source_of_truth:
+      file: ~/Projects/.external_versions.yml
+      key: anthropic_models.current
+    mirrors:
+      - file: console/claude_worker.py
+        symbol: AVAILABLE_MODELS (rows where backend == "anthropic")
+      - file: src/maya_mcp/server.py
+        symbol: WRITE_ALLOWED_MODELS
+    invariants:
+
+      - id: anthropic_model_review_fresh
+        type: review_expiry
+        file: .external_versions.yml
+        key: anthropic_models
+
+      - id: worker_anthropic_models_in_catalogue
+        type: subset
+        direction: a_subset_b
+        a_source:
+          type: ast_tuple_list_column
+          file: console/claude_worker.py
+          symbol: AVAILABLE_MODELS
+          column: 1
+          filter_column: 2
+          filter_value: anthropic
+        b_source:
+          type: yaml_values
+          file: .external_versions.yml
+          key: anthropic_models.current
+
+  autodesk_maya_api_review:
+    description: >
+      Autodesk Maya Python API version referenced in maya-mcp CLAUDE.md
+      (cmds / OpenMaya / commandPort quirks) must be periodically reviewed
+      against the ecosystem registry (default expiry 180 days).
+    source_of_truth:
+      file: ~/Projects/.external_versions.yml
+      key: autodesk_maya_python_api
+    invariants:
+
+      - id: maya_api_review_fresh
+        type: review_expiry
+        file: .external_versions.yml
+        key: autodesk_maya_python_api
+
+  release_cadence:
+    description: >
+      Prevent silent accumulation of commits past the latest tag. Work
+      should be tagged as a release before the backlog grows unbounded.
+      Thresholds (ecosystem-wide, Chat 44): 10 commits soft warning,
+      30 commits hard stop. Also flags tags older than 30 days if any
+      commits are pending.
+    source_of_truth:
+      file: git
+      command: "git describe --tags --abbrev=0 && git rev-list --count <tag>..HEAD"
+    invariants:
+
+      - id: commits_since_last_tag_under_threshold
+        type: commits_since_tag
+        warn_commits: 10
+        max_commits: 30
+        max_age_days: 30
+
+  changelog_tag_sync:
+    description: >
+      Every `## [X.Y.Z]` section in CHANGELOG.md must correspond to an
+      annotated git tag `vX.Y.Z`. (Direction a_subset_b only: the project
+      explicitly does NOT document v0.1.0–v1.3.0 and v1.4.1 — that note
+      is preserved verbatim in CHANGELOG.md near the top. New releases
+      must be both tagged and documented.)
+    source_of_truth:
+      file: CHANGELOG.md
+      plus: "git tag --list 'v*'"
+    invariants:
+
+      - id: changelog_sections_have_matching_tags
+        type: subset
+        direction: a_subset_b
+        a_source:
+          type: file_regex_matches
+          file: CHANGELOG.md
+          pattern: '^## \[v?(\d+\.\d+\.\d+)\]'
+        b_source:
+          type: command_lines
+          cmd: "git tag --list 'v*' | sed 's/^v//'"
+
+  rag_corpus_docs:
+    description: >
+      README's Project Structure block claims exactly five Maya API corpora
+      under src/maya_mcp/docs/ (CMDS_API.md, PYMEL_API.md, ARNOLD_API.md,
+      USD_API.md, ANTI_PATTERNS.md). Those filenames must exist on disk.
+    source_of_truth:
+      file: src/maya_mcp/docs/
+    invariants:
+
+      - id: cmds_api_doc_exists
+        type: file_exists
+        path: src/maya_mcp/docs/CMDS_API.md
+        context: "README Project Structure + RAG corpus inventory"
+
+      - id: pymel_api_doc_exists
+        type: file_exists
+        path: src/maya_mcp/docs/PYMEL_API.md
+        context: "README Project Structure + RAG corpus inventory"
+
+      - id: arnold_api_doc_exists
+        type: file_exists
+        path: src/maya_mcp/docs/ARNOLD_API.md
+        context: "README Project Structure + RAG corpus inventory"
+
+      - id: usd_api_doc_exists
+        type: file_exists
+        path: src/maya_mcp/docs/USD_API.md
+        context: "README Project Structure + RAG corpus inventory"
+
+      - id: anti_patterns_doc_exists
+        type: file_exists
+        path: src/maya_mcp/docs/ANTI_PATTERNS.md
+        context: "README Project Structure + RAG corpus inventory"
