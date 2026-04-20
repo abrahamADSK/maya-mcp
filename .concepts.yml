@@ -353,22 +353,19 @@ concepts:
       annotated git tag `vX.Y.Z`. (Direction a_subset_b only: the project
       explicitly does NOT document v0.1.0–v1.3.0 and v1.4.1 — that note
       is preserved verbatim in CHANGELOG.md near the top. New releases
-      must be both tagged and documented.)
+      must be both tagged and documented.) The release-in-progress
+      transient drift (CHANGELOG moved but tag not yet created at
+      pre-commit time) is tolerated iff the drifting version matches env
+      `CUT_RELEASE_VERSION` (set by scripts/cut-release.sh) OR the
+      version declared in pyproject.toml.
     source_of_truth:
       file: CHANGELOG.md
       plus: "git tag --list 'v*'"
     invariants:
 
       - id: changelog_sections_have_matching_tags
-        type: subset
+        type: changelog_tag_sync
         direction: a_subset_b
-        a_source:
-          type: file_regex_matches
-          file: CHANGELOG.md
-          pattern: '^## \[v?(\d+\.\d+\.\d+)\]'
-        b_source:
-          type: command_lines
-          cmd: "git tag --list 'v*' | sed 's/^v//'"
 
   ollama_preflight_parity:
     description: >

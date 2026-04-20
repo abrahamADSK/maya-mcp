@@ -11,6 +11,25 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- `scripts/cut-release.sh` — ecosystem-shared release orchestrator. Validates
+  clean tree + semver arg + non-empty `[Unreleased]`, edits CHANGELOG +
+  pyproject.toml, commits with `CUT_RELEASE_VERSION=X.Y.Z` so the
+  `changelog_tag_sync` invariant tolerates the transient pre-commit drift,
+  then tags, pushes, and creates a GitHub release with the CHANGELOG
+  section as notes. Ships with `--dry-run` for safe previews. Byte-identical
+  across the 4 MCP-ecosystem repos; canonical at
+  `~/Projects/cut-release-canonical.sh`. Resolves the Chat 45 P1 release-flow
+  tension (pre-commit vs release-flow) that was blocking the ecosystem-wide
+  `strict: true` flip.
+- `scripts/invariant_types.py` — new `changelog_tag_sync` handler replaces
+  the previous `subset`-based `changelog_tag_coherence` invariant. Adds
+  release-in-progress tolerance anchored to env `CUT_RELEASE_VERSION` (set
+  by `cut-release.sh` at commit time) OR `pyproject.toml`'s `version`
+  field. The tolerance only fires for exactly one drifting version that
+  matches the anchor — you cannot forge it without also bumping the real
+  anchor. Handler propagated byte-identical to the 4 MCP-ecosystem repos.
+
 ### Fixed
 - `MODEL_STRATEGY.md` §2b — the `qwen3.5-mcp` Modelfile snippet still
   declared `PARAMETER num_ctx 8192`, inconsistent with the ecosystem-wide
