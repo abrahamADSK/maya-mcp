@@ -102,7 +102,7 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 
 ---
 
-## 4. Available Tools (14 MCP tools)
+## 4. Available Tools (<!-- concept:mcp_tool_count start -->14<!-- concept:mcp_tool_count end --> MCP tools)
 
 ### Maya Direct Tools (9 MCP tools)
 
@@ -120,6 +120,7 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 
 ### Maya Session Actions (9 actions behind `maya_session` dispatch tool)
 
+<!-- concept:maya_session_actions start -->
 | Action | Description |
 |--------|-------------|
 | `ping` | Verifies connection, returns version, current scene, renderer |
@@ -131,9 +132,11 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 | `delete` | Deletes objects (with safety checks on wildcards) |
 | `execute_python` | Executes arbitrary Python in Maya (with safety scanning) |
 | `shelf_button` | Create shelf buttons with custom Python commands |
+<!-- concept:maya_session_actions end -->
 
 ### Vision3D Actions (7 actions behind `maya_vision3d` dispatch — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
 
+<!-- concept:maya_vision3d_actions start -->
 | Action | Description |
 |--------|-------------|
 | `select_server` | Set the Vision3D server URL for the rest of this MCP session. Accepts any valid http/https URL — the LLM must have asked the user for it in the chat first. Cached in memory until process restart. |
@@ -143,6 +146,7 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 | `texture` | Texture existing mesh (non-blocking, returns job_id) |
 | `poll` | Poll job status with incremental log lines |
 | `download` | Download completed results to local directory |
+<!-- concept:maya_vision3d_actions end -->
 
 ### RAG & Intelligence Tools (3 tools)
 

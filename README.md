@@ -48,8 +48,11 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 
 ---
 
+<!-- concept:mcp_tool_count start -->
 ## Tools (14 MCP tools)
+<!-- concept:mcp_tool_count end -->
 
+<!-- concept:mcp_tool_table start -->
 ### Maya Direct Tools (9 tools)
 | Tool | Description |
 |------|-------------|
@@ -63,7 +66,22 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
+### Dispatcher Tools (2 tools)
+| Tool | Description |
+|------|-------------|
+| `maya_session` | Session lifecycle + generic Maya ops (see action table below) |
+| `maya_vision3d` | Optional Vision3D addon (see action table below) |
+
+### RAG & Intelligence (3 tools)
+| Tool | Description |
+|------|-------------|
+| `search_maya_docs` | Hybrid RAG search across 5 Maya API corpora with relevance scores |
+| `learn_pattern` | Save validated working patterns for future sessions (with trust gates) |
+| `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned |
+<!-- concept:mcp_tool_table end -->
+
 ### Maya Session Dispatcher (`maya_session` — 9 actions)
+<!-- concept:maya_session_actions start -->
 | Action | Description |
 |--------|-------------|
 | `ping` | Verify connection, returns Maya version and scene info |
@@ -75,8 +93,10 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 | `delete` | Delete objects with safety checks on wildcards |
 | `execute_python` | Execute arbitrary Python in Maya (with safety scanning) |
 | `shelf_button` | Create reusable shelf buttons with custom Python commands |
+<!-- concept:maya_session_actions end -->
 
 ### Vision3D Dispatcher (`maya_vision3d` — 7 actions, optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
+<!-- concept:maya_vision3d_actions start -->
 | Action | Description |
 |--------|-------------|
 | `select_server` | Set the Vision3D server URL for the rest of this MCP session (runtime-only, asked from the user in the chat) |
@@ -86,13 +106,7 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 | `texture` | Texture an existing mesh with AI |
 | `poll` | Poll async job status |
 | `download` | Download completed results to local disk |
-
-### RAG & Intelligence (3 tools)
-| Tool | Description |
-|------|-------------|
-| `search_maya_docs` | Hybrid RAG search across 5 Maya API corpora with relevance scores |
-| `learn_pattern` | Save validated working patterns for future sessions (with trust gates) |
-| `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned |
+<!-- concept:maya_vision3d_actions end -->
 
 ---
 
