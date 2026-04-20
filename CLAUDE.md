@@ -300,7 +300,9 @@ maya-mcp supports multiple LLM backends via the model selector in the Console pa
 - **Memory**: 6.6 GB (Q4_K_M)
 - **Multimodal**: vision-capable (important for viewport_capture analysis)
 - **Modelfile**: `qwen3.5-mcp` is a custom Modelfile derived from `qwen3.5:9b` with
-  `num_ctx 8192`, `temperature 0.7`, `top_p 0.8`, `top_k 20`.
+  `num_ctx 16384` (bumped from 8192 in fpt-mcp Bucket D — ecosystem-wide value,
+  since `qwen3.5-mcp` is a single Ollama model shared across fpt-mcp and maya-mcp
+  on the same machine), `temperature 0.7`, `top_p 0.8`, `top_k 20`.
   Available on glorfindel and Mac M5 Pro.
 - **Mac 24GB fallback**: `qwen3.5:4b` (direct, no custom Modelfile)
 - **Ollama API note**: requires `"think": false` in each request to disable thinking mode.

@@ -203,9 +203,16 @@ maya-mcp/
   - Create the `qwen3.5-mcp` model (required for Ollama backends):
     ```bash
     ollama pull qwen3.5:9b
-    ollama create qwen3.5-mcp -f Modelfile.qwen35mcp
+    cat > /tmp/Modelfile.qwen35mcp <<'EOF'
+    FROM qwen3.5:9b
+    PARAMETER num_ctx 16384
+    PARAMETER temperature 0.7
+    PARAMETER top_p 0.8
+    PARAMETER top_k 20
+    EOF
+    ollama create qwen3.5-mcp -f /tmp/Modelfile.qwen35mcp
     ```
-  - See [MODEL_STRATEGY.md](MODEL_STRATEGY.md) for Modelfile details, `think: false` requirement, and KEEP_ALIVE tuning
+  - See [MODEL_STRATEGY.md](MODEL_STRATEGY.md) for the full rationale (num_ctx bump, `think: false` requirement, KEEP_ALIVE tuning, KV-cache dtype)
 - [Vision3D](https://github.com/abrahamADSK/vision3d) server for AI-powered 3D generation
 
 ---
