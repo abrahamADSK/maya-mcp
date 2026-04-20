@@ -11,6 +11,16 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- `scripts/verify_concepts.py --write` — WRITER MODE (Chat 46). Requires
+  the triple flag `--accept-current-as-truth --i-reviewed-diff --write`.
+  Dispatches to per-type writers in `invariant_types.py::WRITERS`.
+  Currently supports `tool_count` (updates integers inside
+  `<!-- concept:<id> start/end -->` blocks) and `review_expiry` (bumps
+  `reviewed_at` timestamps to today). Other invariant types report
+  `WRITER UNSUPPORTED`. No auto-commit — user reviews `git diff` before
+  committing. Closes Chat 45 P3.15 deferral.
+
 ### Changed
 - `.concepts.yml` — `strict: false → true`. The pre-commit hook now blocks
   commits on any unresolved invariant drift instead of only reporting it.
