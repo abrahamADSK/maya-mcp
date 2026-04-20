@@ -370,6 +370,48 @@ concepts:
           type: command_lines
           cmd: "git tag --list 'v*' | sed 's/^v//'"
 
+  ollama_preflight_parity:
+    description: >
+      ollama_mac backend must call _preload_ollama_mac_model() before spawning
+      the claude subprocess. Ollama's Anthropic-compat endpoint ignores Modelfile
+      num_ctx and silently truncates to 4096 tokens otherwise. ollama_cloud is
+      deliberately excluded (cloud runners manage context).
+    source_of_truth:
+      file: console/claude_worker.py
+      symbol: "ollama_mac branch"
+    invariants:
+
+      - id: preflight_called_for_ollama_mac
+        type: claim_verifies
+        claim: "ollama_mac branch calls _preload_ollama_mac_model before subprocess spawn"
+        code_grep:
+          regex: '_preload_ollama_mac_model\('
+          file_pattern: 'console/claude_worker.py'
+        expected: found
+
+  github_release_per_tag:
+    description: >
+      Every git tag vX.Y.Z (v1.0.0+) must have a corresponding published
+      GitHub Release. Pre-1.0 tags are excluded (v0.x was pre-release noise).
+      Requires `gh` CLI authenticated; drift reports will be false-positive
+      if gh is offline or unauthenticated.
+    source_of_truth:
+      file: git
+      command: "git tag --list 'v*'"
+    mirrors:
+      - command: "gh release list"
+    invariants:
+
+      - id: every_v1plus_tag_has_github_release
+        type: subset
+        direction: a_subset_b
+        a_source:
+          type: command_lines
+          cmd: "git tag --list 'v*' | grep -Ev '^v0\\.' | sed 's/^v//'"
+        b_source:
+          type: command_lines
+          cmd: "gh release list --limit 200 --json tagName --jq '.[].tagName' | sed 's/^v//'"
+
   rag_corpus_docs:
     description: >
       README's Project Structure block claims exactly five Maya API corpora
