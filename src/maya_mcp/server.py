@@ -916,17 +916,16 @@ finally:
         raw = await asyncio.to_thread(bridge.execute, code)
         # Parse the result to extract the base64 image
         data = json.loads(raw) if isinstance(raw, str) else raw
-        mime = "image/png" if fmt == "png" else "image/jpeg"
         img_b64 = data.get("image_b64", "")
         meta = f"Captured {data.get('resolution', '?')} — {data.get('size_kb', '?')} KB — {data.get('captured', params.output_path)}"
         if img_b64:
             return [
-                Image(data=base64.b64decode(img_b64), media_type=mime),
+                Image(data=base64.b64decode(img_b64), format=fmt),
                 meta,
             ]
         return [meta, "(image data not available — check output_path)"]
     except Exception as e:
-        return _handle_error(e)
+        return [_handle_error(e)]
 
 
 async def _do_scene_snapshot(params: dict) -> str:
