@@ -1754,6 +1754,7 @@ async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
     • poll — Check job progress (call repeatedly while running). Required params: {"job_id": "uuid-from-generate"}
     • download — Download completed job results. Required params: {"job_id": "uuid", "output_subdir": "my_asset"} Optional: {"files": ["textured.glb", "mesh.glb"]}
     """
+    from maya_mcp.suggestions import maybe_annotate_with_suggestions
     dispatch = {
         Vision3DAction.SELECT_SERVER: _do_v3d_select_server,
         Vision3DAction.HEALTH: _do_v3d_health,
@@ -1764,7 +1765,8 @@ async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
         Vision3DAction.DOWNLOAD: _do_v3d_download,
     }
     handler = dispatch[params.action]
-    return await handler(params.params or {}, ctx)
+    out = await handler(params.params or {}, ctx)
+    return maybe_annotate_with_suggestions("maya_vision3d", out)
 
 
 # ---------------------------------------------------------------------------
