@@ -194,10 +194,10 @@ def _make_embedding_fn() -> Any:
         from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
         print(f"  Embedding model : {EMBEDDING_MODEL}")
-        print(f"  (downloads ~570 MB from HuggingFace on first run — cached afterwards)")
+        print("  (downloads ~570 MB from HuggingFace on first run — cached afterwards)")
         fn = SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
         fn(["probe"])  # warm-up
-        print(f"  Embedding model : ready")
+        print("  Embedding model : ready")
         return fn
     except ImportError:
         print("  ERROR: sentence-transformers not installed.")

@@ -22,7 +22,6 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 # ── PySide stub ───────────────────────────────────────────────────────────────
 # console.qt_compat tries PySide6 then PySide2; both are absent in CI/headless

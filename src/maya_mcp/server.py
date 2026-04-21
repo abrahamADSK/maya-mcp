@@ -32,8 +32,7 @@ import asyncio
 import datetime
 import json
 import os
-import sys
-from typing import Optional, List, Any
+from typing import Optional, List
 from enum import Enum
 from pathlib import Path
 
@@ -325,7 +324,6 @@ async def _do_ping(params: dict) -> str:
 async def _do_launch(params: dict) -> str:
     """Open Maya and wait for the Command Port to respond."""
     import socket
-    import time
 
     # 1. Check if already connected
     try:
@@ -443,7 +441,7 @@ async def maya_transform(params: TransformInput) -> str:
         ws = "False" if params.relative else "True"
         rel = "True" if params.relative else "False"
 
-        code = f"import maya.cmds as cmds\n"
+        code = "import maya.cmds as cmds\n"
         if params.position:
             code += f"cmds.xform('{params.object_name}', translation={params.position}, worldSpace={ws}, relative={rel})\n"
         if params.rotation:
@@ -1044,7 +1042,7 @@ async def maya_session(params: SessionDispatchInput) -> str:
 # Remote GPU — Vision3D REST API (Hunyuan3D-2)
 # ─────────────────────────────────────────────
 
-from mcp.server.fastmcp import Context
+from mcp.server.fastmcp import Context  # noqa: E402 — late import keeps Vision3D block self-contained
 
 # Connection-level configuration (shared by every vision3d server target)
 _GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")

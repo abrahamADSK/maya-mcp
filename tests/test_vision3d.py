@@ -56,7 +56,7 @@ def _bytes_response(content: bytes, status_code: int = 200) -> httpx.Response:
 # ── Import server module ──────────────────────────────────────────────────
 # conftest.py installs the mcp SDK stub before any test file is collected,
 # so importing maya_mcp.server works without the full MCP SDK.
-from maya_mcp import server as srv
+from maya_mcp import server as srv  # noqa: E402 — conftest installs mcp SDK stub first
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────

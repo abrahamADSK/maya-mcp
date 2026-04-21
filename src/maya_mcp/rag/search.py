@@ -22,7 +22,6 @@ The index must be built first:
 import json
 import os
 import re
-import sys
 import datetime
 from pathlib import Path
 from typing import Any

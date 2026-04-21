@@ -352,9 +352,9 @@ class MayaBridge:
             for line in block.split("\n"):
                 if line.strip():
                     parts.append(f"        {line}")
-            parts.append(f"        _mcp_batch_results.append(result if 'result' in dir() else 'OK')")
+            parts.append("        _mcp_batch_results.append(result if 'result' in dir() else 'OK')")
             parts.append("    except Exception as _mcp_blk_err:")
-            parts.append(f"        _mcp_batch_results.append({{'error': str(_mcp_blk_err)}})")
+            parts.append("        _mcp_batch_results.append({'error': str(_mcp_blk_err)})")
         parts.append("finally:")
         parts.append("    cmds.undoInfo(closeChunk=True)")
         parts.append("result = _mcp_batch_results")

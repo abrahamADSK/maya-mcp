@@ -19,7 +19,6 @@ import socket
 import threading
 import time
 import types as _types
-from pathlib import Path
 from typing import Callable, Optional
 from unittest.mock import AsyncMock, patch
 

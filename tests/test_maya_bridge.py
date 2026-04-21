@@ -22,9 +22,7 @@ import json
 import os
 import re
 import socket
-import threading
 import unittest.mock
-import time
 
 import pytest
 
@@ -251,7 +249,7 @@ class TestMayaCreatePrimitive:
             name="mySphere",
             position=[1.0, 2.0, 3.0],
         )
-        result = asyncio.run(server.maya_create_primitive(params))
+        asyncio.run(server.maya_create_primitive(params))
 
         code = captured_code["code"]
         assert "polySphere" in code
