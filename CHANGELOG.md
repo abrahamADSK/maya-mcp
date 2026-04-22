@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-04-22
+
 ### Added
 - `src/maya_mcp/suggestions.py` — next_suggested_actions pattern port
   (Chat 47). JSON-mutate contract same as fpt-mcp. First rule: 3-branch
