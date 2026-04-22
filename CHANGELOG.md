@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-04-22
+
 ### Added
 - `src/maya_mcp/suggestions.py` — two new chaining rules:
   - `maya_create_camera → maya_viewport_capture`: seeds
