@@ -11,6 +11,33 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- `src/maya_mcp/suggestions.py` — two new chaining rules:
+  - `maya_create_camera → maya_viewport_capture`: seeds
+    `camera=<name>` + `output_path=/tmp/<cam>_preview.png` for the
+    "did my framing land where I wanted?" feedback loop in shot
+    layout work.
+  - `maya_create_light → maya_set_keyframe`: seeds the initial
+    intensity keyframe (value=1.0, frame=1) for the new light, as
+    animation groundwork. Users typically follow up with another
+    frame at a later time for the actual interpolation.
+  Tests grew from 258 to 267 (+9); registry grew from 3 to 5 rules.
+- `scripts/invariant_types.py` — `_write_subset` handler registered
+  in WRITERS (Phase C + D, Chat 48). Covers `b_source.type:
+  anchor_list` (without `item_pattern`) and `file_regex_matches`
+  (with YAML opt-in `b_source.writer.line_template`). Enables
+  `/propagate-change` Path A to auto-fix subset-drift without
+  manual edits for the common cases.
+- `.github/workflows/ci.yml` — Codecov coverage upload step
+  (`codecov/codecov-action@v4`), gated to `matrix.python-version ==
+  '3.12'`.
+
+### Fixed
+- `scripts/invariant_types.py` — `version_match` handler honors
+  opt-in `tolerate_release_in_progress: true`. Applied to
+  `.concepts.yml` on the `pyproject_matches_latest_tag` invariant
+  to unblock `cut-release.sh` under strict mode.
+
 ## [1.7.0] — 2026-04-22
 
 ### Added
