@@ -1,14 +1,19 @@
 """Per-tool chaining hints for maya-mcp (mirrors the fpt-mcp pattern).
 
 Design doc: fpt-mcp/docs/O3_NEXT_SUGGESTED_ACTIONS.md (not repeated here).
-maya-mcp emits hints only for the Vision3D dispatcher, where the natural
-workflow is:
+maya-mcp emits hints for:
 
-    generate_image  ─▶  poll (repeated)  ─▶  download  ─▶  execute_python import
+- ``maya_vision3d`` dispatcher — the natural workflow is
+  ``generate_image → poll (repeated) → download → execute_python import``.
+- ``maya_create_primitive`` — after a primitive exists, offer material
+  assignment as the typical next step.
+- ``maya_import_file`` — after a successful import, offer save_scene so
+  the imported geometry doesn't live only in memory.
 
 Each step's response lets the next step pre-fill its key params. The
-``select_server`` / ``health`` actions have no interesting follow-up; only
-the pipeline actions ship rules.
+``select_server`` / ``health`` Vision3D actions and other Maya direct
+tools have no interesting follow-up; only the high-value chains ship
+rules.
 
 The feature is strictly additive: tools without an entry in
 ``SUGGESTION_RULES`` see no change, rule errors are swallowed, responses
@@ -77,9 +82,63 @@ def _suggest_after_maya_vision3d(response: dict[str, Any]) -> list[Suggestion]:
     return []
 
 
+_PRIMITIVE_TYPES = {"cube", "sphere", "cylinder", "cone", "plane", "torus"}
+
+
+def _suggest_after_maya_create_primitive(response: dict[str, Any]) -> list[Suggestion]:
+    """Rule — after creating a primitive, offer material assignment.
+
+    Trigger: response carries ``name`` (non-empty) and ``type`` matching a
+    known primitive kind. Error responses (``error`` key present) are
+    short-circuited.
+    """
+    if "error" in response:
+        return []
+    obj_name = response.get("name")
+    obj_type = response.get("type")
+    if not isinstance(obj_name, str) or not obj_name:
+        return []
+    if obj_type not in _PRIMITIVE_TYPES:
+        return []
+    return [{
+        "tool": "maya_assign_material",
+        "reason": f"Assign a material to the new {obj_type} '{obj_name}'.",
+        "params_hint": {
+            "object_name": obj_name,
+            "material_type": "aiStandardSurface",
+        },
+    }]
+
+
+def _suggest_after_maya_import_file(response: dict[str, Any]) -> list[Suggestion]:
+    """Rule — after a non-empty import, offer save_scene.
+
+    Trigger: response carries ``imported`` > 0. Imports that land zero
+    new transforms (empty file, plugin failure that swallows its own
+    error) produce no hint.
+    """
+    if "error" in response:
+        return []
+    imported = response.get("imported")
+    if not isinstance(imported, int) or imported <= 0:
+        return []
+    reason = (
+        f"Save the scene so the imported {imported} object(s) persist."
+        if imported > 1
+        else "Save the scene so the imported object persists."
+    )
+    return [{
+        "tool": "maya_session",
+        "reason": reason,
+        "params_hint": {"action": "save_scene"},
+    }]
+
+
 # tool_name → callable(parsed_response_dict) -> list[Suggestion]
 SUGGESTION_RULES: dict[str, Callable[[dict[str, Any]], list[Suggestion]]] = {
     "maya_vision3d": _suggest_after_maya_vision3d,
+    "maya_create_primitive": _suggest_after_maya_create_primitive,
+    "maya_import_file": _suggest_after_maya_import_file,
 }
 
 
