@@ -119,6 +119,70 @@ class TestVision3DRule:
         assert s._suggest_after_maya_vision3d({"ok": True, "url": "http://…"}) == []
 
 
+class TestCreatePrimitiveRule:
+    def test_cube_suggests_assign_material(self):
+        resp = {"name": "pCube1", "type": "cube"}
+        out = s._suggest_after_maya_create_primitive(resp)
+        assert len(out) == 1
+        assert out[0]["tool"] == "maya_assign_material"
+        assert out[0]["params_hint"]["object_name"] == "pCube1"
+        assert out[0]["params_hint"]["material_type"] == "aiStandardSurface"
+
+    def test_sphere_suggests_assign_material(self):
+        resp = {"name": "pSphere1", "type": "sphere"}
+        out = s._suggest_after_maya_create_primitive(resp)
+        assert out and out[0]["params_hint"]["object_name"] == "pSphere1"
+
+    def test_all_primitive_types_fire(self):
+        for kind in ("cube", "sphere", "cylinder", "cone", "plane", "torus"):
+            resp = {"name": f"p{kind}1", "type": kind}
+            assert s._suggest_after_maya_create_primitive(resp), f"{kind} did not fire"
+
+    def test_unknown_type_no_suggestion(self):
+        assert s._suggest_after_maya_create_primitive({"name": "x", "type": "mystery"}) == []
+
+    def test_empty_name_no_suggestion(self):
+        assert s._suggest_after_maya_create_primitive({"name": "", "type": "cube"}) == []
+
+    def test_missing_name_no_suggestion(self):
+        assert s._suggest_after_maya_create_primitive({"type": "cube"}) == []
+
+    def test_error_response_no_suggestion(self):
+        assert s._suggest_after_maya_create_primitive({"error": "boom"}) == []
+
+
+class TestImportFileRule:
+    def test_non_empty_import_suggests_save(self):
+        resp = {"imported": 3, "objects": ["a", "b", "c"], "file": "/tmp/x.glb"}
+        out = s._suggest_after_maya_import_file(resp)
+        assert len(out) == 1
+        assert out[0]["tool"] == "maya_session"
+        assert out[0]["params_hint"]["action"] == "save_scene"
+        assert "3 object(s)" in out[0]["reason"]
+
+    def test_single_import_uses_singular_reason(self):
+        resp = {"imported": 1, "objects": ["a"], "file": "/tmp/x.obj"}
+        out = s._suggest_after_maya_import_file(resp)
+        assert out and "imported object" in out[0]["reason"]
+
+    def test_zero_import_no_suggestion(self):
+        resp = {"imported": 0, "objects": [], "file": "/tmp/x.fbx"}
+        assert s._suggest_after_maya_import_file(resp) == []
+
+    def test_missing_imported_no_suggestion(self):
+        assert s._suggest_after_maya_import_file({"file": "/tmp/x.fbx"}) == []
+
+    def test_non_int_imported_no_suggestion(self):
+        assert s._suggest_after_maya_import_file({"imported": "3"}) == []
+
+    def test_error_response_no_suggestion(self):
+        assert s._suggest_after_maya_import_file({"error": "import failed"}) == []
+
+
 class TestRegistryContract:
     def test_registry_has_maya_vision3d(self):
         assert "maya_vision3d" in s.SUGGESTION_RULES
+
+    def test_registry_has_new_rules(self):
+        for tool in ("maya_vision3d", "maya_create_primitive", "maya_import_file"):
+            assert tool in s.SUGGESTION_RULES, f"{tool} missing from registry"

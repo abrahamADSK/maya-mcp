@@ -382,6 +382,7 @@ async def _do_launch(params: dict) -> str:
 @mcp.tool(name="maya_create_primitive")
 async def maya_create_primitive(params: CreatePrimitiveInput) -> str:
     """Create a 3D primitive in Maya (cube, sphere, cylinder, cone, plane, torus) with optional position, scale, and rotation."""
+    from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
         create_funcs = {
             "cube": "cmds.polyCube",
@@ -407,7 +408,7 @@ obj = {func}({name_arg})[0]
 
         code += "result = {'name': obj, 'type': '" + params.primitive_type.value + "'}"
 
-        return bridge.execute(code)
+        return maybe_annotate_with_suggestions("maya_create_primitive", bridge.execute(code))
     except Exception as e:
         return _handle_error(e)
 
@@ -830,6 +831,7 @@ finally:
 @mcp.tool(name="maya_import_file")
 async def maya_import_file(params: ImportFileInput) -> str:
     """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. With namespace, parent group, and scale options."""
+    from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
         ext = params.file_path.rsplit(".", 1)[-1].lower() if "." in params.file_path else ""
         ns_opt = f", namespace='{params.namespace}'" if params.namespace else ""
@@ -870,7 +872,8 @@ try:
 finally:
     cmds.undoInfo(closeChunk=True)
 """
-        return await asyncio.to_thread(bridge.execute, code)
+        out = await asyncio.to_thread(bridge.execute, code)
+        return maybe_annotate_with_suggestions("maya_import_file", out)
     except Exception as e:
         return _handle_error(e)
 
