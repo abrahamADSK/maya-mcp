@@ -134,11 +134,64 @@ def _suggest_after_maya_import_file(response: dict[str, Any]) -> list[Suggestion
     }]
 
 
+def _suggest_after_maya_create_camera(response: dict[str, Any]) -> list[Suggestion]:
+    """Rule — after creating a camera, offer a viewport capture through it.
+
+    Trigger: response carries a non-empty ``camera`` string. Useful for
+    "did the framing land where I wanted?" feedback loops in shot-layout
+    work.
+    """
+    if "error" in response:
+        return []
+    cam = response.get("camera")
+    if not isinstance(cam, str) or not cam:
+        return []
+    return [{
+        "tool": "maya_viewport_capture",
+        "reason": f"Preview the scene through the new camera '{cam}'.",
+        "params_hint": {
+            "camera": cam,
+            "output_path": f"/tmp/{cam}_preview.png",
+        },
+    }]
+
+
+def _suggest_after_maya_create_light(response: dict[str, Any]) -> list[Suggestion]:
+    """Rule — after creating a light, offer an intensity keyframe.
+
+    Trigger: response carries a ``light`` string and matching ``type``.
+    The hint seeds a frame-1 intensity keyframe as the starting point
+    of a light animation — users typically follow up with another
+    frame at a later time for the actual interpolation.
+    """
+    if "error" in response:
+        return []
+    light = response.get("light")
+    light_type = response.get("type")
+    if not isinstance(light, str) or not light:
+        return []
+    return [{
+        "tool": "maya_set_keyframe",
+        "reason": (
+            f"Set the initial intensity keyframe for the new {light_type} light "
+            f"'{light}' (animation groundwork)."
+        ),
+        "params_hint": {
+            "object_name": light,
+            "attribute": "intensity",
+            "value": 1.0,
+            "frame": 1,
+        },
+    }]
+
+
 # tool_name → callable(parsed_response_dict) -> list[Suggestion]
 SUGGESTION_RULES: dict[str, Callable[[dict[str, Any]], list[Suggestion]]] = {
     "maya_vision3d": _suggest_after_maya_vision3d,
     "maya_create_primitive": _suggest_after_maya_create_primitive,
     "maya_import_file": _suggest_after_maya_import_file,
+    "maya_create_camera": _suggest_after_maya_create_camera,
+    "maya_create_light": _suggest_after_maya_create_light,
 }
 
 

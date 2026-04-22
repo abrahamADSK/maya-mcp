@@ -179,10 +179,62 @@ class TestImportFileRule:
         assert s._suggest_after_maya_import_file({"error": "import failed"}) == []
 
 
+class TestCreateCameraRule:
+    def test_camera_suggests_viewport_capture(self):
+        resp = {"camera": "persp_shot01"}
+        out = s._suggest_after_maya_create_camera(resp)
+        assert len(out) == 1
+        assert out[0]["tool"] == "maya_viewport_capture"
+        assert out[0]["params_hint"]["camera"] == "persp_shot01"
+        assert out[0]["params_hint"]["output_path"] == "/tmp/persp_shot01_preview.png"
+
+    def test_empty_camera_no_suggestion(self):
+        assert s._suggest_after_maya_create_camera({"camera": ""}) == []
+
+    def test_missing_camera_no_suggestion(self):
+        assert s._suggest_after_maya_create_camera({}) == []
+
+    def test_error_response_no_suggestion(self):
+        assert s._suggest_after_maya_create_camera({"error": "boom"}) == []
+
+
+class TestCreateLightRule:
+    def test_light_suggests_keyframe(self):
+        resp = {"light": "directionalLight1", "type": "directional"}
+        out = s._suggest_after_maya_create_light(resp)
+        assert len(out) == 1
+        assert out[0]["tool"] == "maya_set_keyframe"
+        assert out[0]["params_hint"]["object_name"] == "directionalLight1"
+        assert out[0]["params_hint"]["attribute"] == "intensity"
+        assert out[0]["params_hint"]["frame"] == 1
+        assert "directional light" in out[0]["reason"]
+
+    def test_all_light_types_fire(self):
+        for kind in ("directional", "point", "spot", "area", "ambient"):
+            resp = {"light": f"{kind}Light1", "type": kind}
+            assert s._suggest_after_maya_create_light(resp), f"{kind} did not fire"
+
+    def test_empty_light_no_suggestion(self):
+        assert s._suggest_after_maya_create_light({"light": "", "type": "point"}) == []
+
+    def test_missing_light_no_suggestion(self):
+        assert s._suggest_after_maya_create_light({"type": "point"}) == []
+
+    def test_error_response_no_suggestion(self):
+        assert s._suggest_after_maya_create_light({"error": "boom"}) == []
+
+
 class TestRegistryContract:
     def test_registry_has_maya_vision3d(self):
         assert "maya_vision3d" in s.SUGGESTION_RULES
 
     def test_registry_has_new_rules(self):
-        for tool in ("maya_vision3d", "maya_create_primitive", "maya_import_file"):
+        expected = (
+            "maya_vision3d",
+            "maya_create_primitive",
+            "maya_import_file",
+            "maya_create_camera",
+            "maya_create_light",
+        )
+        for tool in expected:
             assert tool in s.SUGGESTION_RULES, f"{tool} missing from registry"

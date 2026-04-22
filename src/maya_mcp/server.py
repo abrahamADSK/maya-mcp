@@ -524,6 +524,7 @@ else:
 @mcp.tool(name="maya_create_light")
 async def maya_create_light(params: LightInput) -> str:
     """Create a light in Maya (directional, point, spot, area, ambient) with configurable intensity and color."""
+    from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
         light_funcs = {
             "directional": "cmds.directionalLight",
@@ -561,7 +562,7 @@ cmds.xform(parent, translation={params.position}, worldSpace=True)
 
         code += "result = {'light': light, 'type': '" + params.light_type + "'}\n"
 
-        return bridge.execute(code)
+        return maybe_annotate_with_suggestions("maya_create_light", bridge.execute(code))
     except Exception as e:
         return _handle_error(e)
 
@@ -569,6 +570,7 @@ cmds.xform(parent, translation={params.position}, worldSpace=True)
 @mcp.tool(name="maya_create_camera")
 async def maya_create_camera(params: CameraInput) -> str:
     """Create a camera in Maya with configurable position, look-at point, and focal length."""
+    from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
         name_arg = f", name='{params.name}'" if params.name else ""
         code = f"""
@@ -588,7 +590,7 @@ cmds.delete(aim)
 """
 
         code += "result = {'camera': cam}\n"
-        return bridge.execute(code)
+        return maybe_annotate_with_suggestions("maya_create_camera", bridge.execute(code))
     except Exception as e:
         return _handle_error(e)
 
