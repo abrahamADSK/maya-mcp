@@ -253,6 +253,7 @@ concepts:
     invariants:
 
       - id: pyproject_matches_latest_tag
+        tolerate_release_in_progress: true  # cut-release.sh sets CUT_RELEASE_VERSION to tolerate the transient drift
         type: version_match
         a:
           source: file_regex
