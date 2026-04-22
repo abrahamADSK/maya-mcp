@@ -12,28 +12,71 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 ## [Unreleased]
 
 ### Added
-- `.github/workflows/ci.yml` — GitHub Actions CI workflow. Three jobs:
-  pytest (3.10/3.11/3.12 matrix, Qt forced to `QT_QPA_PLATFORM=offscreen`),
-  ruff lint (non-blocking in v1), verify_concepts on every push + PR.
-  Closes Chat 45 P3 CI item.
+- `src/maya_mcp/suggestions.py` — next_suggested_actions pattern port
+  (Chat 47). JSON-mutate contract same as fpt-mcp. First rule: 3-branch
+  Vision3D chain (`generate_image/text → poll → download →
+  maya_session import`). Kill switch `MAYA_MCP_DISABLE_SUGGESTIONS=1`.
+  Wired via `maybe_annotate_with_suggestions("maya_vision3d", …)` in
+  `server.py`.
+- `.concepts.yml` — `next_suggested_actions_contract` concept with
+  `every_rule_is_wired` invariant. Pre-commit fails if a rule is
+  registered without wiring at the tool level.
+- `src/maya_mcp/suggestions.py` — two new chaining rules (Chat 48,
+  this release): `maya_create_primitive → maya_assign_material` (seeds
+  `object_name` + `aiStandardSurface` default, whitelists the 6
+  primitive kinds) and `maya_import_file → maya_session(save_scene)`
+  (fires only on `imported > 0`, singular/plural reason text). Tests
+  grew from 244 to 258 (+14); invariant count 24 → 27.
+- `.github/workflows/ci.yml` — GitHub Actions CI workflow. Four blocking
+  jobs: pytest across Python 3.10/3.11/3.12 (Qt forced to
+  `QT_QPA_PLATFORM=offscreen`), ruff lint, mypy, verify_concepts.
+  Pytest coverage reported inline.
 - `.github/workflows/pr-review.yml` — automated Claude PR review
   (`anthropics/claude-code-action@v1`). Byte-identical across the 4
-  ecosystem repos. Requires repo secret `ANTHROPIC_API_KEY`. Closes
-  Chat 45 P3 PR-review item.
-- `scripts/verify_concepts.py --write` — WRITER MODE (Chat 46). Requires
-  the triple flag `--accept-current-as-truth --i-reviewed-diff --write`.
-  Dispatches to per-type writers in `invariant_types.py::WRITERS`.
-  Currently supports `tool_count` (updates integers inside
-  `<!-- concept:<id> start/end -->` blocks) and `review_expiry` (bumps
-  `reviewed_at` timestamps to today). Other invariant types report
-  `WRITER UNSUPPORTED`. No auto-commit — user reviews `git diff` before
-  committing. Closes Chat 45 P3.15 deferral.
+  ecosystem repos. Uses `claude_code_oauth_token`. Requires the
+  Claude Code GitHub App installed on the repo + workflow permission
+  `id-token: write` + `--model claude-sonnet-4-6` pin so the OAuth
+  token (Sonnet-scoped on Max/Pro) works against the default-Opus
+  action.
+- `scripts/verify_concepts.py --write` — WRITER MODE (Chat 46).
+  Requires the triple flag `--accept-current-as-truth
+  --i-reviewed-diff --write`. Dispatches to per-type writers in
+  `invariant_types.py::WRITERS`. Currently supports `tool_count` and
+  `review_expiry`; other types report `WRITER UNSUPPORTED`. No
+  auto-commit.
+- `scripts/invariant_types.py` — `ast_dict_keys` canonical (Chat 47)
+  now reads `ast.AnnAssign` in addition to `ast.Assign`. Synced
+  byte-identical across 4 repos.
+- `scripts/invariant_types.py` — `version_match` canonical (Chat 48)
+  honors opt-in `tolerate_release_in_progress: true`. Lets
+  `cut-release.sh` commit a version bump before the matching git
+  tag exists under strict mode.
+- `scripts/verify_concepts.py` — `ci_skip: true` flag on individual
+  invariants + auto-skip of `review_expiry` under `GITHUB_ACTIONS`.
 
 ### Changed
-- `.concepts.yml` — `strict: false → true`. The pre-commit hook now blocks
-  commits on any unresolved invariant drift instead of only reporting it.
-  Ecosystem-wide flip on 2026-04-20 (Chat 46), unblocked by the
-  `changelog_tag_sync` release-in-progress tolerance shipped in v1.6.3.
+- `.concepts.yml` — `strict: false → true`. The pre-commit hook now
+  blocks commits on any unresolved invariant drift instead of only
+  reporting it. Ecosystem-wide flip on 2026-04-20 (Chat 46), unblocked
+  by the `changelog_tag_sync` release-in-progress tolerance shipped in
+  v1.6.3.
+- CI pipeline cleanup (Chat 47): ruff baseline cleared, mypy baseline
+  cleared (`[tool.mypy]` block in pyproject), both jobs flipped to
+  blocking.
+
+### Fixed
+- `.github/workflows/ci.yml` — CI uses `pip install -r
+  tests/requirements-test.txt` to pull the full test dependencies
+  (Chat 47). The earlier handoff misdiagnosed the first CI failure as
+  Qt offscreen; real cause was missing pytest-asyncio.
+- `.github/workflows/pr-review.yml` — added `id-token: write` workflow
+  permission (Chat 48). Without it the action errored with "Unable to
+  get ACTIONS_ID_TOKEN_REQUEST_URL env variable".
+- `.github/workflows/pr-review.yml` — pinned `--model claude-sonnet-4-6`
+  via `claude_args` (Chat 48). OAuth tokens from `claude setup-token`
+  are scoped to Sonnet on Max/Pro; the action's default model (Opus
+  after v1.0.100) returned `401 Invalid bearer token` against those
+  credentials (see anthropics/claude-code-action#584).
 
 ## [1.6.3] — 2026-04-20
 
