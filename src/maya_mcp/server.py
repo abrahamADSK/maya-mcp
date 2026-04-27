@@ -2147,6 +2147,15 @@ def _inject_user_setup():
         existing += NL + NL
     new_content = existing + snippet
 
+    # Skip write if the file already contains exactly this content.
+    # Without this guard, every new claude -p subprocess (which resets
+    # _panel_setup_done) would rewrite the file and print the warning —
+    # even though nothing changed.
+    if os.path.isfile(us_path):
+        with open(us_path) as _f:
+            if _f.read() == new_content:
+                return False
+
     with open(us_path, "w") as f:
         f.write(new_content)
 
