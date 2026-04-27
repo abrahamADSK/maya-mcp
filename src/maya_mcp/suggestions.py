@@ -66,16 +66,10 @@ def _suggest_after_maya_vision3d(response: dict[str, Any]) -> list[Suggestion]:
     output_dir = response.get("output_dir")
     if status == "ok" and output_dir and response.get("textured"):
         return [{
-            "tool": "maya_session",
+            "tool": "maya_import_file",
             "reason": "Import the textured mesh into the current Maya scene.",
             "params_hint": {
-                "action": "execute_python",
-                "params": {
-                    "code": (
-                        f"import maya.cmds as cmds; "
-                        f"cmds.file('{output_dir}/textured.glb', i=True)"
-                    ),
-                },
+                "file_path": f"{output_dir}/textured.glb",
             },
         }]
 

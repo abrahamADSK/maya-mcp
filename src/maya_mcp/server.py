@@ -832,7 +832,14 @@ finally:
 
 @mcp.tool(name="maya_import_file")
 async def maya_import_file(params: ImportFileInput) -> str:
-    """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. With namespace, parent group, and scale options."""
+    """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. With namespace, parent group, and scale options.
+
+    GLB/GLTF: uses Maya's native glTF scene parser (``type='glTF Import'``);
+    if the parser is not registered or import fails, falls back to the
+    Vision3D sibling pattern — ``mesh_uv.obj`` + ``texture_baked.png`` next
+    to the GLB — building an ``aiStandardSurface`` with the texture in
+    ``baseColor`` and assigning it to the imported meshes.
+    """
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
         ext = params.file_path.rsplit(".", 1)[-1].lower() if "." in params.file_path else ""
@@ -850,13 +857,73 @@ for _mcp_obj in _mcp_imported:
     if cmds.objectType(_mcp_obj) == 'transform':
         cmds.scale({params.scale_factor}, {params.scale_factor}, {params.scale_factor}, _mcp_obj)
 """
-        # Build file type string
+        # Build file type string. GLB/GLTF use Maya's native glTF scene
+        # parser; the type string is case-sensitive ('glTF Import', not
+        # 'GLTF Import'). For all other types the historical mapping
+        # remains unchanged.
         file_types = {
             "obj": "OBJ", "fbx": "FBX", "abc": "Alembic",
-            "glb": "glTF", "gltf": "glTF", "ma": "mayaAscii", "mb": "mayaBinary",
+            "glb": "glTF Import", "gltf": "glTF Import",
+            "ma": "mayaAscii", "mb": "mayaBinary",
         }
         ftype = file_types.get(ext, "")
         type_opt = f", type='{ftype}'" if ftype else ""
+
+        if ext in ("glb", "gltf"):
+            # Native glTF path with OBJ+texture fallback. The fallback
+            # mirrors Vision3D's output convention: every textured.glb is
+            # written alongside mesh_uv.obj + texture_baked.png in the
+            # same directory.
+            import_block = f"""
+    _mcp_method = 'gltf'
+    _mcp_warning = ''
+    try:
+        try:
+            cmds.loadPlugin('libgltfsceneimport', quiet=True)
+        except Exception:
+            pass
+        cmds.file('{params.file_path}', i=True, ignoreVersion=True,
+                  mergeNamespacesOnClash=False, returnNewNodes=True,
+                  type='glTF Import'{ns_opt})
+    except RuntimeError as _mcp_e:
+        import os as _mcp_os
+        _mcp_dir = _mcp_os.path.dirname('{params.file_path}')
+        _mcp_obj = _mcp_os.path.join(_mcp_dir, 'mesh_uv.obj')
+        _mcp_tex = _mcp_os.path.join(_mcp_dir, 'texture_baked.png')
+        if _mcp_os.path.isfile(_mcp_obj):
+            _mcp_method = 'obj_fallback'
+            _mcp_warning = 'glTF translator unavailable: ' + str(_mcp_e)
+            _mcp_obj_before = set(cmds.ls(transforms=True, long=True))
+            cmds.file(_mcp_obj, i=True, ignoreVersion=True,
+                      mergeNamespacesOnClash=False, returnNewNodes=True,
+                      type='OBJ'{ns_opt})
+            _mcp_obj_after = set(cmds.ls(transforms=True, long=True))
+            _mcp_obj_new = list(_mcp_obj_after - _mcp_obj_before)
+            if _mcp_os.path.isfile(_mcp_tex):
+                _mcp_sh = cmds.shadingNode('aiStandardSurface', asShader=True, name='mcp_glb_fallback_mat')
+                _mcp_sg = cmds.sets(name=_mcp_sh + 'SG', empty=True, renderable=True, noSurfaceShader=True)
+                cmds.connectAttr(_mcp_sh + '.outColor', _mcp_sg + '.surfaceShader', force=True)
+                _mcp_file = cmds.shadingNode('file', asTexture=True, isColorManaged=True, name='mcp_glb_fallback_tex')
+                _mcp_p2d = cmds.shadingNode('place2dTexture', asUtility=True, name='mcp_glb_fallback_p2d')
+                for _mcp_a in ('coverage', 'translateFrame', 'rotateFrame', 'mirrorU', 'mirrorV', 'stagger', 'wrapU', 'wrapV', 'repeatUV', 'offset', 'rotateUV', 'noiseUV', 'vertexUvOne', 'vertexUvTwo', 'vertexUvThree', 'vertexCameraOne'):
+                    cmds.connectAttr(_mcp_p2d + '.' + _mcp_a, _mcp_file + '.' + _mcp_a, force=True)
+                cmds.connectAttr(_mcp_p2d + '.outUV', _mcp_file + '.uv', force=True)
+                cmds.connectAttr(_mcp_p2d + '.outUvFilterSize', _mcp_file + '.uvFilterSize', force=True)
+                cmds.setAttr(_mcp_file + '.fileTextureName', _mcp_tex, type='string')
+                cmds.connectAttr(_mcp_file + '.outColor', _mcp_sh + '.baseColor', force=True)
+                for _mcp_xform in _mcp_obj_new:
+                    if cmds.objectType(_mcp_xform) == 'transform':
+                        cmds.sets(_mcp_xform, edit=True, forceElement=_mcp_sg)
+        else:
+            raise
+"""
+        else:
+            import_block = f"""
+    _mcp_method = '{ftype or 'auto'}'
+    _mcp_warning = ''
+    cmds.file('{params.file_path}', i=True, ignoreVersion=True,
+              mergeNamespacesOnClash=False, returnNewNodes=True{ns_opt}{type_opt})
+"""
 
         code = f"""
 import maya.cmds as cmds
@@ -864,13 +931,13 @@ cmds.undoInfo(openChunk=True, chunkName='mcp_import')
 try:
     _mcp_before = set(cmds.ls(transforms=True))
     {group_code}
-    cmds.file('{params.file_path}', i=True, ignoreVersion=True,
-              mergeNamespacesOnClash=False, returnNewNodes=True{ns_opt}{type_opt})
+{import_block}
     _mcp_after = set(cmds.ls(transforms=True))
     _mcp_imported = list(_mcp_after - _mcp_before)
     {scale_code}
     result = {{'imported': len(_mcp_imported), 'objects': _mcp_imported[:20],
-              'file': '{params.file_path}'}}
+              'file': '{params.file_path}', 'method': _mcp_method,
+              'warning': _mcp_warning}}
 finally:
     cmds.undoInfo(closeChunk=True)
 """
@@ -1996,6 +2063,7 @@ def _setup_maya_panel():
 import sys, os, maya.cmds as cmds, maya.utils
 
 _mcp_root = r"{_PROJECT_ROOT}"
+_mcp_port = {MAYA_PORT}
 
 # 1. Current session: add to sys.path now
 if _mcp_root not in sys.path:
@@ -2037,6 +2105,13 @@ def _inject_user_setup():
         "if _mcp_root not in _mcp_sys.path:",
         "    _mcp_sys.path.insert(0, _mcp_root)",
         "import maya.utils as _mcp_utils",
+        "def _mcp_open_command_port():",
+        "    try:",
+        "        import maya.cmds as _mc",
+        '        if not _mc.commandPort(":' + str(_mcp_port) + '", query=True):',
+        '            _mc.commandPort(name=":' + str(_mcp_port) + '", sourceType="mel")',
+        "    except Exception:",
+        "        pass",
         "def _mcp_menu_startup():",
         "    try:",
         "        from console.maya_panel import install_menu",
@@ -2045,6 +2120,7 @@ def _inject_user_setup():
         "            install_menu()",
         "    except Exception:",
         "        pass",
+        "_mcp_utils.executeDeferred(_mcp_open_command_port)",
         "_mcp_utils.executeDeferred(_mcp_menu_startup)",
         _END_SENTINEL,
     ]

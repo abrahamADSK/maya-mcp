@@ -58,7 +58,7 @@ class TestImportGLB:
 
     @pytest.mark.asyncio
     async def test_glb_import_command(self, monkeypatch):
-        """GLB import uses type='glTF' and i=True in cmds.file()."""
+        """GLB import uses type='glTF Import' (Maya scene parser id) and i=True."""
         captured = _capture_bridge_execute(monkeypatch)
 
         params = srv.ImportFileInput(file_path="/assets/model.glb")
@@ -69,18 +69,51 @@ class TestImportGLB:
         assert "cmds.file(" in code
         assert "/assets/model.glb" in code
         assert "i=True" in code
-        assert "type='glTF'" in code
+        assert "type='glTF Import'" in code
 
     @pytest.mark.asyncio
     async def test_gltf_import_command(self, monkeypatch):
-        """GLTF extension also maps to type='glTF'."""
+        """GLTF extension also maps to type='glTF Import'."""
         captured = _capture_bridge_execute(monkeypatch)
 
         params = srv.ImportFileInput(file_path="/assets/scene.gltf")
         await srv.maya_import_file(params)
 
         code = captured["code"]
-        assert "type='glTF'" in code
+        assert "type='glTF Import'" in code
+
+    @pytest.mark.asyncio
+    async def test_glb_includes_obj_fallback(self, monkeypatch):
+        """GLB import emits an OBJ + texture fallback path if the glTF translator fails."""
+        captured = _capture_bridge_execute(monkeypatch)
+
+        params = srv.ImportFileInput(file_path="/assets/textured.glb")
+        await srv.maya_import_file(params)
+
+        code = captured["code"]
+        # plugin nudge
+        assert "loadPlugin('libgltfsceneimport'" in code
+        # fallback siblings (Vision3D convention)
+        assert "mesh_uv.obj" in code
+        assert "texture_baked.png" in code
+        # fallback uses aiStandardSurface with the texture in baseColor
+        assert "aiStandardSurface" in code
+        assert ".baseColor" in code
+        # the fallback only fires on RuntimeError, not on every GLB
+        assert "except RuntimeError" in code
+
+    @pytest.mark.asyncio
+    async def test_non_glb_has_no_gltf_fallback(self, monkeypatch):
+        """Non-GLB imports must not carry the glTF fallback machinery."""
+        captured = _capture_bridge_execute(monkeypatch)
+
+        params = srv.ImportFileInput(file_path="/assets/mesh.obj")
+        await srv.maya_import_file(params)
+
+        code = captured["code"]
+        assert "loadPlugin('libgltfsceneimport'" not in code
+        assert "mesh_uv.obj" not in code
+        assert "texture_baked.png" not in code
 
 
 # ── 2. Import OBJ ────────────────────────────────────────────────────────

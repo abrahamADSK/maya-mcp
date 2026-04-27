@@ -103,9 +103,8 @@ class TestVision3DRule:
         }
         out = s._suggest_after_maya_vision3d(resp)
         assert len(out) == 1
-        assert out[0]["tool"] == "maya_session"
-        assert out[0]["params_hint"]["action"] == "execute_python"
-        assert "/Users/me/out/textured.glb" in out[0]["params_hint"]["params"]["code"]
+        assert out[0]["tool"] == "maya_import_file"
+        assert out[0]["params_hint"]["file_path"] == "/Users/me/out/textured.glb"
 
     def test_download_without_textured_no_suggestion(self):
         resp = {"status": "ok", "output_dir": "/tmp", "textured": False}
