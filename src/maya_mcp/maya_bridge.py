@@ -12,11 +12,11 @@ Features:
   - Batch execution: multiple code blocks in a single connection
 """
 
+import base64
 import os
 import socket
 import json
 import logging
-import tempfile
 import uuid
 from typing import Any, Optional, Tuple
 
@@ -126,26 +126,20 @@ class MayaBridge:
         logger.debug(f"Result: {result[:200]}")
         return result
 
-    # ── Wrapper file body (module-level template) ───────────────────────────
-    # Uses _mcp_ prefix on every internal symbol to avoid collisions with
-    # user variables in the Script Editor. The wrapper exec()s the user code
-    # in an isolated namespace, stringifies the result, and writes it to
-    # _MCP_RESULT_PATH so the bridge can read it from the local filesystem
-    # without depending on Maya's command-port stdout capture.
+    # ── Wrapper body template ────────────────────────────────────────────────
+    # Uses _mcp_ prefix on every internal symbol to avoid collisions.
+    # The wrapper exec()s the user code in an isolated namespace (with cmds
+    # and json pre-imported), stringifies the result, and writes it to
+    # _MCP_RESULT_PATH so the bridge can read it from the local filesystem.
     #
-    # Pre-populates the user namespace with ``cmds`` and ``json``: every
-    # server.py tool generates Python that assumes ``cmds`` is in scope, and
-    # direct ``bridge.execute()`` callers expect the same. Before this was
-    # fixed the wrapper imported cmds at its own module level which did NOT
-    # reach the user exec namespace, so callers had to redundantly import
-    # maya.cmds themselves; any code that did not was greeted with a NameError.
+    # _MCP_SCRIPT and _MCP_RESULT_PATH must be set before this block runs.
+    # They are prepended as plain Python assignments when building the payload.
     _WRAPPER_BODY = (
         "import maya.cmds as _mcp_cmds\n"
         "import json as _mcp_json\n"
         "try:\n"
         "    _mcp_result_ns = {'cmds': _mcp_cmds, 'json': _mcp_json}\n"
-        "    _mcp_user_code = open(_MCP_SCRIPT_PATH).read()\n"
-        "    exec(_mcp_user_code, _mcp_result_ns)\n"
+        "    exec(_MCP_SCRIPT, _mcp_result_ns)\n"
         "    _mcp_result = _mcp_result_ns.get('result', 'OK')\n"
         "    if isinstance(_mcp_result, (list, dict, tuple)):\n"
         "        _mcp_payload = _mcp_json.dumps(_mcp_result)\n"
@@ -176,37 +170,6 @@ class MayaBridge:
     )
 
     @staticmethod
-    def _prepare_wrapper_files(code: str) -> Tuple[str, str, str]:
-        """Write user code + wrapper bootstrap to /tmp.
-
-        Returns (user_path, wrapper_path, result_path). The wrapper imports
-        the user code via _MCP_SCRIPT_PATH and writes its result to
-        _MCP_RESULT_PATH; the bridge reads that file locally. result_path
-        embeds a uuid so concurrent calls never collide.
-        """
-        tmp_user = tempfile.NamedTemporaryFile(
-            mode='w', suffix='.py', prefix='_mcp_user_',
-            dir='/tmp', delete=False
-        )
-        tmp_user.write(code)
-        tmp_user.close()
-
-        result_path = os.path.join(
-            '/tmp', f'_mcp_result_{os.getpid()}_{uuid.uuid4().hex}.json'
-        )
-
-        tmp_wrapper = tempfile.NamedTemporaryFile(
-            mode='w', suffix='.py', prefix='_mcp_wrap_',
-            dir='/tmp', delete=False
-        )
-        tmp_wrapper.write(f"_MCP_SCRIPT_PATH = {tmp_user.name!r}\n")
-        tmp_wrapper.write(f"_MCP_RESULT_PATH = {result_path!r}\n")
-        tmp_wrapper.write(MayaBridge._WRAPPER_BODY)
-        tmp_wrapper.close()
-
-        return tmp_user.name, tmp_wrapper.name, result_path
-
-    @staticmethod
     def _cleanup_temp_files(*paths: Optional[str]) -> None:
         """Best-effort unlink of every path. Missing files are silently ignored."""
         for path in paths:
@@ -220,18 +183,19 @@ class MayaBridge:
                 logger.warning("Failed to remove temp file %s: %s", path, exc)
 
     def send_python(self, code: str) -> str:
-        """
-        Executes Python code in Maya and returns the result as a string.
+        """Executes Python code in Maya and returns the result as a string.
 
-        Single-connection file-based return:
-        1. Write user code + wrapper bootstrap + result path to /tmp
-        2. Send Maya a single MEL command that exec()s the wrapper
-        3. The wrapper writes the stringified result to _MCP_RESULT_PATH
-        4. Bridge reads the result file from local disk
+        The wrapper code (user code + result-file writer) is base64-encoded
+        and inlined directly into a single MEL python() call, eliminating all
+        temp files on the bridge side.  Previously the bridge wrote a wrapper
+        .py to /tmp and sent Maya the path to exec(); if the bridge timed out
+        while Maya was busy (Toolkit init, USD export, modal dialog), the
+        finally-block deleted the wrapper before Maya could read it, producing:
+            FileNotFoundError: /tmp/_mcp_wrap_*.py
 
-        This bypasses Maya's command-port stdout capture entirely, so the
-        result return path keeps working even if the Command Port was opened
-        without echoOutput=True or if the print()/return wiring is degraded.
+        With inline encoding there is no wrapper file to race against. The
+        only remaining temp file is _MCP_RESULT_PATH, which Maya writes — it
+        cannot be missing before the bridge polls for it.
 
         Raises:
             MayaConnectionError: cannot reach the Command Port at all.
@@ -239,22 +203,34 @@ class MayaBridge:
                 command but produced no result file (blocked interpreter,
                 orphaned port, modal dialog).
         """
-        user_path: Optional[str] = None
-        wrapper_path: Optional[str] = None
         result_path: Optional[str] = None
         try:
-            user_path, wrapper_path, result_path = self._prepare_wrapper_files(code)
+            result_path = os.path.join(
+                '/tmp', f'_mcp_result_{os.getpid()}_{uuid.uuid4().hex}.json'
+            )
 
-            # Single MEL command: load and exec the wrapper script in Maya.
-            # We do NOT depend on the response payload — the wrapper writes
-            # its result to _MCP_RESULT_PATH and we read it locally below.
-            mel_cmd = f'python("exec(open(\'{wrapper_path}\').read())")'
+            # Build the wrapper: embed user code as a Python literal so the
+            # exec() call inside Maya works identically to the file-based path.
+            wrapper = (
+                f"_MCP_SCRIPT = {code!r}\n"
+                f"_MCP_RESULT_PATH = {result_path!r}\n"
+                + self._WRAPPER_BODY
+            )
+
+            # Base64-encode to produce a single-line ASCII string safe for
+            # embedding inside a MEL double-quoted string without any escaping.
+            encoded = base64.b64encode(wrapper.encode("utf-8")).decode("ascii")
+            mel_cmd = (
+                f"python(\"import base64; "
+                f"exec(base64.b64decode('{encoded}').decode('utf-8'))\")"
+            )
+
             self._send_raw(mel_cmd)
 
             if not os.path.exists(result_path):
                 raise MayaExecutionError(self._RESULT_FILE_MISSING_HINT)
 
-            with open(result_path, 'r', encoding='utf-8') as fh:
+            with open(result_path, "r", encoding="utf-8") as fh:
                 result = fh.read()
 
             if result.startswith("ERROR:"):
@@ -263,7 +239,7 @@ class MayaBridge:
             return result
 
         finally:
-            self._cleanup_temp_files(user_path, wrapper_path, result_path)
+            self._cleanup_temp_files(result_path)
 
     def execute(self, code: str, as_json: bool = False) -> Any:
         """

@@ -215,29 +215,28 @@ def bridge_to_mock(mock_maya_server):
 
 def _build_wrapper_result_writer(payload: str) -> Callable[[str], None]:
     """Return an ``on_receive`` callback that simulates Maya executing the
-    wrapper bootstrap and writing ``payload`` to the result file.
+    base64-inline wrapper and writing ``payload`` to the result file.
 
-    The bridge's send_python() embeds _MCP_RESULT_PATH inside the wrapper
-    file referenced by the MEL command; this helper parses that file and
-    writes ``payload`` to the path it declares. It is the test-side analogue
-    of Maya running the wrapper for real.
+    The bridge's send_python() base64-encodes the entire wrapper (which
+    includes the _MCP_RESULT_PATH assignment) and inlines it in a MEL
+    python() call.  This helper decodes that payload, extracts the result
+    path, and writes the test payload there — the test-side analogue of
+    Maya running the wrapper for real.
 
     Tests pass the resulting callable to ``mock_maya_server.on_receive``.
     """
+    import base64 as _b64
     import re
 
     def _writer(cmd: str) -> None:
-        # The MEL command looks like: python("exec(open('/tmp/_mcp_wrap_xxx.py').read())")
-        match = re.search(r"open\('([^']+)'\)", cmd)
+        # MEL format: python("import base64; exec(base64.b64decode('<encoded>').decode('utf-8'))")
+        match = re.search(r"b64decode\('([A-Za-z0-9+/=]+)'\)", cmd)
         if not match:
             return
-        wrapper_path = match.group(1)
         try:
-            with open(wrapper_path, "r", encoding="utf-8") as fh:
-                wrapper_src = fh.read()
-        except FileNotFoundError:
+            wrapper_src = _b64.b64decode(match.group(1)).decode("utf-8")
+        except Exception:
             return
-        # Wrapper writes _MCP_RESULT_PATH = '<path>' near its top.
         path_match = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", wrapper_src)
         if not path_match:
             return

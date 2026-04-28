@@ -478,95 +478,117 @@ class TestFileBasedReturn:
         assert result == ["pCube1", "pSphere1"]
 
     def test_send_python_cleanup_on_success(
-        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+        self, mock_maya_server, bridge_to_mock
     ):
-        """All temp files (user, wrapper, result) are removed after a success."""
-        captured_paths = {"wrapper": None, "result": None}
+        """Result file is removed after a successful send_python()."""
+        import base64
+        captured = {}
 
         def capture_and_write(cmd: str) -> None:
-            match = re.search(r"open\('([^']+)'\)", cmd)
-            if match:
-                captured_paths["wrapper"] = match.group(1)
-                with open(match.group(1)) as fh:
-                    src = fh.read()
-                m = re.search(r"_MCP_SCRIPT_PATH\s*=\s*'([^']+)'", src)
-                if m:
-                    captured_paths["user"] = m.group(1)
-                m2 = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", src)
-                if m2:
-                    captured_paths["result"] = m2.group(1)
-                    with open(m2.group(1), "w") as out:
-                        out.write("ok")
+            match = re.search(r"b64decode\('([A-Za-z0-9+/=]+)'\)", cmd)
+            if not match:
+                return
+            try:
+                wrapper_src = base64.b64decode(match.group(1)).decode("utf-8")
+            except Exception:
+                return
+            m = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", wrapper_src)
+            if m:
+                captured["result"] = m.group(1)
+                with open(m.group(1), "w") as out:
+                    out.write("ok")
 
         mock_maya_server.on_receive = capture_and_write
         bridge_to_mock.send_python("result = 'ok'")
 
-        for kind, path in captured_paths.items():
-            assert path is not None, f"{kind} path was never captured"
-            assert not os.path.exists(path), f"{kind} temp file should be cleaned up: {path}"
+        assert "result" in captured, "result path was never captured"
+        assert not os.path.exists(captured["result"]), (
+            f"result temp file should be cleaned up: {captured['result']}"
+        )
 
     def test_send_python_cleanup_on_error_path(
-        self, mock_maya_server, bridge_to_mock, wrapper_result_writer
+        self, mock_maya_server, bridge_to_mock
     ):
         """Cleanup runs even when the wrapper writes an ERROR: payload."""
+        import base64
         captured = {}
 
         def writer_with_capture(cmd: str) -> None:
-            match = re.search(r"open\('([^']+)'\)", cmd)
-            if match:
-                captured["wrapper"] = match.group(1)
-                with open(match.group(1)) as fh:
-                    src = fh.read()
-                m = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", src)
-                if m:
-                    captured["result"] = m.group(1)
-                    with open(m.group(1), "w") as out:
-                        out.write("ERROR: NameError: foo")
+            match = re.search(r"b64decode\('([A-Za-z0-9+/=]+)'\)", cmd)
+            if not match:
+                return
+            try:
+                wrapper_src = base64.b64decode(match.group(1)).decode("utf-8")
+            except Exception:
+                return
+            m = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", wrapper_src)
+            if m:
+                captured["result"] = m.group(1)
+                with open(m.group(1), "w") as out:
+                    out.write("ERROR: NameError: foo")
 
         mock_maya_server.on_receive = writer_with_capture
         with pytest.raises(MayaExecutionError):
             bridge_to_mock.send_python("result = foo")
 
-        assert not os.path.exists(captured["wrapper"])
         assert not os.path.exists(captured["result"])
 
     def test_send_python_cleanup_on_missing_file_path(
         self, mock_maya_server, bridge_to_mock
     ):
         """Cleanup runs even when the result file is never created."""
+        import base64
         captured = {}
 
         def capture_only(cmd: str) -> None:
-            match = re.search(r"open\('([^']+)'\)", cmd)
-            if match:
-                captured["wrapper"] = match.group(1)
-                with open(match.group(1)) as fh:
-                    src = fh.read()
-                m = re.search(r"_MCP_SCRIPT_PATH\s*=\s*'([^']+)'", src)
-                if m:
-                    captured["user"] = m.group(1)
+            match = re.search(r"b64decode\('([A-Za-z0-9+/=]+)'\)", cmd)
+            if not match:
+                return
+            try:
+                wrapper_src = base64.b64decode(match.group(1)).decode("utf-8")
+            except Exception:
+                return
+            m = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", wrapper_src)
+            if m:
+                captured["result"] = m.group(1)
 
         mock_maya_server.on_receive = capture_only
         with pytest.raises(MayaExecutionError):
             bridge_to_mock.send_python("result = cmds.ls()")
 
-        # Wrapper and user temp files should be cleaned up. Result file never
-        # existed, but cleanup tolerates that.
-        assert not os.path.exists(captured["wrapper"])
-        assert not os.path.exists(captured["user"])
+        # Result file was never created; cleanup must tolerate that — no orphan.
+        if "result" in captured:
+            assert not os.path.exists(captured["result"])
 
-    def test_send_python_result_paths_unique_across_calls(self):
-        """Two prepared wrappers MUST get distinct result paths (uuid in name)."""
-        u1, w1, r1 = MayaBridge._prepare_wrapper_files("result = 1")
-        u2, w2, r2 = MayaBridge._prepare_wrapper_files("result = 2")
-        try:
-            assert r1 != r2
-            assert u1 != u2
-            assert w1 != w2
-            assert "_mcp_result_" in r1
-            assert r1.endswith(".json")
-        finally:
-            MayaBridge._cleanup_temp_files(u1, w1, r1, u2, w2, r2)
+    def test_send_python_result_paths_unique_across_calls(
+        self, mock_maya_server, bridge_to_mock
+    ):
+        """Two send_python() calls MUST get distinct result paths (uuid in name)."""
+        import base64
+        result_paths = []
+
+        def capture_path_and_write(cmd: str) -> None:
+            match = re.search(r"b64decode\('([A-Za-z0-9+/=]+)'\)", cmd)
+            if not match:
+                return
+            try:
+                wrapper_src = base64.b64decode(match.group(1)).decode("utf-8")
+            except Exception:
+                return
+            m = re.search(r"_MCP_RESULT_PATH\s*=\s*'([^']+)'", wrapper_src)
+            if m:
+                result_paths.append(m.group(1))
+                with open(m.group(1), "w") as out:
+                    out.write(f"result{len(result_paths)}")
+
+        mock_maya_server.on_receive = capture_path_and_write
+        bridge_to_mock.send_python("result = 1")
+        bridge_to_mock.send_python("result = 2")
+
+        assert len(result_paths) == 2
+        assert result_paths[0] != result_paths[1]
+        assert "_mcp_result_" in result_paths[0]
+        assert result_paths[0].endswith(".json")
 
     def test_send_python_result_paths_isolated_under_concurrency(
         self, mock_maya_server, bridge_to_mock, wrapper_result_writer
@@ -610,20 +632,16 @@ class TestFileBasedReturn:
         assert "print(_mcp_result)" not in body
 
     def test_wrapper_body_runs_user_code_with_cmds_preloaded(self, tmp_path, monkeypatch):
-        """Simulate Maya's side: prepare wrapper files, exec the wrapper
-        inside this Python process with a stub `maya.cmds` module, and verify
-        that user code that references `cmds` without importing it still
-        produces the right result file content.
+        """Simulate Maya's side: build the wrapper as send_python() does, exec
+        it inside this process with a stub maya.cmds, and verify that user code
+        referencing ``cmds`` without importing it produces the correct result.
 
-        This is the regression test for the Chat 41 wrapper NameError issue
-        — before the fix, ``bridge.execute('result = cmds.ls()')`` raised
-        ``NameError: name 'cmds' is not defined`` because the wrapper's
-        module-level import never reached the exec namespace.
+        Regression guard for the Chat 41 NameError where the wrapper's import
+        never reached the exec namespace.
         """
         import sys
         import types
 
-        # Stub maya.cmds with the smallest API surface the test exercises
         fake_maya = types.ModuleType("maya")
         fake_cmds = types.ModuleType("maya.cmds")
         fake_cmds.ls = lambda *a, **kw: ["pCubeShape1", "pSphereShape1"]
@@ -631,23 +649,19 @@ class TestFileBasedReturn:
         monkeypatch.setitem(sys.modules, "maya", fake_maya)
         monkeypatch.setitem(sys.modules, "maya.cmds", fake_cmds)
 
-        # Redirect tempfile default dir into the pytest tmp_path so we don't
-        # litter /tmp with regression artefacts, then prepare the wrapper.
-        monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+        result_path = str(tmp_path / "_mcp_result_test.json")
+        code = "result = cmds.ls(type='mesh')"
 
-        user_path, wrapper_path, result_path = MayaBridge._prepare_wrapper_files(
-            "result = cmds.ls(type='mesh')"
+        # Build wrapper exactly as send_python() does (no temp file involved).
+        wrapper = (
+            f"_MCP_SCRIPT = {code!r}\n"
+            f"_MCP_RESULT_PATH = {result_path!r}\n"
+            + MayaBridge._WRAPPER_BODY
         )
-        try:
-            # Run the wrapper as Maya would: exec its contents. The wrapper
-            # writes to result_path on success.
-            exec(open(wrapper_path).read(), {"__name__": "__main__"})
-            assert os.path.exists(result_path), "wrapper did not write result file"
-            payload = open(result_path).read()
-            # The wrapper json.dumps the list
-            assert payload == '["pCubeShape1", "pSphereShape1"]'
-        finally:
-            MayaBridge._cleanup_temp_files(user_path, wrapper_path, result_path)
+
+        exec(wrapper, {"__name__": "__main__"})
+        assert os.path.exists(result_path), "wrapper did not write result file"
+        assert open(result_path).read() == '["pCubeShape1", "pSphereShape1"]'
 
     def test_wrapper_body_prepopulates_cmds_and_json(self):
         """User code must be able to reference ``cmds`` and ``json`` without
