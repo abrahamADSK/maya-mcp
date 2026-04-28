@@ -11,6 +11,35 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- `src/maya_mcp/maya_bridge.py` — `send_python()` no longer races against
+  the `/tmp` wrapper file. The bridge previously wrote a wrapper `.py` to
+  `/tmp`, asked Maya to `exec()` it, then deleted it in a `finally` block.
+  If the bridge timed out while Maya was busy (Toolkit init, modal dialog,
+  USD export), the `finally` block could delete the wrapper before Maya
+  actually read it, producing `FileNotFoundError: /tmp/_mcp_wrap_*.py`. The
+  new path base64-encodes the entire wrapper (user code + result writer)
+  and inlines it directly in the MEL `python()` call. No wrapper file
+  exists to race against. The only remaining temp file is `_MCP_RESULT_PATH`
+  which Maya writes — it cannot go missing before the bridge polls for it.
+  Also removes the now-unused `_prepare_wrapper_files()` static method.
+  269 tests pass. (commit `1e22189`)
+- `src/maya_mcp/server.py` — `maya_import_file` now correctly handles GLB
+  imports. Loads the `libgltfsceneimport` plugin before invoking the
+  importer (Maya 2026 native glTF), uses `type='glTF Import'`
+  (case-sensitive — `'GLTF Import'` silently fails), and falls back to
+  `mesh_uv.obj + aiStandardSurface + texture_baked.png` when GLB import
+  fails. `src/maya_mcp/suggestions.py` updated so the vision3d download
+  chaining hint points to `maya_import_file` instead of `execute_python`.
+  (commit `a2446b1`)
+- `src/maya_mcp/server.py` — `_inject_user_setup()` no longer rewrites
+  `userSetup.py` on every MCP panel setup call. Each new `claude -p`
+  subprocess resets `_panel_setup_done` to False, so the server-level
+  guard didn't help and the spurious `[MCP] userSetup.py updated`
+  warning appeared 3× per session. The function now compares computed
+  `new_content` against the existing file and returns early when they
+  match. (commit `399cfe6`)
+
 ## [1.8.0] — 2026-04-22
 
 ### Added
