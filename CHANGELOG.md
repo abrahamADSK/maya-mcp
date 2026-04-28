@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.8.1] — 2026-04-28
+
 ### Fixed
 - `src/maya_mcp/maya_bridge.py` — `send_python()` no longer races against
   the `/tmp` wrapper file. The bridge previously wrote a wrapper `.py` to
