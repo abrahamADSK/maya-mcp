@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.8.2] — 2026-04-28
+
 ### Fixed
 - `src/maya_mcp/server.py` — four pre-existing bugs surfaced by the Chat 49
   in-vivo validation against a live Maya 2026 session. None were introduced
