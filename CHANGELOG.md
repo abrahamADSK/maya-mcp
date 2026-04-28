@@ -11,6 +11,38 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- `src/maya_mcp/server.py` — four pre-existing bugs surfaced by the Chat 49
+  in-vivo validation against a live Maya 2026 session. None were introduced
+  by recent work; all were dormant because typical flows omit the parameters
+  that triggered them.
+  - `maya_create_primitive` with `name=`: generated `cmds.polySphere(, name='X')[0]`
+    — leading comma with no first positional argument → `SyntaxError` on every
+    call that passed a name. Fix: drop leading comma in `name_arg`.
+  - `maya_create_camera` with `name=`: identical pattern, identical
+    `SyntaxError`, identical fix.
+  - `maya_create_light` with `name=` (non-area types): identical pattern.
+    Area lights spared because `cmds.shadingNode('areaLight', asLight=True,
+    name='X')` already has a preceding kwarg, so the comma is correct. Fix:
+    bare `name_kw` + conditional `, ` prefix only at the area call site.
+  - `maya_viewport_capture` with `camera=`: f-string substitution does not
+    preserve enclosing indentation, so the multi-line `camera_opt` block
+    landed unindented inside `try:` and produced `IndentationError: expected
+    an indented block after 'try' statement on line 5`. Fix: move the
+    camera switch out of the try (it is a display change, not a scene-state
+    change, so it does not need `undoInfo` rollback).
+
+### Documentation
+- `docstring(maya_import_file)` clarification: the GLB native-parser path
+  (`type='glTF Import'`) requires Maya 2027+ where the `libgltfsceneimport`
+  plugin ships by default. Maya 2026 does NOT have this plugin (validated
+  in Chat 49 against a live Maya 2026.x session — only `gameFbxExporter`
+  and `fbxmaya` were registered). The v1.8.1 changelog entry for `a2446b1`
+  said "Maya 2026 native glTF" which is incorrect — it's 2027+. The OBJ
+  fallback (`mesh_uv.obj` + `texture_baked.png` siblings) IS exercised on
+  Maya 2026 when those files are present, which is the case for Vision3D
+  paint-pipeline output but not for shape-only output.
+
 ## [1.8.1] — 2026-04-28
 
 ### Fixed
