@@ -393,7 +393,7 @@ async def maya_create_primitive(params: CreatePrimitiveInput) -> str:
             "torus": "cmds.polyTorus",
         }
         func = create_funcs[params.primitive_type.value]
-        name_arg = f", name='{params.name}'" if params.name else ""
+        name_arg = f"name='{params.name}'" if params.name else ""
 
         code = f"""
 import maya.cmds as cmds
@@ -534,18 +534,19 @@ async def maya_create_light(params: LightInput) -> str:
             "ambient": "cmds.ambientLight",
         }
 
-        name_arg = f", name='{params.name}'" if params.name else ""
+        name_kw = f"name='{params.name}'" if params.name else ""
 
         if params.light_type == "area":
+            extra = f", {name_kw}" if name_kw else ""
             code = f"""
 import maya.cmds as cmds
-light = cmds.shadingNode('areaLight', asLight=True{name_arg})
+light = cmds.shadingNode('areaLight', asLight=True{extra})
 """
         else:
             func = light_funcs.get(params.light_type, "cmds.directionalLight")
             code = f"""
 import maya.cmds as cmds
-light = {func}({name_arg})
+light = {func}({name_kw})
 """
 
         code += f"cmds.setAttr(light + '.intensity', {params.intensity})\n"
@@ -572,7 +573,7 @@ async def maya_create_camera(params: CameraInput) -> str:
     """Create a camera in Maya with configurable position, look-at point, and focal length."""
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
-        name_arg = f", name='{params.name}'" if params.name else ""
+        name_arg = f"name='{params.name}'" if params.name else ""
         code = f"""
 import maya.cmds as cmds
 cam = cmds.camera({name_arg})[0]
@@ -966,9 +967,9 @@ if cmds.getPanel(typeOf=_mcp_panel) == 'modelPanel':
         code = f"""
 import maya.cmds as cmds
 import os, base64
+{camera_opt}
 cmds.undoInfo(stateWithoutFlush=False)
 try:
-    {camera_opt}
     _mcp_img = cmds.playblast(
         completeFilename='{params.output_path}',
         format='image', compression='{fmt}',
