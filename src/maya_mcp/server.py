@@ -48,6 +48,7 @@ from maya_mcp._session_stats import (
     persist_timing as _persist_timing,
     reset_stats as _reset_stats_helper,
 )
+from maya_mcp._ast_validate import validate_python, format_issues
 
 _SERVER_DIR = Path(__file__).parent          # src/maya_mcp/
 _PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
@@ -670,6 +671,14 @@ async def _do_execute_python(params: dict) -> str:
     if warning:
         _stats["safety_blocks"] += 1
         return json.dumps({"safety_warning": warning})
+
+    # F4b (3C Wave 4): AST dry-run — reject a hallucinated cmds.<command>
+    # statically, before the Command Port round-trip. No-op when the api_graph
+    # is missing (graph_loaded=False) or disabled via config ast_dry_run: false.
+    if _get_config().get("ast_dry_run", True):
+        _validation = validate_python(validated.code)
+        if not _validation.ok:
+            return json.dumps({"ast_warning": format_issues(_validation)})
 
     # F0: a "turn" is an execute_python that ran past the safety gate (the
     # error-prone free-form path). p_fallo = failed_turns / turns_total;
