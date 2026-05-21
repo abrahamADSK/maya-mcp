@@ -11,6 +11,24 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **F0 session-stats telemetry (3C Wave 2)** — new `src/maya_mcp/_session_stats.py`
+  module: `persist_timing`/`persist_turn` JSONL streams with 5 MB rotation,
+  30-minute idle auto-reset, and the `turns_total`/`failed_turns` counters that
+  drive `p_fallo = failed_turns / turns_total` over the `execute_python` path
+  (the error-prone free-form path). `session_stats` now reports `p_fallo`; new
+  `reset_session_stats` tool (tool inventory 14 → 15). Cross-session timing
+  baselines persist to `logs/timings.jsonl`. New `stats_keys_schema_shared`
+  concept invariant locks `_stats` to `make_empty_stats()`. Ported from
+  flame-mcp for ecosystem parity.
+- **Golden RAG regression dataset (3C Wave 3)** — `tests/golden/maya_queries.jsonl`
+  (40 queries, 16 adversarial) + `tests/test_golden.py`.
+- **Ollama `keep_alive` 30 m + `config.json` knob (3C Wave 1)**.
+
+### Changed
+- **Trimmed `CLAUDE.md` operator sections → `docs/DEPLOY.md` (3C Wave 5)** so the
+  LLM system prompt no longer carries install/deploy shell recipes.
+
 ## [1.8.2] — 2026-04-28
 
 ### Fixed
