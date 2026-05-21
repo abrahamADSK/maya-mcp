@@ -76,11 +76,8 @@ Short queries like "set keyframe tangent" are automatically expanded with domain
 
 ## 3. Execution Environment
 
-### Location
-- **Repository**: `~/Claude_projects/maya-mcp/` (local Mac)
-- **MCP Server**: runs with `python -m maya_mcp.server` (standard MCP stdio transport)
-- **MCP Configuration**: `~/.claude.json` (via `claude mcp add -s user`)
-- **Tool Permissions**: `~/.claude/settings.json`
+For installation location, system requirements, and Command Port setup,
+see [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ### Environment Variables (`.env`)
 ```bash
@@ -91,14 +88,6 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 ```
 
 **Vision3D URL is NOT stored anywhere.** There is no `vision3d_servers` config field, no pool, no whitelist. On the first Vision3D call of the session, the dispatch returns `vision3d_url_required`; Claude asks the user for the URL in the chat, the user types it, Claude calls `select_server` with that URL, and it is cached in the MCP process memory until restart. If `GPU_API_URL` is set in the environment, Claude surfaces it as a *suggested default* in the prompt — the user still has to confirm it explicitly. `config.json` only holds backend/model/Ollama settings; it does NOT hold Vision3D endpoints.
-
-### Requirements
-- **macOS Ventura+** with Apple Silicon (Intel support available)
-- **Autodesk Maya 2023+** (tested on 2026)
-- **Arnold** (`mtoa` plugin, included with Maya)
-- **Python 3.10+** to run `python -m maya_mcp.server`
-- **RAG dependencies**: `chromadb`, `sentence-transformers`, `rank-bm25` (optional but recommended)
-- **Command Port enabled** in Maya's `userSetup.py`
 
 ---
 
@@ -176,11 +165,9 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 6. Top-N results returned with relevance scores (0-100%)
 
 ### Building the Index
-```bash
-cd maya-mcp
-python -m maya_mcp.rag.build_index
-```
-First run downloads embedding model (~570 MB, cached). Index stored in `src/maya_mcp/rag/index/`.
+
+Operator-only. See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the
+build-index command and prerequisites.
 
 ---
 
@@ -332,19 +319,9 @@ to the specified `output_path` for manual inspection or later use. When using a 
 model, prefer `maya_scene_snapshot` (text-only scene state) over `maya_viewport_capture`.
 
 ### Prerequisites for local models
-```bash
-# Install Ollama (macOS)
-brew install ollama
-brew services start ollama
 
-# Pull the model
-ollama pull qwen3.5:9b
-# On Mac 24GB (fallback):
-ollama pull qwen3.5:4b
-```
-
-### Configuration
-Copy `src/maya_mcp/config.example.json` to `src/maya_mcp/config.json` and adjust URLs.
+Operator-only setup. See [`docs/DEPLOY.md`](docs/DEPLOY.md) for
+Ollama install and `qwen3.5-mcp` Modelfile setup.
 
 ### Full LLM strategy
 See `MODEL_STRATEGY.md` in the ecosystem root for hardware configs, VRAM management,
