@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-05-21
+
 ### Added
 - **F0 session-stats telemetry (3C Wave 2)** — new `src/maya_mcp/_session_stats.py`
   module: `persist_timing`/`persist_turn` JSONL streams with 5 MB rotation,
