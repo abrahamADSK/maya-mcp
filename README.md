@@ -49,7 +49,7 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 ---
 
 <!-- concept:mcp_tool_count start -->
-## Tools (14 MCP tools)
+## Tools (15 MCP tools)
 <!-- concept:mcp_tool_count end -->
 
 <!-- concept:mcp_tool_table start -->
@@ -72,12 +72,13 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 | `maya_session` | Session lifecycle + generic Maya ops (see action table below) |
 | `maya_vision3d` | Optional Vision3D addon (see action table below) |
 
-### RAG & Intelligence (3 tools)
+### RAG & Intelligence (4 tools)
 | Tool | Description |
 |------|-------------|
 | `search_maya_docs` | Hybrid RAG search across 5 Maya API corpora with relevance scores |
 | `learn_pattern` | Save validated working patterns for future sessions (with trust gates) |
-| `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned |
+| `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned, p_fallo |
+| `reset_session_stats` | Zero the session counters immediately (manual companion to the 30-min idle auto-reset) |
 <!-- concept:mcp_tool_table end -->
 
 ### Maya Session Dispatcher (`maya_session` — 9 actions)

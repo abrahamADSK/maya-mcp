@@ -807,6 +807,7 @@ TOOLS = [
     "search_maya_docs",
     "learn_pattern",
     "session_stats",
+    "reset_session_stats",
 ]
 # concept:install_tools_list end
 PREFIX = "mcp__maya-mcp__"
