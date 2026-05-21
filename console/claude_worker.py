@@ -207,7 +207,51 @@ def build_backend_env(model_id: str, backend: str) -> dict:
     return env
 
 
-def _preload_ollama_mac_model(model: str, url: str, num_ctx: int) -> None:
+def resolve_keep_alive(
+    config_path: "str | Path | None" = None,
+    *,
+    default: "str | int" = "30m",
+) -> "str | int":
+    """Read the ``ollama_keep_alive`` knob from ``config.json`` (F1b).
+
+    Mirrors ``flame_mcp._config.resolve_keep_alive``: reads the
+    ``ollama_keep_alive`` key from the repo's ``config.json``, validates
+    the type (must be ``str`` or ``int``, not ``bool`` / ``None`` /
+    container), and falls back to *default* on any read or parse error so a
+    typo cannot 400 the Ollama preflight.
+
+    Parameters
+    ----------
+    config_path : str | Path | None
+        Path to ``config.json``.  When ``None`` (the default) the helper
+        derives the path from ``_REPO_ROOT`` — the same strategy used by
+        :func:`_load_config`.
+    default : str | int
+        Returned when the key is absent, the file is unreadable, or the
+        configured value has an unsupported type.  Defaults to ``"30m"``
+        so 5–15 min reading gaps don't cold-reload the local model.
+
+    Returns
+    -------
+    str | int
+        A duration string (e.g. ``"30m"``, ``"1h"``) or integer seconds.
+        Anything else collapses to *default*.
+    """
+    if config_path is None:
+        config_path = Path(_REPO_ROOT) / "src" / "maya_mcp" / "config.json"
+    try:
+        with open(config_path) as _f:
+            _cfg = json.load(_f)
+        value = _cfg.get("ollama_keep_alive", default)
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            return value
+        return default
+    except Exception:
+        return default
+
+
+def _preload_ollama_mac_model(model: str, url: str, num_ctx: int,
+                               keep_alive: "str | int" = "30m") -> None:
     """Pre-load the Mac-local Ollama model with an explicit ``num_ctx``.
 
     Ollama's Anthropic-compatible ``/v1/messages`` endpoint silently ignores
@@ -224,16 +268,21 @@ def _preload_ollama_mac_model(model: str, url: str, num_ctx: int) -> None:
     no worse off than before the preflight existed.
 
     Args:
-        model:    The Ollama model tag to warm up (e.g. ``qwen3.5-mcp``).
-        url:      Base URL of the Ollama server (no trailing slash).
-        num_ctx:  Context window size to force on the loaded model.
+        model:      The Ollama model tag to warm up (e.g. ``qwen3.5-mcp``).
+        url:        Base URL of the Ollama server (no trailing slash).
+        num_ctx:    Context window size to force on the loaded model.
+        keep_alive: How long Ollama should keep the model loaded after this
+                    request. Pass a duration string (``"30m"``, ``"1h"``) or
+                    integer seconds. Resolved from ``config.json →
+                    ollama_keep_alive`` at the call site via
+                    :func:`resolve_keep_alive`; defaults to ``"30m"`` (F1b).
     """
     endpoint = url.rstrip("/") + "/api/generate"
     payload = {
         "model": model,
         "prompt": "",
         "stream": False,
-        "keep_alive": "10m",
+        "keep_alive": keep_alive,
         "options": {"num_ctx": num_ctx},
     }
     data = json.dumps(payload).encode("utf-8")
@@ -529,6 +578,7 @@ class ClaudeWorker(QThread):
                     model=self._model_id,
                     url=mac_url,
                     num_ctx=OLLAMA_MAC_NUM_CTX,
+                    keep_alive=resolve_keep_alive(),
                 )
 
             proc = subprocess.Popen(
