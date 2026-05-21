@@ -96,6 +96,27 @@ concepts:
           concept_id: install_tools_list
           item_pattern: '"([a-z_][a-z0-9_]*)"'
 
+  stats_keys_schema_shared:
+    description: >
+      server.py::_stats is initialised via maya_mcp._session_stats.make_empty_stats()
+      so the key schema cannot drift between the helper and the server. Prevents
+      a new counter (e.g. the F0 turns_total / failed_turns pair) from being added
+      to only one side. Ported from flame-mcp in 3C Wave 2.
+    source_of_truth:
+      file: src/maya_mcp/_session_stats.py
+      symbol: make_empty_stats
+    mirrors:
+      - file: src/maya_mcp/server.py
+        symbol: "_stats (module-level dict)"
+    invariants:
+      - id: stats_initialised_via_helper
+        type: claim_verifies
+        claim: "server.py initialises _stats via make_empty_stats()"
+        code_grep:
+          regex: '_stats\s*=\s*make_empty_stats\(\)'
+          file_pattern: 'src/maya_mcp/server.py'
+        expected: found
+
   maya_session_actions:
     description: >
       The `maya_session` dispatch tool exposes a fixed set of actions declared

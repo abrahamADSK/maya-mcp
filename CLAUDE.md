@@ -7,7 +7,7 @@
 
 ## 1. Architecture
 
-**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **14 MCP tools** organized in three layers:
+**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **15 MCP tools** organized in three layers:
 
 1. **Maya Control** (9 direct tools + 1 dispatch tool with 9 actions) — Scene manipulation, modeling, animation, I/O, rendering
    - Communicates with Maya via **TCP Command Port** (default port 8100; moved from the historical 7001 because that port is held by Flame's S+W services on hosts with Autodesk Flame installed)
@@ -22,7 +22,7 @@
    - **`GPU_API_URL` env var** is honored as a *suggested default* the LLM can surface in the prompt, but it is never auto-selected. The user still has to confirm it explicitly via `select_server`.
    - **Not required** — maya-mcp works fully without Vision3D
 
-3. **RAG & Intelligence** (3 tools) — Documentation search, self-learning, analytics
+3. **RAG & Intelligence** (4 tools) — Documentation search, self-learning, analytics
    - Hybrid search: ChromaDB semantic + BM25 lexical, fused via RRF
    - HyDE adaptive query expansion for 5 Maya API domains
    - Anti-hallucination safety layer (14+ dangerous patterns)
@@ -91,7 +91,7 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 
 ---
 
-## 4. Available Tools (<!-- concept:mcp_tool_count start -->14<!-- concept:mcp_tool_count end --> MCP tools)
+## 4. Available Tools (<!-- concept:mcp_tool_count start -->15<!-- concept:mcp_tool_count end --> MCP tools)
 
 ### Maya Direct Tools (9 MCP tools)
 
@@ -137,13 +137,14 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 | `download` | Download completed results to local directory |
 <!-- concept:maya_vision3d_actions end -->
 
-### RAG & Intelligence Tools (3 tools)
+### RAG & Intelligence Tools (4 tools)
 
 | Tool | Description |
 |------|-------------|
 | `search_maya_docs` | Hybrid RAG search across 5 Maya API corpora (semantic + BM25 + HyDE + RRF) |
 | `learn_pattern` | Save validated patterns to docs (with model trust gates) |
-| `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned |
+| `session_stats` | Token efficiency report: RAG savings, safety blocks, patterns learned, p_fallo |
+| `reset_session_stats` | Zero the session counters immediately (manual companion to the 30-min idle auto-reset) |
 
 ---
 

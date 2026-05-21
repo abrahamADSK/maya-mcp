@@ -9,7 +9,7 @@ Features:
     - 9 Tier-1 Maya tools (always visible)
     - 9 session tools (behind maya_session dispatch)
     - 6 Vision3D tools (behind maya_vision3d dispatch)
-    - 3 RAG tools (search_maya_docs, learn_pattern, session_stats)
+    - 4 RAG tools (search_maya_docs, learn_pattern, session_stats, reset_session_stats)
     - Dangerous pattern detection (safety.py)
     - Hybrid search: ChromaDB + BM25 + HyDE + RRF fusion
     - Token tracking with RAG savings measurement
@@ -32,6 +32,7 @@ import asyncio
 import datetime
 import json
 import os
+import time
 from typing import Optional, List
 from enum import Enum
 from pathlib import Path
@@ -41,6 +42,12 @@ from mcp.server.fastmcp import FastMCP, Image
 
 from maya_mcp.maya_bridge import MayaBridge, MayaBridgeError
 from maya_mcp.safety import check_dangerous
+from maya_mcp._session_stats import (
+    apply_idle_reset,
+    make_empty_stats,
+    persist_timing as _persist_timing,
+    reset_stats as _reset_stats_helper,
+)
 
 _SERVER_DIR = Path(__file__).parent          # src/maya_mcp/
 _PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
@@ -59,18 +66,18 @@ MAYA_APP  = os.environ.get("MAYA_APP", "Maya")  # macOS app name for `open -a`
 
 _FULL_DOC_TOKENS = 14000  # combined size of all indexed docs
 
-_stats = {
-    "exec_calls": 0,       # total tool calls
-    "tokens_in": 0,        # tokens in parameters
-    "tokens_out": 0,       # tokens in responses
-    "rag_calls": 0,        # search_maya_docs calls
-    "tokens_saved": 0,     # tokens saved by RAG vs loading full doc
-    "patterns_learned": 0, # patterns added to docs
-    "patterns_staged": 0,  # candidates staged by non-trusted models
-    "safety_blocks": 0,    # dangerous pattern detections
-    "cache_hits": 0,       # RAG cache hits
-}
+# Canonical stats dict. Schema lives in maya_mcp._session_stats.make_empty_stats
+# so the initialiser and the reset path cannot drift (invariant: stats_keys_schema_shared).
+_stats = make_empty_stats()
+# Records when _stats was last reset (server start, idle-gap auto-reset, or explicit reset).
 _stats_reset_at = datetime.datetime.now()
+# Timestamp of the previous MCP tool call — drives the idle-gap auto-reset.
+_last_call_at: Optional[datetime.datetime] = None
+
+# F0 baseline telemetry: persistent JSONL stream that survives server restarts
+# (the in-memory ring buffer in _stats['timings'] holds only the last 20 entries).
+# Written best-effort; failures never propagate.
+_TIMINGS_LOG = _SERVER_DIR / "logs" / "timings.jsonl"
 
 # RAG state
 _last_rag_score: int = 100
@@ -118,6 +125,57 @@ def _model_can_write() -> bool:
     if cfg_list:
         return any(allowed.lower() in model for allowed in cfg_list)
     return any(allowed in model for allowed in WRITE_ALLOWED_MODELS)
+
+
+# Idle window (seconds) after which _stats is auto-zeroed on the next call.
+# Overridable via config.json -> stats_idle_reset_seconds (default 30 min).
+_STATS_IDLE_RESET_SECONDS = int(
+    _get_config().get("stats_idle_reset_seconds", 30 * 60)
+)
+
+
+def _track_call() -> None:
+    """Update last-call timestamp; auto-reset _stats if the idle gap exceeded.
+
+    Called at the top of the dispatcher and RAG/stats tool entry points (the
+    realistic session entry points — every session pings or searches first).
+    Idle threshold is _STATS_IDLE_RESET_SECONDS (default 30 min).
+    """
+    global _last_call_at, _stats_reset_at
+    now = datetime.datetime.now()
+    did_reset, reset_at = apply_idle_reset(
+        _stats, now, _last_call_at,
+        idle_reset_seconds=_STATS_IDLE_RESET_SECONDS,
+    )
+    if did_reset:
+        _stats_reset_at = reset_at
+    _last_call_at = now
+
+
+def _track_timing(entry: dict) -> None:
+    """F0: append a timing entry to the in-memory ring buffer (max 20) AND
+    persist an enriched copy as a JSON line in logs/timings.jsonl.
+
+    The ring buffer keeps `session_stats()` cheap; the JSONL stream gives
+    cross-session baselines so future improvements can be measured against the
+    F0 baseline without re-instrumenting. Persistence is best-effort: any I/O
+    error is swallowed by `_persist_timing`. Enrichment adds timestamp, model,
+    and backend; caller-passed keys win on collision.
+    """
+    _stats["timings"].append(entry)
+    if len(_stats["timings"]) > 20:
+        _stats["timings"].pop(0)
+
+    cfg = _get_config()
+    enriched = {
+        "ts":        datetime.datetime.now().isoformat(timespec="seconds"),
+        "model":     _get_current_model(),
+        "backend":   cfg.get("backend", "anthropic"),
+        "tool_name": "execute_python" if entry.get("op") == "exec"
+                     else entry.get("op", "unknown"),
+        **entry,
+    }
+    _persist_timing(_TIMINGS_LOG, enriched)
 
 
 # ---------------------------------------------------------------------------
@@ -613,11 +671,27 @@ async def _do_execute_python(params: dict) -> str:
         _stats["safety_blocks"] += 1
         return json.dumps({"safety_warning": warning})
 
+    # F0: a "turn" is an execute_python that ran past the safety gate (the
+    # error-prone free-form path). p_fallo = failed_turns / turns_total;
+    # dedicated tools are deliberately excluded (they track exec_calls only).
+    _stats["turns_total"] += 1
+    _t0 = time.monotonic()
     try:
         response = bridge.execute(validated.code)
         _stats["tokens_out"] += _tok(response)
+        _track_timing({
+            "op": "exec",
+            "total_ms": round((time.monotonic() - _t0) * 1000),
+            "error": False,
+        })
         return response
     except Exception as e:
+        _stats["failed_turns"] += 1
+        _track_timing({
+            "op": "exec",
+            "total_ms": round((time.monotonic() - _t0) * 1000),
+            "error": True,
+        })
         return _handle_error(e)
 
 
@@ -1095,6 +1169,7 @@ async def maya_session(params: SessionDispatchInput) -> str:
     • execute_python — Run arbitrary Python in Maya. Assign result to 'result' variable. Required params: {"code": "import maya.cmds as cmds; ..."}
     • shelf_button — Create a shelf button with Python code. Required params: {"label": "MyBtn", "command": "print('hello')"} Optional: {"tooltip": "...", "shelf_name": "Custom", "icon_label": "MCP"}
     """
+    _track_call()
     dispatch = {
         SessionAction.PING: _do_ping,
         SessionAction.LAUNCH: _do_launch,
@@ -1827,6 +1902,7 @@ async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
     • download — Download completed job results. Required params: {"job_id": "uuid", "output_subdir": "my_asset"} Optional: {"files": ["textured.glb", "mesh.glb"]}
     """
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
+    _track_call()
     dispatch = {
         Vision3DAction.SELECT_SERVER: _do_v3d_select_server,
         Vision3DAction.HEALTH: _do_v3d_health,
@@ -1874,6 +1950,7 @@ async def search_maya_docs_tool(params: SearchMayaDocsInput) -> str:
     Uses HyDE query expansion + Reciprocal Rank Fusion for high precision.
     """
     global _last_rag_score, _rag_called_this_session
+    _track_call()
 
     try:
         from maya_mcp.rag.search import search
@@ -1931,6 +2008,7 @@ async def learn_pattern_tool(params: LearnPatternInput) -> str:
     Model trust gates: only Sonnet/Opus can write directly.
     Other models stage candidates for review.
     """
+    _track_call()
     if _model_can_write():
         # Direct write to docs
         api_file_map = {
@@ -2005,11 +2083,17 @@ async def session_stats_tool() -> str:
     Call at the end of multi-step tasks or when asked about efficiency.
     Shows how much context was saved by RAG vs loading full documentation.
     """
+    _track_call()
     used = _stats["tokens_in"] + _stats["tokens_out"]
     saved = _stats["tokens_saved"]
     total = used + saved
     ratio = f"{saved / total * 100:.0f}%" if total > 0 else "—"
     uptime = str(datetime.datetime.now() - _stats_reset_at).split(".")[0]
+
+    # F0: p_fallo = failed_turns / turns_total over the execute_python path.
+    turns = _stats["turns_total"]
+    failed = _stats["failed_turns"]
+    p_fallo = f"{failed / turns * 100:.0f}%" if turns > 0 else "—"
 
     return json.dumps({
         "session_duration": uptime,
@@ -2022,7 +2106,29 @@ async def session_stats_tool() -> str:
         "patterns_staged": _stats["patterns_staged"],
         "safety_blocks": _stats["safety_blocks"],
         "cache_hits": _stats["cache_hits"],
+        "execute_python_turns": turns,
+        "failed_turns": failed,
+        "p_fallo": p_fallo,
         "full_doc_baseline": _FULL_DOC_TOKENS,
+    }, indent=2)
+
+
+@mcp.tool(name="reset_session_stats")
+async def reset_session_stats_tool() -> str:
+    """Zero the session stats counters immediately.
+
+    Use at the start of a new Claude session (or a fresh debugging run) when
+    the idle-based auto-reset has not fired — for example when two sessions
+    happen back-to-back. Returns a confirmation line with the new reset
+    timestamp.
+    """
+    global _stats_reset_at
+    _track_call()
+    now = datetime.datetime.now()
+    _stats_reset_at = _reset_stats_helper(_stats, now)
+    return json.dumps({
+        "status": "reset",
+        "reset_at": now.strftime("%H:%M:%S"),
     }, indent=2)
 
 
