@@ -472,3 +472,37 @@ concepts:
           type: file_regex_matches
           file: src/maya_mcp/server.py
           pattern: 'maybe_annotate_with_suggestions\("([a-z0-9_]+)"'
+
+  claude_md_trim:
+    description: >
+      F6a — Operator-only sections of CLAUDE.md have been moved to
+      docs/DEPLOY.md so the LLM system prompt no longer carries
+      ~50 lines of install/requirements/build-index shell recipes it
+      never acts on. Behavioral rules (tool inventory, env vars,
+      Vision3D URL policy, safety) are untouched.
+      Re-expanding CLAUDE.md must NOT re-add the deploy sections.
+    source_of_truth:
+      file: docs/DEPLOY.md
+      symbol: operator deploy workflow
+    mirrors:
+      - file: CLAUDE.md
+        kind: redirect pointer to docs/DEPLOY.md
+    invariants:
+      - id: deploy_md_exists
+        type: file_exists
+        path: docs/DEPLOY.md
+        context: F6a operator-only deploy guide
+      - id: claude_md_no_brew_install
+        type: claim_verifies
+        claim: "CLAUDE.md must not embed 'brew install ollama' shell command (moved to docs/DEPLOY.md)"
+        code_grep:
+          regex: 'brew install ollama'
+          file_pattern: 'CLAUDE.md'
+        expected: not_found
+      - id: claude_md_no_build_index
+        type: claim_verifies
+        claim: "CLAUDE.md must not embed 'maya_mcp.rag.build_index' shell command (moved to docs/DEPLOY.md)"
+        code_grep:
+          regex: 'maya_mcp\.rag\.build_index'
+          file_pattern: 'CLAUDE.md'
+        expected: not_found
