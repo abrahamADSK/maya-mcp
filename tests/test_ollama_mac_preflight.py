@@ -28,7 +28,6 @@ import json
 import sys
 import tempfile
 import types
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
@@ -233,7 +232,6 @@ def test_preload_keep_alive_flows_into_payload() -> None:
     """The keep_alive parameter supplied to _preload_ollama_mac_model
     reaches the /api/generate request body unchanged (F1b wire test).
     """
-    captured: dict = {}
     fake_resp = MagicMock()
     fake_resp.__enter__ = MagicMock(return_value=fake_resp)
     fake_resp.__exit__ = MagicMock(return_value=False)

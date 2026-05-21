@@ -18,7 +18,7 @@ import socket
 import json
 import logging
 import uuid
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 logger = logging.getLogger("maya_mcp.bridge")
 
