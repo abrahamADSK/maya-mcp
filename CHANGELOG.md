@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.9.1] — 2026-05-26
+
 ### Fixed
 - **install.sh — userSetup.py block idempotency (Chat 55 bug)** — re-running
   install.sh no longer silently skips a stale userSetup.py block that is missing
