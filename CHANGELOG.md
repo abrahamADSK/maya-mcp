@@ -26,6 +26,23 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   `tests/test_install_usersetup.py` covering fresh install, same-version no-op,
   stale-block refresh, version-bump regeneration, and the Maya-2027 `name=` kwarg
   regression guard.
+- **F4b false-positive on plugin commands (Chat 56 bug)** — `api_graph.json`
+  was generated from a headless `maya.standalone` session that loads no plugins,
+  so plugin-registered commands (`mayaUSDImport`, `AbcImport`, `FBXImport` …)
+  were absent from the graph and the F4b AST validator rejected legitimate calls
+  to them before the Command Port round-trip. `scripts/introspect_maya_api.py`
+  now best-effort loads the pipeline I/O + USD plugins (`mayaUsdPlugin`,
+  `AbcImport`, `AbcExport`, `fbxmaya`, `objExport`) before walking `dir(cmds)`,
+  records the loaded/failed sets in `_meta`, and accepts extra plugins via the
+  `MAYA_INTROSPECT_PLUGINS` env var. A plugin absent on the running build is
+  skipped, never fatal.
+
+### Changed
+- **`api_graph.json` regenerated from Maya 2027** with the pipeline plugins
+  loaded: **4831 commands** (was 4608 from Maya 2026 without plugins),
+  `maya_version` `2026` → `2027`. F4b now accepts `cmds.mayaUSDImport(...)` &
+  siblings while still rejecting hallucinations (`cmds.polyCubez` → suggests
+  `polyCube`).
 
 ## [1.9.0] — 2026-05-21
 
