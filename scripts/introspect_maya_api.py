@@ -24,6 +24,18 @@ On Linux/Windows the mayapy path differs; any mayapy ≥ the supported Maya
 version works. Run inside a running Maya session via the command port also
 works (the body is import-safe).
 
+Plugins
+-------
+Plugin-registered commands (``mayaUSDImport``, ``AbcImport``, ``FBXExport`` …)
+only appear in ``dir(maya.cmds)`` once their plugin is loaded. A headless
+``maya.standalone`` session loads none of them, so a graph built without this
+step omits every plugin command and the F4b validator then false-positives on a
+legitimate ``cmds.mayaUSDImport(...)`` call (Chat 56 incident). This script
+therefore best-effort loads the pipeline I/O + USD plugins (``_PIPELINE_PLUGINS``)
+before introspecting; a plugin that is absent on the running build is skipped,
+never fatal. Append more via the ``MAYA_INTROSPECT_PLUGINS`` env var
+(comma-separated, e.g. ``mtoa`` on an Arnold-licensed box).
+
 Cadence
 -------
 Re-run once per supported Maya major release (e.g. 2026 -> 2027) and commit the
@@ -47,6 +59,58 @@ from pathlib import Path
 # location relative to the maya_mcp package).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _OUTPUT_PATH = _REPO_ROOT / "src" / "maya_mcp" / "rag" / "api_graph.json"
+
+# Pipeline I/O + USD plugins whose commands the LLM legitimately calls via
+# ``cmds.<command>`` (mayaUSDImport, AbcImport, FBXExport …). They are NOT in
+# ``dir(cmds)`` until their plugin is loaded, and a headless maya.standalone
+# session loads none of them — so introspecting without loading these omits the
+# whole plugin command surface and F4b false-positives on real calls (Chat 56).
+# Best-effort: a plugin absent on the running build is skipped, never fatal.
+# Extend at runtime via the MAYA_INTROSPECT_PLUGINS env var (comma-separated,
+# e.g. "mtoa" on an Arnold-licensed box — kept out of the default set because
+# its headless load is licence-gated and slow).
+_PIPELINE_PLUGINS = (
+    "mayaUsdPlugin",   # mayaUSDImport / mayaUSDExport / mayaUsdLayerEditor / …
+    "AbcImport",       # Alembic import
+    "AbcExport",       # Alembic export
+    "fbxmaya",         # FBXImport / FBXExport / FBXProperties / …
+    "objExport",       # OBJ import/export
+    # NB: glTF (libgltfsceneimport) and OBJ are FILE TRANSLATORS invoked via
+    # cmds.file(type='glTF Import'/'OBJ') — they register no cmds.<command> of
+    # their own, so glTF needs no entry here (cmds.file is core). objExport is
+    # listed only because its load is cheap and harmless.
+)
+
+
+def _load_pipeline_plugins() -> tuple[list[str], list[str]]:
+    """Best-effort load of ``_PIPELINE_PLUGINS`` (+ ``MAYA_INTROSPECT_PLUGINS``).
+
+    Each plugin is loaded independently inside its own ``try``; one that is
+    absent on this Maya build or fails to initialise headlessly is recorded as
+    failed, never aborts the run. Returns ``(loaded, failed)`` for ``_meta`` so
+    the graph documents exactly which plugin surfaces it covers.
+    """
+    import os
+
+    import maya.cmds as cmds  # noqa: E402 — only importable inside Maya
+
+    plugins = list(_PIPELINE_PLUGINS)
+    plugins += [
+        p.strip()
+        for p in os.environ.get("MAYA_INTROSPECT_PLUGINS", "").split(",")
+        if p.strip()
+    ]
+
+    loaded: list[str] = []
+    failed: list[str] = []
+    for plugin in plugins:
+        try:
+            if not cmds.pluginInfo(plugin, query=True, loaded=True):
+                cmds.loadPlugin(plugin, quiet=True)
+            loaded.append(plugin)
+        except Exception:  # noqa: BLE001 — absent/incompatible plugin is non-fatal
+            failed.append(plugin)
+    return loaded, failed
 
 
 def _collect_commands() -> dict:
@@ -84,6 +148,14 @@ def main() -> int:
         # path? Fall through; the cmds import below is the real gate.
         pass
 
+    # Load pipeline plugins so their commands land in dir(cmds) before we walk
+    # it. Guarded: if cmds is not importable here, _collect_commands below emits
+    # the canonical "run under mayapy" error and exits 2.
+    try:
+        plugins_loaded, plugins_failed = _load_pipeline_plugins()
+    except ImportError:
+        plugins_loaded, plugins_failed = [], list(_PIPELINE_PLUGINS)
+
     try:
         commands = _collect_commands()
     except ImportError:
@@ -102,6 +174,8 @@ def main() -> int:
         "_meta": {
             "maya_version": version,
             "commands_total": len(commands),
+            "plugins_loaded": sorted(plugins_loaded),
+            "plugins_failed": sorted(plugins_failed),
             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "introspector": "scripts/introspect_maya_api.py",
         },
@@ -114,6 +188,8 @@ def main() -> int:
     )
     sys.stderr.write(
         f"wrote {len(commands)} commands (Maya {version}) -> {_OUTPUT_PATH}\n"
+        f"  plugins loaded: {', '.join(sorted(plugins_loaded)) or '(none)'}\n"
+        f"  plugins failed: {', '.join(sorted(plugins_failed)) or '(none)'}\n"
     )
     return 0
 

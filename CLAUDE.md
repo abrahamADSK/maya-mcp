@@ -205,7 +205,16 @@ the job of the RAG corpus / `ANTI_PATTERNS.md`), so it never false-positives on
 a real command. It degrades to a no-op when `api_graph.json` is missing.
 
 - **Regenerate per Maya major release**: `mayapy scripts/introspect_maya_api.py`,
-  then commit the updated `api_graph.json` alongside the version bump.
+  then commit the updated `api_graph.json` alongside the version bump. The
+  introspector best-effort loads the pipeline I/O + USD plugins (`mayaUsdPlugin`,
+  `AbcImport`, `AbcExport`, `fbxmaya`, `objExport`) before walking `dir(cmds)`,
+  so plugin-registered commands (`mayaUSDImport`, `AbcImport`, `FBXImport` …)
+  are in the graph and F4b does not false-positive on them. The loaded/failed
+  plugin sets are recorded in the graph's `_meta`; add more (e.g. `mtoa`) via the
+  `MAYA_INTROSPECT_PLUGINS` env var. **NB**: glTF/OBJ are file translators
+  invoked through `cmds.file(type=…)` (a core command) and register no
+  `cmds.<command>` of their own, so they need no entry. Graph as of Chat 57:
+  Maya **2027**, 4831 commands.
 - **Bypass**: set `ast_dry_run: false` in `config.json` (e.g. if you are on a
   newer Maya than the committed graph and hit a false rejection).
 
