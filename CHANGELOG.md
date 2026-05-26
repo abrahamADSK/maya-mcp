@@ -11,6 +11,22 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **install.sh — userSetup.py block idempotency (Chat 55 bug)** — re-running
+  install.sh no longer silently skips a stale userSetup.py block that is missing
+  the command-port opening line.  Root cause: `upsert_block()` relied solely on
+  byte-level content comparison; a block written by an older install (menu-only,
+  no port line) that happened to byte-match would be left untouched.
+  Fix: introduced a `BLOCK_VERSION` integer (currently `2`) embedded as a comment
+  marker (`# MCP Pipeline Console block vN`) on the second line of every managed
+  block.  `upsert_block()` now reads that marker first; if it is absent or lower
+  than `BLOCK_VERSION`, the block is regenerated unconditionally before the content
+  check runs.  The `--doctor` check for `userSetup.py` also reports stale-version
+  blocks as FAIL with a remediation sentence.  Added 23 pytest unit tests in
+  `tests/test_install_usersetup.py` covering fresh install, same-version no-op,
+  stale-block refresh, version-bump regeneration, and the Maya-2027 `name=` kwarg
+  regression guard.
+
 ## [1.9.0] — 2026-05-21
 
 ### Added

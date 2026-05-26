@@ -135,6 +135,7 @@ MAYA_PORT = int(sys.argv[3])
 
 SENTINEL_START = "# --- MCP Pipeline Console auto-setup ---"
 SENTINEL_END = "# --- end MCP Pipeline Console ---"
+BLOCK_VERSION = 2  # keep in sync with Step 7's BLOCK_VERSION
 
 RESET = "\033[0m"
 RED = "\033[0;31m"
@@ -231,6 +232,15 @@ def detect_maya_versions() -> list[str]:
     return sorted(versions)
 
 
+def _parse_block_version(block_text: str) -> int:
+    """Extract the version number from a managed block.
+
+    Returns 0 when no version marker is present (pre-versioning install).
+    """
+    match = re.search(r"# MCP Pipeline Console block v(\d+)", block_text)
+    return int(match.group(1)) if match else 0
+
+
 def check_user_setup() -> tuple[str, str]:
     versions = detect_maya_versions()
     if not versions:
@@ -242,6 +252,7 @@ def check_user_setup() -> tuple[str, str]:
 
     missing: list[str] = []
     stale: list[str] = []
+    stale_ver: list[str] = []
     ok: list[str] = []
     expected_root = f'r"{REPO_ROOT}"'
 
@@ -260,6 +271,16 @@ def check_user_setup() -> tuple[str, str]:
         if expected_root not in content:
             stale.append(f"Maya {version}: {us} references a different repo path")
             continue
+        # Extract the managed block and check its version marker.
+        blk_start = content.index(SENTINEL_START)
+        blk_end = content.index(SENTINEL_END, blk_start) + len(SENTINEL_END)
+        block_text = content[blk_start:blk_end]
+        blk_ver = _parse_block_version(block_text)
+        if blk_ver < BLOCK_VERSION:
+            stale_ver.append(
+                f"Maya {version}: {us} has block v{blk_ver} (expected v{BLOCK_VERSION})"
+            )
+            continue
         ok.append(f"Maya {version}")
 
     if missing:
@@ -274,6 +295,13 @@ def check_user_setup() -> tuple[str, str]:
             "userSetup.py block references a different clone for: "
             + "; ".join(stale)
             + ". Rerun ./install.sh from this repo to upsert.",
+        )
+    if stale_ver:
+        return (
+            "FAIL",
+            "userSetup.py block is outdated (missing command-port line or "
+            "other required content): " + "; ".join(stale_ver)
+            + ". Rerun ./install.sh to regenerate.",
         )
     return ("PASS", f"userSetup.py configured for {', '.join(ok)}")
 
@@ -898,6 +926,32 @@ PORT = sys.argv[2]
 SENTINEL_START = "# --- MCP Pipeline Console auto-setup ---"
 SENTINEL_END = "# --- end MCP Pipeline Console ---"
 
+# Bump this integer whenever the generated block content changes in a way
+# that matters at runtime (new lines, removed lines, changed port logic).
+# Rule: if you change build_block(), increment BLOCK_VERSION.
+# Existing userSetup.py files whose embedded version marker is MISSING or
+# LOWER than this value will be regenerated on the next install run.
+# History:
+#   v1 — command-port open added (name= kwarg form)
+#   v2 — version marker introduced; same content, bump forces one-time
+#        regeneration of any pre-v2 stale blocks (Chat 55 idempotency fix)
+BLOCK_VERSION = 2
+
+VERSION_MARKER = f"# MCP Pipeline Console block v{BLOCK_VERSION}"
+
+import re as _re
+
+
+def _parse_block_version(block_text: str) -> int:
+    """Extract the version number from a managed block.
+
+    Returns 0 if no version marker is present (pre-versioning block).
+    The marker line has the form:
+        # MCP Pipeline Console block vN
+    """
+    match = _re.search(r"# MCP Pipeline Console block v(\d+)", block_text)
+    return int(match.group(1)) if match else 0
+
 
 def detect_maya_versions() -> list[str]:
     """Return a sorted list of Maya version strings that are actually
@@ -967,6 +1021,7 @@ def build_block(repo_root: str, port: str) -> str:
     """
     lines = [
         SENTINEL_START,
+        VERSION_MARKER,
         "import sys as _mcp_sys",
         "",
         f'_mcp_root = r"{repo_root}"',
@@ -1007,6 +1062,19 @@ def build_block(repo_root: str, port: str) -> str:
 def upsert_block(user_setup_path: Path, block: str) -> str:
     """Write the block into user_setup_path idempotently.
 
+    Version-aware algorithm:
+      1. If sentinels exist and the embedded version marker is MISSING or
+         LOWER than BLOCK_VERSION, regenerate unconditionally (stale block).
+      2. If sentinels exist and version == BLOCK_VERSION and the assembled
+         file content is identical, return 'unchanged' (true no-op).
+      3. In all other cases (no sentinels yet, content differs) write the
+         new content and return 'created' or 'updated'.
+
+    The version gate (step 1) is the primary idempotency mechanism.  It
+    catches stale blocks that are missing the command-port line or any other
+    load-bearing content added in later BLOCK_VERSION bumps — regardless of
+    whether the byte-level comparison would have caught the difference.
+
     Returns one of: 'created', 'updated', 'unchanged'.
     """
     existing = ""
@@ -1017,6 +1085,7 @@ def upsert_block(user_setup_path: Path, block: str) -> str:
         start = existing.index(SENTINEL_START)
         if SENTINEL_END in existing[start:]:
             end_rel = existing[start:].index(SENTINEL_END) + len(SENTINEL_END)
+            existing_block = existing[start : start + end_rel]
             before = existing[:start].rstrip("\n")
             after = existing[start + end_rel:].lstrip("\n")
             if before and not before.endswith("\n"):
@@ -1026,8 +1095,19 @@ def upsert_block(user_setup_path: Path, block: str) -> str:
             new_content = before + block
             if after:
                 new_content += "\n" + after
+
+            # Step 1: version gate — stale block → must regenerate.
+            existing_ver = _parse_block_version(existing_block)
+            if existing_ver < BLOCK_VERSION:
+                user_setup_path.write_text(new_content, encoding="utf-8")
+                return "updated"
+
+            # Step 2: same version, check full content — true no-op if equal.
             if new_content == existing:
                 return "unchanged"
+
+            # Step 3: same version but content differs (e.g. different repo
+            # root path after a re-clone) — regenerate.
             user_setup_path.write_text(new_content, encoding="utf-8")
             return "updated"
         # Malformed: start without end. Append a fresh end marker after the
