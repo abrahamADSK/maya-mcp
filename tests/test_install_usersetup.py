@@ -26,7 +26,6 @@ Run with:
 from __future__ import annotations
 
 import re
-import textwrap
 import types
 from pathlib import Path
 
