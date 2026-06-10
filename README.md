@@ -63,7 +63,7 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 | `maya_create_camera` | Create cameras with focal length and look-at target |
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control (auto/linear/flat/spline/step) |
-| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale |
+| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale (streams progress; 120s budget for heavy assets) |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
 ### Dispatcher Tools (2 tools)
@@ -86,13 +86,13 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 | Action | Description |
 |--------|-------------|
 | `ping` | Verify connection, returns Maya version and scene info |
-| `launch` | Open Maya and wait for Command Port to respond |
+| `launch` | Open Maya and wait for Command Port to respond (streams progress while waiting) |
 | `new_scene` | New empty scene |
 | `save_scene` | Save current scene |
 | `list_scene` | List scene objects with type and name filters |
 | `scene_snapshot` | Full scene state: file, renderer, object counts, plugins, units |
 | `delete` | Delete objects with safety checks on wildcards |
-| `execute_python` | Execute arbitrary Python in Maya (with safety scanning) |
+| `execute_python` | Execute arbitrary Python in Maya (safety scanning; optional timeout param up to 600s with 10s progress heartbeats) |
 | `shelf_button` | Create reusable shelf buttons with custom Python commands |
 <!-- concept:maya_session_actions end -->
 

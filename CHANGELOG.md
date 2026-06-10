@@ -11,6 +11,26 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **Visible-progress streaming (Chat 62 design, MCP-native)** — long-running
+  paths now stream progress to MCP clients via FastMCP `Context` instead of
+  staying silent: `maya_session(action="launch")` emits `ctx.report_progress`
+  every poll plus `ctx.info` lines while waiting for the Command Port (validated
+  in-vivo: fresh Maya 2027 launch, 6 progress events, ready in 18s);
+  `maya_session(action="execute_python")` and `maya_import_file` run the bridge
+  call in a worker thread with a 10s `ctx.info` heartbeat
+  (`_execute_with_heartbeat`). Fast operations emit nothing — no noise on the
+  common path. `ctx` is optional everywhere, so direct calls and test doubles
+  keep working.
+- **Per-call Command Port timeout** — the bridge socket timeout (fixed 10s
+  instance default) can now be raised per call: `execute_python` accepts
+  `{"timeout": 1-600}` and `maya_import_file` uses a 120s budget. Previously
+  ANY operation that kept Maya's main thread busy past 10s returned a
+  guaranteed `MayaConnectionError` while Maya silently kept executing it
+  (documented Chat 57/58 gotcha); now long operations wait with heartbeats and
+  deliver their real result (validated in-vivo: 12s busy-loop with
+  `timeout: 20` → heartbeats + correct result).
+
 ## [1.9.2] — 2026-06-10
 
 ### Changed

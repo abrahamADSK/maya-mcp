@@ -37,10 +37,11 @@ def _capture_bridge_execute(monkeypatch):
     Returns a dict with a 'code' key that will be populated when
     bridge.execute is called.
     """
-    captured = {"code": None}
+    captured = {"code": None, "timeout": None}
 
-    def fake_execute(code: str) -> str:
+    def fake_execute(code: str, timeout=None) -> str:
         captured["code"] = code
+        captured["timeout"] = timeout
         return json.dumps({
             "imported": 2,
             "objects": ["imported_transform", "imported_shape"],
@@ -273,7 +274,7 @@ class TestImportErrors:
     async def test_bridge_error_returns_message(self, monkeypatch):
         """MayaBridgeError from bridge.execute is caught and formatted."""
 
-        def raise_bridge_error(code: str):
+        def raise_bridge_error(code: str, timeout=None):
             raise MayaBridgeError("file not found: /nonexistent.glb")
 
         monkeypatch.setattr(srv.bridge, "execute", raise_bridge_error)
@@ -288,7 +289,7 @@ class TestImportErrors:
     async def test_unexpected_error_returns_message(self, monkeypatch):
         """Unexpected exceptions are caught and formatted without crash."""
 
-        def raise_runtime_error(code: str):
+        def raise_runtime_error(code: str, timeout=None):
             raise RuntimeError("Unexpected failure in Maya")
 
         monkeypatch.setattr(srv.bridge, "execute", raise_runtime_error)
