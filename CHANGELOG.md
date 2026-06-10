@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-06-10
+
 ### Added
 - **Visible-progress streaming (Chat 62 design, MCP-native)** — long-running
   paths now stream progress to MCP clients via FastMCP `Context` instead of
