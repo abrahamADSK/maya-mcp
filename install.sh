@@ -1176,7 +1176,11 @@ def main() -> int:
     return 0
 
 
-sys.exit(main())
+# __main__ guard: the heredoc runs as a script during install, but
+# tests exec this source as an importable module (test_install_usersetup)
+# — main() must NOT run at import time (it writes the REAL userSetup.py).
+if __name__ == "__main__":
+    sys.exit(main())
 PYEOF
 _us_rc=$?
 
