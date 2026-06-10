@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.10.1] — 2026-06-10
+
 ### Fixed
 - **pytest clobbered the developer's REAL `userSetup.py`** —
   `tests/test_install_usersetup.py` exec's the install.sh Step 7 heredoc as a
