@@ -38,7 +38,7 @@ from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ConfigDict
-from mcp.server.fastmcp import FastMCP, Image
+from mcp.server.fastmcp import Context, FastMCP, Image
 
 from maya_mcp.maya_bridge import MayaBridge, MayaBridgeError
 from maya_mcp.safety import check_dangerous
@@ -271,6 +271,15 @@ class ExecutePythonInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     code: str = Field(..., description="Python code to execute in Maya. Assign result to variable 'result'.")
+    timeout: Optional[float] = Field(
+        default=None, ge=1, le=600,
+        description=(
+            "Max seconds to wait for Maya to finish (default 10). The Command "
+            "Port runs code synchronously on Maya's main thread — raise this "
+            "for long operations; progress heartbeats stream every 10s while "
+            "waiting."
+        ),
+    )
 
 
 class DeleteObjectInput(BaseModel):
@@ -381,8 +390,13 @@ async def _do_ping(params: dict) -> str:
         return _handle_error(e)
 
 
-async def _do_launch(params: dict) -> str:
-    """Open Maya and wait for the Command Port to respond."""
+async def _do_launch(params: dict, ctx: Context | None = None) -> str:
+    """Open Maya and wait for the Command Port to respond.
+
+    When an MCP ``Context`` is provided, the 90-second wait loop streams
+    visible progress to the client (``ctx.report_progress`` every poll +
+    an ``ctx.info`` line every 15s) instead of staying silent until done.
+    """
     import socket
 
     # 1. Check if already connected
@@ -410,9 +424,19 @@ async def _do_launch(params: dict) -> str:
     poll_interval = 3
     waited = 0
 
+    if ctx:
+        await ctx.info(
+            f"Maya launching ({MAYA_APP}) — waiting for Command Port "
+            f"{MAYA_HOST}:{MAYA_PORT} (up to {max_wait}s)..."
+        )
+
     while waited < max_wait:
         await asyncio.sleep(poll_interval)
         waited += poll_interval
+        if ctx:
+            await ctx.report_progress(waited, max_wait)
+            if waited % 15 == 0:
+                await ctx.info(f"Still waiting for Maya's Command Port... ({waited}/{max_wait}s)")
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2)
@@ -422,6 +446,8 @@ async def _do_launch(params: dict) -> str:
             try:
                 info = bridge.ping()
                 _setup_maya_panel()
+                if ctx:
+                    await ctx.info(f"Maya ready after {waited}s.")
                 return json.dumps({
                     "status": "launched",
                     "waited_seconds": waited,
@@ -656,7 +682,41 @@ cmds.delete(aim)
         return _handle_error(e)
 
 
-async def _do_execute_python(params: dict) -> str:
+async def _execute_with_heartbeat(
+    code: str,
+    ctx: Context | None,
+    label: str,
+    interval: float = 10,
+    bridge_timeout: Optional[float] = None,
+) -> str:
+    """Run ``bridge.execute`` in a worker thread, streaming heartbeats.
+
+    Long Maya operations block the Command Port socket until they finish;
+    without this, MCP clients see total silence for the whole duration.
+    Fast operations (under ``interval`` seconds) emit nothing — no noise
+    on the common path. Visible-progress streaming port, Chat 62 design.
+
+    ``bridge_timeout`` raises the per-call Command Port wait beyond the
+    10s instance default (passed through only when set, so test doubles
+    with a plain ``(code)`` signature keep working).
+    """
+    if bridge_timeout is not None:
+        task = asyncio.ensure_future(
+            asyncio.to_thread(bridge.execute, code, timeout=bridge_timeout)
+        )
+    else:
+        task = asyncio.ensure_future(asyncio.to_thread(bridge.execute, code))
+    elapsed = 0.0
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=interval)
+        if done:
+            return task.result()
+        elapsed += interval
+        if ctx:
+            await ctx.info(f"{label} still running in Maya... ({elapsed:g}s)")
+
+
+async def _do_execute_python(params: dict, ctx: Context | None = None) -> str:
     """Execute arbitrary Python code in Maya. Code must assign its result to a 'result' variable. Useful for advanced operations not covered by other tools."""
     from pydantic import ValidationError
     try:
@@ -687,7 +747,10 @@ async def _do_execute_python(params: dict) -> str:
     _stats["turns_total"] += 1
     _t0 = time.monotonic()
     try:
-        response = bridge.execute(validated.code)
+        response = await _execute_with_heartbeat(
+            validated.code, ctx, "execute_python",
+            bridge_timeout=validated.timeout,
+        )
         _stats["tokens_out"] += _tok(response)
         _track_timing({
             "op": "exec",
@@ -916,7 +979,7 @@ finally:
 
 
 @mcp.tool(name="maya_import_file")
-async def maya_import_file(params: ImportFileInput) -> str:
+async def maya_import_file(params: ImportFileInput, ctx: Context | None = None) -> str:
     """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. With namespace, parent group, and scale options.
 
     GLB/GLTF: uses Maya's native glTF scene parser (``type='glTF Import'``);
@@ -1026,7 +1089,17 @@ try:
 finally:
     cmds.undoInfo(closeChunk=True)
 """
-        out = await asyncio.to_thread(bridge.execute, code)
+        if ctx:
+            await ctx.info(
+                f"Importing {params.file_path.rsplit('/', 1)[-1]} "
+                f"({ftype or 'auto'}) into Maya..."
+            )
+        # Imports of real assets (Vision3D GLBs, FBX rigs) routinely exceed
+        # the 10s Command Port default; 120s + heartbeats instead of a
+        # guaranteed timeout error.
+        out = await _execute_with_heartbeat(
+            code, ctx, f"import {ext or 'file'}", bridge_timeout=120.0
+        )
         return maybe_annotate_with_suggestions("maya_import_file", out)
     except Exception as e:
         return _handle_error(e)
@@ -1164,7 +1237,7 @@ result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': '{validated.label}'
 # ─────────────────────────────────────────────
 
 @mcp.tool(name="maya_session")
-async def maya_session(params: SessionDispatchInput) -> str:
+async def maya_session(params: SessionDispatchInput, ctx: Context | None = None) -> str:
     """Manage Maya session, query scene state, and run utility commands.
 
     Available actions:
@@ -1176,19 +1249,24 @@ async def maya_session(params: SessionDispatchInput) -> str:
     • list_scene — List objects in the scene. Optional params: {"object_type": "mesh", "name_filter": "*sphere*"}
     • scene_snapshot — Full scene state: file, modified flag, frame range, object counts by type, renderer, plugins, resolution. No params needed.
     • delete — Delete objects by name (wildcards supported). Required params: {"object_name": "*sphere*"}
-    • execute_python — Run arbitrary Python in Maya. Assign result to 'result' variable. Required params: {"code": "import maya.cmds as cmds; ..."}
+    • execute_python — Run arbitrary Python in Maya. Assign result to 'result' variable. Required params: {"code": "import maya.cmds as cmds; ..."} Optional: {"timeout": 60} — seconds to wait for Maya (default 10, max 600); use for long operations, progress heartbeats stream every 10s while waiting.
     • shelf_button — Create a shelf button with Python code. Required params: {"label": "MyBtn", "command": "print('hello')"} Optional: {"tooltip": "...", "shelf_name": "Custom", "icon_label": "MCP"}
     """
     _track_call()
+    # The two long-running handlers stream progress and take (params, ctx);
+    # the rest keep the plain (params) signature on purpose — no silent
+    # param drift. Dispatched directly so the types stay honest.
+    if params.action == SessionAction.LAUNCH:
+        return await _do_launch(params.params or {}, ctx)
+    if params.action == SessionAction.EXECUTE_PYTHON:
+        return await _do_execute_python(params.params or {}, ctx)
     dispatch = {
         SessionAction.PING: _do_ping,
-        SessionAction.LAUNCH: _do_launch,
         SessionAction.NEW_SCENE: _do_new_scene,
         SessionAction.SAVE_SCENE: _do_save_scene,
         SessionAction.LIST_SCENE: _do_list_scene,
         SessionAction.SCENE_SNAPSHOT: _do_scene_snapshot,
         SessionAction.DELETE: _do_delete,
-        SessionAction.EXECUTE_PYTHON: _do_execute_python,
         SessionAction.SHELF_BUTTON: _do_shelf_button,
     }
     handler = dispatch[params.action]
@@ -1199,7 +1277,8 @@ async def maya_session(params: SessionDispatchInput) -> str:
 # Remote GPU — Vision3D REST API (Hunyuan3D-2)
 # ─────────────────────────────────────────────
 
-from mcp.server.fastmcp import Context  # noqa: E402 — late import keeps Vision3D block self-contained
+# Context is imported at the top of the module (it is also used by the
+# maya_session / maya_import_file progress streaming added in Chat 63).
 
 # Connection-level configuration (shared by every vision3d server target)
 _GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")

@@ -104,7 +104,7 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 | `maya_create_camera` | Creates camera with focal length and look-at target |
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control |
-| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale |
+| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale (streams progress; 120s bridge budget) |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
 ### Maya Session Actions (9 actions behind `maya_session` dispatch tool)
@@ -113,13 +113,13 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 | Action | Description |
 |--------|-------------|
 | `ping` | Verifies connection, returns version, current scene, renderer |
-| `launch` | Opens Maya and waits for Command Port to respond (max 90s) |
+| `launch` | Opens Maya and waits for Command Port to respond (max 90s; streams progress + info lines while waiting) |
 | `new_scene` | Creates new empty scene |
 | `save_scene` | Saves current scene |
 | `list_scene` | Lists scene objects with filters by type or name |
 | `scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
 | `delete` | Deletes objects (with safety checks on wildcards) |
-| `execute_python` | Executes arbitrary Python in Maya (with safety scanning) |
+| `execute_python` | Executes arbitrary Python in Maya (safety scanning; optional timeout param 1-600s for long ops — Command Port default wait is 10s — with progress heartbeats every 10s) |
 | `shelf_button` | Create shelf buttons with custom Python commands |
 <!-- concept:maya_session_actions end -->
 

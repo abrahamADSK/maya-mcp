@@ -62,8 +62,13 @@ class MayaBridge:
         self.port = port
         self.timeout = timeout
 
-    def _send_raw(self, command: str) -> str:
+    def _send_raw(self, command: str, timeout: Optional[float] = None) -> str:
         """Sends a raw MEL command to Maya and returns the response.
+
+        ``timeout`` overrides the instance default for THIS call only —
+        the Command Port executes commands synchronously on Maya's main
+        thread, so legitimately long operations (imports, heavy compute)
+        need a wait longer than the 10s instance default.
 
         Distinguishes three cases on the recv loop:
 
@@ -80,9 +85,10 @@ class MayaBridge:
           Maya's command port behaves in normal operation since the
           protocol has no terminator.
         """
+        eff_timeout = timeout if timeout is not None else self.timeout
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(self.timeout)
+                sock.settimeout(eff_timeout)
                 sock.connect((self.host, self.port))
                 sock.sendall((command + '\n').encode('utf-8'))
 
@@ -100,7 +106,7 @@ class MayaBridge:
                             raise MayaConnectionError(
                                 f"Maya Command Port at {self.host}:{self.port} "
                                 f"accepted the connection but returned no data "
-                                f"within {self.timeout}s. Maya may be blocked by a "
+                                f"within {eff_timeout}s. Maya may be blocked by a "
                                 "modal dialog, executing a long-running command, "
                                 "or the Command Port may be orphaned after a crash."
                             )
@@ -115,7 +121,7 @@ class MayaBridge:
             )
         except socket.timeout:
             raise MayaConnectionError(
-                f"Timeout connecting to Maya ({self.timeout}s). "
+                f"Timeout connecting to Maya ({eff_timeout}s). "
                 "Maya might be busy or the port is incorrect."
             )
 
@@ -182,7 +188,7 @@ class MayaBridge:
             except OSError as exc:
                 logger.warning("Failed to remove temp file %s: %s", path, exc)
 
-    def send_python(self, code: str) -> str:
+    def send_python(self, code: str, timeout: Optional[float] = None) -> str:
         """Executes Python code in Maya and returns the result as a string.
 
         The wrapper code (user code + result-file writer) is base64-encoded
@@ -225,7 +231,7 @@ class MayaBridge:
                 f"exec(base64.b64decode('{encoded}').decode('utf-8'))\")"
             )
 
-            self._send_raw(mel_cmd)
+            self._send_raw(mel_cmd, timeout=timeout)
 
             if not os.path.exists(result_path):
                 raise MayaExecutionError(self._RESULT_FILE_MISSING_HINT)
@@ -241,7 +247,8 @@ class MayaBridge:
         finally:
             self._cleanup_temp_files(result_path)
 
-    def execute(self, code: str, as_json: bool = False) -> Any:
+    def execute(self, code: str, as_json: bool = False,
+                timeout: Optional[float] = None) -> Any:
         """
         Executes Python code in Maya with option to parse JSON.
 
@@ -249,6 +256,10 @@ class MayaBridge:
             code: Python code to execute in Maya.
                   Must assign its result to the 'result' variable.
             as_json: If True, attempts to parse the response as JSON.
+            timeout: Per-call socket timeout in seconds (defaults to the
+                  instance timeout, 10s). The Command Port runs commands
+                  synchronously on Maya's main thread — raise this for
+                  operations that legitimately take longer.
 
         Returns:
             String with the result, or dict/list if as_json=True.
@@ -257,7 +268,7 @@ class MayaBridge:
             bridge.execute("result = cmds.ls(type='mesh')", as_json=True)
             # → ["pSphereShape1", "pCubeShape1"]
         """
-        raw = self.send_python(code)
+        raw = self.send_python(code, timeout=timeout)
 
         if as_json:
             try:
