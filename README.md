@@ -129,7 +129,7 @@ Before any code reaches Maya, the **safety module** scans for 14+ dangerous patt
 
 ## Self-Learning
 
-When the RAG returns low-relevance results (< 60%) but the operation succeeds, the LLM can call `learn_pattern` to save the working pattern for future sessions. **Model trust gates** ensure only Sonnet/Opus can write directly to docs — other models stage candidates for human review. Knowledge grows over time without manual curation.
+When the RAG returns low-relevance results (< 60%) but the operation succeeds, the LLM can call `learn_pattern` to save the working pattern for future sessions. **Model trust gates** ensure only Opus/Fable can write directly to docs — other models stage candidates for human review. Knowledge grows over time without manual curation.
 
 ---
 

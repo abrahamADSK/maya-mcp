@@ -11,6 +11,14 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- **Cloud model selector refreshed** — the Console panel now offers Claude
+  Fable 5 (`claude-fable-5`), Claude Opus 4.8 (`claude-opus-4-8`) and Claude
+  Sonnet 4.6 (Opus 4.7 removed). Self-learning (`learn_pattern` write-trust) is
+  now reserved for **Opus + Fable** — Sonnet and local models are read-only
+  (`WRITE_ALLOWED_MODELS`, `config.json` example, README/CLAUDE.md in lockstep).
+  `VISION_MODELS` updated to the new cloud IDs.
+
 ## [1.9.1] — 2026-05-26
 
 ### Fixed

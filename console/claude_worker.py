@@ -137,8 +137,9 @@ TIMEOUT_SECONDS = 900
 # Each entry: (display_label, model_id, backend)
 AVAILABLE_MODELS = [
     # ── Anthropic cloud (default — needs internet + API key) ─────────
+    ("Claude Fable 5",        "claude-fable-5",            "anthropic"),
+    ("Claude Opus 4.8",       "claude-opus-4-8",           "anthropic"),
     ("Claude Sonnet 4.6",     "claude-sonnet-4-6",         "anthropic"),
-    ("Claude Opus 4.7",       "claude-opus-4-7",           "anthropic"),
     # ── Self-hosted Ollama (glorfindel RTX 3090, LAN) ────────────────
     ("Qwen3.5 9B 🖥",         "qwen3.5-mcp",               "ollama"),
     ("GLM-4.7 Flash 🖥",      "glm-4.7-flash",             "ollama"),
@@ -148,7 +149,8 @@ AVAILABLE_MODELS = [
 ]
 
 # Models allowed to write RAG patterns (learn_pattern). Local models are read-only.
-WRITE_ALLOWED_MODELS = ["claude-opus", "claude-sonnet"]
+# Self-learning is reserved for the two top cloud tiers: Opus and Fable.
+WRITE_ALLOWED_MODELS = ["claude-opus", "claude-fable"]
 
 # Default Ollama URLs — can be overridden by src/maya_mcp/config.json
 DEFAULT_OLLAMA_URL = "http://glorfindel:11434"
@@ -161,7 +163,7 @@ DEFAULT_OLLAMA_MAC_URL = "http://localhost:11434"
 OLLAMA_MAC_NUM_CTX = 8192
 
 # Models with vision capability (for viewport_capture analysis)
-VISION_MODELS = {"claude-sonnet-4-6", "claude-opus-4-7", "qwen3.5-mcp", "qwen3.5:9b"}
+VISION_MODELS = {"claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "qwen3.5-mcp", "qwen3.5:9b"}
 
 
 def _load_config() -> dict:

@@ -104,8 +104,9 @@ def _rating(tokens: int) -> str:
 # ---------------------------------------------------------------------------
 
 WRITE_ALLOWED_MODELS = {
-    "claude-opus", "claude-sonnet", "claude-sonnet-4",
-    "claude-sonnet-4-6", "claude-opus-4-5", "claude-opus-4-6",
+    # Self-learning is reserved for the two top cloud tiers: Opus and Fable.
+    # Sonnet and local models (Qwen/GLM) are read-only.
+    "claude-opus", "claude-fable",
 }
 
 
@@ -2014,7 +2015,7 @@ async def learn_pattern_tool(params: LearnPatternInput) -> str:
     low relevance (< 60%), indicating the pattern was not well-documented.
     The pattern will be available in future sessions.
 
-    Model trust gates: only Sonnet/Opus can write directly.
+    Model trust gates: only Opus/Fable can write directly.
     Other models stage candidates for review.
     """
     _track_call()

@@ -67,7 +67,7 @@ Short queries like "set keyframe tangent" are automatically expanded with domain
 `safety.py` scans code for 14+ dangerous patterns before execution: bulk deletes, undo tampering, filesystem operations, plugin deregistration, namespace force-deletion, etc. Each pattern includes an explanation and safe alternative. Integrated into `maya_execute_python`, `maya_delete`, and other mutation tools.
 
 ### Self-Learning Patterns
-`learn_pattern` saves validated working patterns to the docs corpus. Model trust gates: only Sonnet/Opus write directly; other models stage candidates for review in `rag/candidates.json`.
+`learn_pattern` saves validated working patterns to the docs corpus. Model trust gates: only Opus/Fable write directly; other models stage candidates for review in `rag/candidates.json`.
 
 ### Token Efficiency Tracking
 `session_stats` reports tokens used vs saved by RAG, safety blocks, patterns learned, cache hits, and full-doc baseline comparison.
@@ -339,7 +339,7 @@ SDK is redirected to the Ollama Messages-compatible endpoint (Ollama v0.14+).
 ### Write-allowed models (RAG trust gates)
 Only Claude models can write patterns via `learn_pattern`. Local models (Ollama) are
 read-only — they can search docs but cannot persist new patterns. Configured via
-`write_allowed_models` in `src/maya_mcp/config.json` (default: `["claude-opus", "claude-sonnet"]`).
+`write_allowed_models` in `src/maya_mcp/config.json` (default: `["claude-opus", "claude-fable"]`). Self-learning is reserved for the two top cloud tiers; Sonnet and local models are read-only.
 
 ### viewport_capture fallback for non-vision models
 `maya_viewport_capture` returns both the image (base64) and text metadata (path, resolution,
