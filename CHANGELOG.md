@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.9.2] — 2026-06-10
+
 ### Changed
 - **Cloud model selector refreshed** — the Console panel now offers Claude
   Fable 5 (`claude-fable-5`), Claude Opus 4.8 (`claude-opus-4-8`) and Claude
