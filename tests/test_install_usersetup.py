@@ -360,3 +360,26 @@ class TestContentChangeRegeneration:
         content = target.read_text()
         assert "/new/repo/path" in content
         assert "/old/repo/path" not in content
+
+
+# ---------------------------------------------------------------------------
+# Regression lock — Chat 63 incident
+# ---------------------------------------------------------------------------
+
+
+def test_step7_heredoc_has_main_guard():
+    """The Step 7 heredoc must never run main() at import/exec time.
+
+    Without the ``if __name__ == "__main__"`` guard, ``_make_step7_module()``
+    at the top of this file executed ``main()`` with the ``/fake/repo/root``
+    argv fixture and CLOBBERED the developer's REAL
+    ``~/Library/Preferences/Autodesk/maya/<ver>/scripts/userSetup.py`` on
+    every pytest collection (Chat 63 incident: Maya warned
+    "[MCP] userSetup.py updated" on every connect because the runtime
+    injector kept repairing the fake root the tests kept writing).
+    """
+    src = _extract_step7_source(_INSTALL_SH)
+    guard_pos = src.find('if __name__ == "__main__":')
+    exit_pos = src.find("sys.exit(main())")
+    assert guard_pos != -1, "Step 7 heredoc lost its __main__ guard"
+    assert exit_pos > guard_pos, "sys.exit(main()) must be inside the guard"

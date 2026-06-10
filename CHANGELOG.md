@@ -11,6 +11,23 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **pytest clobbered the developer's REAL `userSetup.py`** —
+  `tests/test_install_usersetup.py` exec's the install.sh Step 7 heredoc as a
+  module at import time; the heredoc ended with a bare `sys.exit(main())`, so
+  `main()` ran on every pytest collection with the `/fake/repo/root` argv
+  fixture and wrote that fake root into
+  `~/Library/Preferences/Autodesk/maya/<ver>/scripts/userSetup.py`. The
+  runtime injector then repaired it on every fresh server connect — the cause
+  of the recurring `[MCP] userSetup.py updated` warning in Maya. Step 7 now
+  has an `if __name__ == "__main__":` guard (installer behavior unchanged);
+  a regression test locks the guard in place.
+- **userSetup.py writer ping-pong** — the runtime injector
+  (`_setup_maya_panel`) and install.sh Step 7 share sentinels but emit
+  different block formats, so each rewrote the other's block (one warning per
+  fresh server process). The injector now respects any existing healthy block
+  (correct repo root + port) regardless of which writer produced it.
+
 ## [1.10.0] — 2026-06-10
 
 ### Added

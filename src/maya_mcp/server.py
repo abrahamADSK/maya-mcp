@@ -2327,6 +2327,18 @@ def _inject_user_setup():
         with open(us_path) as f:
             existing = f.read()
 
+    # Respect an existing HEALTHY block regardless of which writer produced
+    # it (install.sh Step 7 "block vN" or this runtime injector): if the
+    # block already points at the right repo root and port, leave it alone.
+    # Without this, the two writers ping-pong rewrites (different formats,
+    # same sentinels) and Maya prints "[MCP] userSetup.py updated" on every
+    # fresh server process.
+    if _SENTINEL in existing:
+        _blk_end = existing.index(_END_SENTINEL) if _END_SENTINEL in existing else len(existing)
+        _blk = existing[existing.index(_SENTINEL):_blk_end]
+        if ('_mcp_root = r"' + _mcp_root + '"') in _blk and (':' + str(_mcp_port) + '"') in _blk:
+            return False
+
     if _SENTINEL in existing:
         before = existing[:existing.index(_SENTINEL)]
         if _END_SENTINEL in existing:
