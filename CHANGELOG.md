@@ -11,6 +11,16 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+
+- **`api_graph.json` regenerated with Arnold (mtoa) loaded** — the graph was
+  previously introspected without mtoa (plugins: Abc/fbx/USD/obj only), so
+  `arnoldRender` and the other Arnold commands were absent and F4b AST
+  validation rejected them. Re-introspected headless via `mayapy` (Maya 2027 +
+  mtoa 7.5.1.1, `MAYA_INTROSPECT_PLUGINS=mtoa`): now 4851 commands (was 4831)
+  including `arnoldRender`. The curated mtoa allowlist stays as a belt-and-
+  suspenders for commands behind plugins not installed on every box.
+
 ### Security
 
 - **Command Port bound to `localhost` instead of all interfaces** — both the
