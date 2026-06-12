@@ -404,7 +404,7 @@ def _py_str(value: object) -> str:
 async def _do_ping(params: dict) -> str:
     """Check connection to Maya and return environment info (version, current scene, renderer)."""
     try:
-        info = bridge.ping()
+        info = await asyncio.to_thread(bridge.ping)
         _setup_maya_panel()
         return json.dumps(info, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -422,7 +422,7 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
 
     # 1. Check if already connected
     try:
-        info = bridge.ping()
+        info = await asyncio.to_thread(bridge.ping)
         _setup_maya_panel()
         return json.dumps({
             "status": "already_running",
@@ -465,7 +465,7 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
             sock.close()
             # Port open — try real ping
             try:
-                info = bridge.ping()
+                info = await asyncio.to_thread(bridge.ping)
                 _setup_maya_panel()
                 if ctx:
                     await ctx.info(f"Maya ready after {waited}s.")
@@ -515,7 +515,7 @@ obj = {func}({name_arg})[0]
 
         code += "result = {'name': obj, 'type': '" + params.primitive_type.value + "'}"
 
-        return maybe_annotate_with_suggestions("maya_create_primitive", bridge.execute(code))
+        return maybe_annotate_with_suggestions("maya_create_primitive", await asyncio.to_thread(bridge.execute, code))
     except Exception as e:
         return _handle_error(e)
 
@@ -538,7 +538,7 @@ cmds.select({_py_str(params.object_name)})
 cmds.sets(forceElement=sg)
 result = {{'material': mat, 'shading_group': sg, 'assigned_to': {_py_str(params.object_name)}}}
 """
-        return bridge.execute(code)
+        return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
         return _handle_error(e)
 
@@ -565,7 +565,7 @@ rot = cmds.xform({obj}, q=True, rotation=True, worldSpace=True)
 scl = cmds.xform({obj}, q=True, scale=True)
 result = {{'object': {obj}, 'position': pos, 'rotation': rot, 'scale': scl}}
 """
-        return bridge.execute(code)
+        return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
         return _handle_error(e)
 
@@ -592,7 +592,7 @@ import json
 objects = cmds.ls({filter_str}) or []
 result = {{'count': len(objects), 'objects': objects}}
 """
-        return bridge.execute(code)
+        return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
         return _handle_error(e)
 
@@ -624,7 +624,7 @@ if targets:
 else:
     result = {{'error': 'Not found: ' + {obj}}}
 """
-        response = bridge.execute(code)
+        response = await asyncio.to_thread(bridge.execute, code)
         _stats["tokens_out"] += _tok(response)
         return response
     except Exception as e:
@@ -673,7 +673,7 @@ cmds.xform(parent, translation={params.position}, worldSpace=True)
 
         code += "result = {'light': light, 'type': " + _py_str(params.light_type) + "}\n"
 
-        return maybe_annotate_with_suggestions("maya_create_light", bridge.execute(code))
+        return maybe_annotate_with_suggestions("maya_create_light", await asyncio.to_thread(bridge.execute, code))
     except Exception as e:
         return _handle_error(e)
 
@@ -701,7 +701,7 @@ cmds.delete(aim)
 """
 
         code += "result = {'camera': cam}\n"
-        return maybe_annotate_with_suggestions("maya_create_camera", bridge.execute(code))
+        return maybe_annotate_with_suggestions("maya_create_camera", await asyncio.to_thread(bridge.execute, code))
     except Exception as e:
         return _handle_error(e)
 
@@ -823,7 +823,7 @@ else:
     cmds.file(new=True, force=True)
     result = {'status': 'new_scene_created'}
 """
-        return bridge.execute(code)
+        return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
         return _handle_error(e)
 
@@ -840,7 +840,7 @@ if scene:
 else:
     result = {'error': 'Unnamed scene. Use maya_execute_python to do file(rename=...)'}
 """
-        return bridge.execute(code)
+        return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
         return _handle_error(e)
 

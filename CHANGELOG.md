@@ -13,6 +13,17 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ### Changed
 
+- **12 synchronous bridge calls moved off the asyncio event loop** — twelve
+  `bridge.execute(...)` / `bridge.ping()` calls inside `async def` tools ran
+  synchronously, blocking the event loop for the whole Command-Port round trip
+  (the audit's nice-to-have; e.g. `_do_launch`'s up-to-10s ping). Each is now
+  `await asyncio.to_thread(...)`, matching the pattern the heavy tools
+  (`maya_mesh_operation`, `execute_python`, …) already used. Behaviour-
+  preserving: validated in-vivo against live Maya 2027 — `bridge.execute`
+  sync vs `to_thread` returns byte-identical results, and a refactored
+  `_do_ping` reports correctly. The one-time, non-critical panel-setup call is
+  left synchronous by design.
+
 - **`api_graph.json` regenerated with Arnold (mtoa) loaded** — the graph was
   previously introspected without mtoa (plugins: Abc/fbx/USD/obj only), so
   `arnoldRender` and the other Arnold commands were absent and F4b AST
