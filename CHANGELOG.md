@@ -11,6 +11,83 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Security
+
+- **Command Port bound to `localhost` instead of all interfaces** — both the
+  installer (`install.sh` Step 7 `build_block`) and the runtime auto-injector
+  (`server.py::_inject_user_setup`) opened the Maya Command Port with the bare
+  `":8100"` form, which binds to every network interface. Because the bridge
+  speaks MEL (`sourceType="mel"`) and MEL `python(...)` runs arbitrary Python,
+  this exposed an unauthenticated arbitrary-code-execution port to the whole
+  LAN on every artist workstation. Both injectors now bind
+  `"localhost:8100"`. `BLOCK_VERSION` was bumped `2 → 3` so the install-time
+  version gate rewrites already-provisioned `userSetup.py` blocks, and the
+  runtime injector's "healthy block" check now requires the `localhost:` form
+  so stale all-interfaces blocks are regenerated on the next connect.
+- **Vision3D HTTP client now verifies TLS by default** — `GPU_VERIFY_TLS`
+  defaults to `true` (was `false`). Plain-`http` LAN targets are unaffected
+  (httpx ignores the flag for non-TLS URLs); set `GPU_VERIFY_TLS=false` to opt
+  out for self-signed `https` endpoints.
+
+### Fixed
+
+- **Injection / `SyntaxError` on free-form paths and names in the dedicated
+  Maya tools** — `maya_import_file`, `maya_viewport_capture`,
+  `maya_create_primitive`, `maya_assign_material`, `maya_transform`,
+  `maya_create_light`, `maya_create_camera`, `maya_mesh_operation`,
+  `maya_set_keyframe`, `maya_session(delete/list_scene/shelf_button)` built
+  Maya Python by raw f-string interpolation of user-supplied paths/names into
+  single-quoted literals, bypassing `check_dangerous`. A legitimate value
+  containing a quote (e.g. `Director's_cut/char.obj`) raised a `SyntaxError`;
+  a crafted value could inject code. A new `_py_str()` helper now wraps every
+  free-form interpolation as an escaped Python literal via `repr()`.
+- **Arnold commands no longer statically rejected out of the box** — the
+  committed `api_graph.json` was introspected without the `mtoa` plugin, so the
+  F4b AST validator rejected every corpus-recommended `cmds.arnoldRender(...)`
+  call. A curated `_MTOA_COMMANDS` allowlist is now folded into the validator's
+  valid set (only when a real graph is loaded, so the empty-graph no-op is
+  preserved), and `scripts/introspect_maya_api.py` now loads `mtoa` by default
+  so a future live regeneration carries the Arnold command surface natively.
+- **`maya_session(new_scene)` no longer silently discards unsaved work** — it
+  now checks `cmds.file(q=True, modified=True)` and refuses with an
+  `unsaved_changes` error unless called with `{"confirm": true}`.
+- **`_build_quality_form_data` dead `if/elif`** — both branches were
+  identical, so `target_faces=0` (the `ShapeTextInput` default) was always sent
+  to the Vision3D API, pinning the server to 0 instead of letting it apply its
+  own default. Collapsed to `if params.target_faces > 0`, matching the
+  `octree_resolution` / `num_inference_steps` guards.
+
+### Changed
+
+- **All 22 Pydantic input models now set `extra="forbid"`** (including
+  `SearchMayaDocsInput` and `LearnPatternInput`, which previously had no
+  `model_config`), so a misspelled parameter name raises instead of being
+  silently ignored.
+- **`learn_pattern` return payload is explicit about searchability** — it now
+  reports `"searchable": false` and states that the ChromaDB index and BM25
+  `corpus.json` must be rebuilt (`python -m maya_mcp.rag.build_index`) before a
+  learned pattern appears in `search_maya_docs` results.
+- **`maya_rag.log` is now size-capped** (5 MB, one `.1` rollover), matching the
+  existing `persist_timing` telemetry rotation, so no append-only log grows
+  unbounded.
+- **`src/maya_mcp/rag/candidates.json`** (the `learn_pattern` staging file for
+  non-trusted models) is now `.gitignore`d so model-authored candidate code
+  cannot be folded into history by `git add -A`.
+- Documentation drift corrected: tool-count strings outside concept anchors
+  (`README.md`, `CLAUDE.md` diagram, `install.sh` messages/comments) now read
+  **15 MCP tools**; the `server.py` module docstring reads **7 Vision3D
+  actions**; `docs/DEPLOY.md` manual Command Port snippets use
+  `commandPort(name="localhost:8100", sourceType="mel")`; the CHANGELOG
+  reference-link footer is complete through `v1.10.1`; and the
+  `.pre-commit-config.yaml` header is relabelled from `flame-mcp` to
+  `maya-mcp`.
+
+### Tests
+
+- Added a `_model_can_write()` trust-gate test (the corpus-poisoning guard) and
+  Arnold-allowlist validator tests; updated the install-block tests to assert
+  the `localhost:` Command Port bind.
+
 ## [1.10.1] — 2026-06-10
 
 ### Fixed
@@ -698,7 +775,19 @@ cleanup also ship in this window.
 - `install.sh` should be re-run so the corrected `TOOLS` pre-approval
   list updates your `~/.claude/settings.json`.
 
-[Unreleased]: https://github.com/abrahamADSK/maya-mcp/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/abrahamADSK/maya-mcp/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/abrahamADSK/maya-mcp/compare/v1.10.0...v1.10.1
+[1.10.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.9.2...v1.10.0
+[1.9.2]: https://github.com/abrahamADSK/maya-mcp/compare/v1.9.1...v1.9.2
+[1.9.1]: https://github.com/abrahamADSK/maya-mcp/compare/v1.9.0...v1.9.1
+[1.9.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.8.2...v1.9.0
+[1.8.2]: https://github.com/abrahamADSK/maya-mcp/compare/v1.8.1...v1.8.2
+[1.8.1]: https://github.com/abrahamADSK/maya-mcp/compare/v1.8.0...v1.8.1
+[1.8.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.6.3...v1.7.0
+[1.6.3]: https://github.com/abrahamADSK/maya-mcp/compare/v1.6.2...v1.6.3
+[1.6.2]: https://github.com/abrahamADSK/maya-mcp/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/abrahamADSK/maya-mcp/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/abrahamADSK/maya-mcp/compare/v1.3.0...v1.4.0

@@ -18,6 +18,7 @@ from maya_mcp._ast_validate import (
     format_issues,
     validate_python,
     _API_GRAPH_PATH,
+    _MTOA_COMMANDS,
     _reset_graph_cache,
 )
 
@@ -76,6 +77,38 @@ def test_multiple_unknowns_each_reported():
     v = validate_python("cmds.fooBar()\ncmds.bazQux()", graph=_GRAPH)
     assert len(v.issues) == 2
     assert {i.command for i in v.issues} == {"fooBar", "bazQux"}
+
+
+# ── Arnold/mtoa allowlist (audit blocker stopgap) ────────────────────────────
+
+def test_arnold_command_accepted_via_allowlist():
+    """arnoldRender is absent from the (mtoa-less) graph but must pass because
+    it is on the curated mtoa allowlist."""
+    assert "arnoldRender" not in _GRAPH["commands"]
+    v = validate_python("cmds.arnoldRender(batch=True)", graph=_GRAPH)
+    assert v.ok
+    assert v.graph_loaded
+
+
+def test_all_allowlisted_arnold_commands_pass():
+    for cmd in _MTOA_COMMANDS:
+        v = validate_python(f"cmds.{cmd}()", graph=_GRAPH)
+        assert v.ok, f"allowlisted Arnold command {cmd!r} was rejected"
+
+
+def test_allowlist_does_not_mask_hallucinations():
+    """The allowlist must not turn the validator into a no-op for fakes."""
+    v = validate_python("cmds.arnoldRenderz()", graph=_GRAPH)
+    assert not v.ok
+    assert v.issues[0].command == "arnoldRenderz"
+
+
+def test_allowlist_not_applied_when_graph_empty():
+    """An empty graph still degrades to graph_loaded=False (allowlist must not
+    resurrect validation on a fresh clone / CI without the graph)."""
+    v = validate_python("cmds.arnoldRender()", graph={"commands": {}})
+    assert v.ok
+    assert v.graph_loaded is False
 
 
 # ── graceful degradation ─────────────────────────────────────────────────────

@@ -34,11 +34,25 @@ CORPUS_PATH = str(_RAG_DIR / "corpus.json")
 LOG_DIR     = _PROJECT_DIR / "logs"
 LOG_FILE    = str(LOG_DIR / "maya_rag.log")
 
+# Size cap for maya_rag.log. When the file reaches the cap it is rotated to
+# `<path>.1` (overwriting any previous `.1`), giving one rollover of history
+# without unbounded growth. Mirrors the 5 MB telemetry rotation in
+# _session_stats.persist_timing so every append-only log in the repo is bounded.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+
 
 def _log(msg: str) -> None:
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     ts = datetime.datetime.now().strftime("%H:%M:%S")
     try:
+        try:
+            if os.path.getsize(LOG_FILE) >= LOG_MAX_BYTES:
+                rotated = LOG_FILE + ".1"
+                if os.path.exists(rotated):
+                    os.remove(rotated)
+                os.rename(LOG_FILE, rotated)
+        except FileNotFoundError:
+            pass
         with open(LOG_FILE, "a") as f:
             f.write(f"[{ts}] {msg}\n")
     except OSError:

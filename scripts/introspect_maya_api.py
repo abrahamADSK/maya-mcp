@@ -31,10 +31,13 @@ only appear in ``dir(maya.cmds)`` once their plugin is loaded. A headless
 ``maya.standalone`` session loads none of them, so a graph built without this
 step omits every plugin command and the F4b validator then false-positives on a
 legitimate ``cmds.mayaUSDImport(...)`` call (Chat 56 incident). This script
-therefore best-effort loads the pipeline I/O + USD plugins (``_PIPELINE_PLUGINS``)
-before introspecting; a plugin that is absent on the running build is skipped,
-never fatal. Append more via the ``MAYA_INTROSPECT_PLUGINS`` env var
-(comma-separated, e.g. ``mtoa`` on an Arnold-licensed box).
+therefore best-effort loads the pipeline I/O + USD + Arnold plugins
+(``_PIPELINE_PLUGINS``, which now includes ``mtoa``) before introspecting; a
+plugin that is absent on the running build is skipped, never fatal. ``mtoa`` is
+wired into the default set so the regenerated graph carries Arnold commands
+(``arnoldRender``, ``arnoldExportAss`` …) — without them F4b statically rejects
+every corpus-recommended Arnold render call (audit blocker). Append still more
+via the ``MAYA_INTROSPECT_PLUGINS`` env var (comma-separated).
 
 Cadence
 -------
@@ -66,19 +69,22 @@ _OUTPUT_PATH = _REPO_ROOT / "src" / "maya_mcp" / "rag" / "api_graph.json"
 # session loads none of them — so introspecting without loading these omits the
 # whole plugin command surface and F4b false-positives on real calls (Chat 56).
 # Best-effort: a plugin absent on the running build is skipped, never fatal.
-# Extend at runtime via the MAYA_INTROSPECT_PLUGINS env var (comma-separated,
-# e.g. "mtoa" on an Arnold-licensed box — kept out of the default set because
-# its headless load is licence-gated and slow).
+# Extend at runtime via the MAYA_INTROSPECT_PLUGINS env var (comma-separated).
 _PIPELINE_PLUGINS = (
     "mayaUsdPlugin",   # mayaUSDImport / mayaUSDExport / mayaUsdLayerEditor / …
     "AbcImport",       # Alembic import
     "AbcExport",       # Alembic export
     "fbxmaya",         # FBXImport / FBXExport / FBXProperties / …
     "objExport",       # OBJ import/export
+    "mtoa",            # Arnold: arnoldRender / arnoldExportAss / arnoldRenderView / …
     # NB: glTF (libgltfsceneimport) and OBJ are FILE TRANSLATORS invoked via
     # cmds.file(type='glTF Import'/'OBJ') — they register no cmds.<command> of
     # their own, so glTF needs no entry here (cmds.file is core). objExport is
     # listed only because its load is cheap and harmless.
+    # mtoa is wired in (was previously env-var-only) so the regenerated graph
+    # carries Arnold commands; its headless load is licence-gated and a little
+    # slow, but the per-plugin try/except below keeps an unlicensed box from
+    # failing the run — mtoa simply lands in `plugins_failed`.
 )
 
 

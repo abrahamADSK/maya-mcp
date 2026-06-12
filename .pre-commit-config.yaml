@@ -1,4 +1,4 @@
-# Pre-commit hooks for flame-mcp.
+# Pre-commit hooks for maya-mcp.
 #
 # First-time setup on each clone (runs inside the repo venv):
 #   ./install.sh                  # creates .venv/ and installs deps

@@ -15,8 +15,9 @@ Scenarios covered:
   (c) Stale block     — old block missing version marker → refreshed to current
                         version, port line present.
   (d) Version bump    — block at v(BLOCK_VERSION-1) → regenerated on re-run.
-  (e) Port line kwarg — generated block always uses ``name=":PORT"`` form, never
-                        positional (Maya 2027 regression guard).
+  (e) Port line kwarg — generated block always uses ``name="localhost:PORT"``
+                        form (localhost bind), never positional (Maya 2027
+                        regression guard).
   (f) Content only change — same version but different repo root → regenerated.
 
 Run with:
@@ -159,9 +160,10 @@ class TestFreshInstall:
         target = tmp_path / "userSetup.py"
         upsert_block(target, build_block(_FAKE_ROOT, _FAKE_PORT))
         content = target.read_text()
-        assert f'commandPort(name=":{_FAKE_PORT}"' in content, (
-            "Generated block must open Command Port via name= kwarg "
-            "(positional form silently fails on Maya 2027)"
+        assert f'commandPort(name="localhost:{_FAKE_PORT}"' in content, (
+            "Generated block must open Command Port via name= kwarg, bound to "
+            "localhost (positional form silently fails on Maya 2027; an "
+            "all-interfaces bind exposes an RCE port to the LAN)"
         )
 
     def test_created_block_contains_version_marker(self, tmp_path: Path) -> None:
@@ -235,7 +237,7 @@ class TestStaleBlockNoVersionMarker:
         target.write_text(_make_stale_block(version=None), encoding="utf-8")
         upsert_block(target, build_block(_FAKE_ROOT, _FAKE_PORT))
         content = target.read_text()
-        assert f'commandPort(name=":{_FAKE_PORT}"' in content, (
+        assert f'commandPort(name="localhost:{_FAKE_PORT}"' in content, (
             "Refreshed block must contain the command-port opening line"
         )
 
@@ -310,16 +312,17 @@ class TestCommandPortKwargForm:
     def test_no_positional_commandport_open_in_generated_block(self) -> None:
         """The OPEN (non-query) form must use name= kwarg, not positional.
 
-        The bug (Maya 2027): ``cmds.commandPort(":8100", sourceType="mel")``
+        The bug (Maya 2027): ``cmds.commandPort("localhost:8100", sourceType="mel")``
         silently ignores the positional name when sourceType= is also given.
-        The correct form is ``cmds.commandPort(name=":8100", sourceType="mel")``.
+        The correct form is
+        ``cmds.commandPort(name="localhost:8100", sourceType="mel")``.
 
-        The QUERY form ``commandPort(":8100", query=True)`` uses the positional
-        form intentionally (query mode is not affected by the Maya 2027 bug) —
-        this test excludes that line from the check.
+        The QUERY form ``commandPort("localhost:8100", query=True)`` uses the
+        positional form intentionally (query mode is not affected by the
+        Maya 2027 bug) — this test excludes that line from the check.
         """
         block = build_block(_FAKE_ROOT, _FAKE_PORT)
-        port_str = f":{_FAKE_PORT}"
+        port_str = f"localhost:{_FAKE_PORT}"
         # Detect the positional OPEN form: commandPort("<port>", sourceType=...
         # This must NOT appear; the correct form is commandPort(name="<port>", ...
         positional_open_pattern = re.compile(
@@ -332,12 +335,13 @@ class TestCommandPortKwargForm:
 
     def test_kwarg_commandport_open_present(self) -> None:
         block = build_block(_FAKE_ROOT, _FAKE_PORT)
-        assert f'commandPort(name=":{_FAKE_PORT}", sourceType="mel")' in block
+        assert f'commandPort(name="localhost:{_FAKE_PORT}", sourceType="mel")' in block
 
     def test_kwarg_commandport_query_present(self) -> None:
-        """Query form (probe before opening) must also be present."""
+        """Query form (probe before opening) must also be present and bound to
+        localhost so it matches the name the open call registers."""
         block = build_block(_FAKE_ROOT, _FAKE_PORT)
-        assert f'commandPort(":{_FAKE_PORT}", query=True)' in block
+        assert f'commandPort("localhost:{_FAKE_PORT}", query=True)' in block
 
 
 # ---------------------------------------------------------------------------
