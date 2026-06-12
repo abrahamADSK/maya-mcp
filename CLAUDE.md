@@ -35,7 +35,7 @@
 └────────┬─────────┘
          │ (MCP Protocol — stdio)
 ┌────────▼──────────────────────────────────────────┐
-│   maya-mcp FastMCP Server (14 tools)              │
+│   maya-mcp FastMCP Server (15 tools)              │
 │                                                    │
 │  ┌─────────┐ ┌─────────┐ ┌──────────────────────┐│
 │  │ RAG     │ │ Safety  │ │ Token Tracking       ││
@@ -85,6 +85,7 @@ MAYA_HOST=localhost          # Host where Maya is running
 MAYA_PORT=8100              # Command Port (historically 7001; moved to avoid Flame S+W port collision)
 GPU_API_URL=                 # Optional: suggested default for Vision3D URL prompt (never auto-selected)
 GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empty for open LAN
+GPU_VERIFY_TLS=true          # Verify TLS for https Vision3D targets (default true; ignored for http; set false to opt out for self-signed https)
 ```
 
 **Vision3D URL is NOT stored anywhere.** There is no `vision3d_servers` config field, no pool, no whitelist. On the first Vision3D call of the session, the dispatch returns `vision3d_url_required`; Claude asks the user for the URL in the chat, the user types it, Claude calls `select_server` with that URL, and it is cached in the MCP process memory until restart. If `GPU_API_URL` is set in the environment, Claude surfaces it as a *suggested default* in the prompt — the user still has to confirm it explicitly. `config.json` only holds backend/model/Ollama settings; it does NOT hold Vision3D endpoints.
@@ -114,7 +115,7 @@ GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empt
 |--------|-------------|
 | `ping` | Verifies connection, returns version, current scene, renderer |
 | `launch` | Opens Maya and waits for Command Port to respond (max 90s; streams progress + info lines while waiting) |
-| `new_scene` | Creates new empty scene |
+| `new_scene` | Creates new empty scene (refuses if the scene has unsaved changes; pass confirm=true in params to discard them) |
 | `save_scene` | Saves current scene |
 | `list_scene` | Lists scene objects with filters by type or name |
 | `scene_snapshot` | Full scene state: file, renderer, counts, plugins, units |
@@ -206,15 +207,26 @@ a real command. It degrades to a no-op when `api_graph.json` is missing.
 
 - **Regenerate per Maya major release**: `mayapy scripts/introspect_maya_api.py`,
   then commit the updated `api_graph.json` alongside the version bump. The
-  introspector best-effort loads the pipeline I/O + USD plugins (`mayaUsdPlugin`,
-  `AbcImport`, `AbcExport`, `fbxmaya`, `objExport`) before walking `dir(cmds)`,
-  so plugin-registered commands (`mayaUSDImport`, `AbcImport`, `FBXImport` …)
-  are in the graph and F4b does not false-positive on them. The loaded/failed
-  plugin sets are recorded in the graph's `_meta`; add more (e.g. `mtoa`) via the
-  `MAYA_INTROSPECT_PLUGINS` env var. **NB**: glTF/OBJ are file translators
+  introspector best-effort loads the pipeline I/O + USD + Arnold plugins
+  (`mayaUsdPlugin`, `AbcImport`, `AbcExport`, `fbxmaya`, `objExport`, `mtoa`)
+  before walking `dir(cmds)`, so plugin-registered commands (`mayaUSDImport`,
+  `AbcImport`, `FBXImport`, `arnoldRender` …) are in the graph and F4b does not
+  false-positive on them. The loaded/failed plugin sets are recorded in the
+  graph's `_meta`; add still more via the `MAYA_INTROSPECT_PLUGINS` env var.
+  **NB**: glTF/OBJ are file translators
   invoked through `cmds.file(type=…)` (a core command) and register no
   `cmds.<command>` of their own, so they need no entry. Graph as of Chat 57:
   Maya **2027**, 4831 commands.
+- **Arnold stopgap**: the *committed* 4831-command graph predates the `mtoa`
+  wiring above (its `_meta.plugins_loaded` has no `mtoa`), so until it is
+  regenerated on an Arnold-licensed box the documented `cmds.arnoldRender(…)` /
+  `cmds.arnoldExportAss(…)` calls are kept valid by a curated `_MTOA_COMMANDS`
+  allowlist in `_ast_validate.py` (folded into the valid set only when a real
+  graph is loaded). The allowlist becomes redundant once the graph carries the
+  Arnold command surface natively. It does NOT mask hallucinations
+  (`cmds.arnoldRenderz(…)` is still rejected) and is not an anti-pattern escape
+  hatch (`arnoldRenderSettings`, flagged WRONG in `ANTI_PATTERNS.md`, stays
+  rejected).
 - **Bypass**: set `ast_dry_run: false` in `config.json` (e.g. if you are on a
   newer Maya than the committed graph and hit a false rejection).
 

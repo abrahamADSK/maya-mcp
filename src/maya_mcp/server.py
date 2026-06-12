@@ -8,7 +8,7 @@ Communicates with Maya via Command Port (TCP) using maya_bridge.
 Features:
     - 9 Tier-1 Maya tools (always visible)
     - 9 session tools (behind maya_session dispatch)
-    - 6 Vision3D tools (behind maya_vision3d dispatch)
+    - 7 Vision3D tools (behind maya_vision3d dispatch)
     - 4 RAG tools (search_maya_docs, learn_pattern, session_stats, reset_session_stats)
     - Dangerous pattern detection (safety.py)
     - Hybrid search: ChromaDB + BM25 + HyDE + RRF fusion
@@ -228,7 +228,7 @@ class PrimitiveType(str, Enum):
 
 class CreatePrimitiveInput(BaseModel):
     """Parameters for creating a 3D primitive."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     primitive_type: PrimitiveType = Field(..., description="Primitive type: cube, sphere, cylinder, cone, plane, torus")
     name: Optional[str] = Field(default=None, description="Object name (Maya generates one if omitted)")
@@ -239,7 +239,7 @@ class CreatePrimitiveInput(BaseModel):
 
 class MaterialInput(BaseModel):
     """Parameters for creating and assigning a material."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     object_name: str = Field(..., description="Name of the object to assign the material to")
     material_name: Optional[str] = Field(default=None, description="Material name (generated if omitted)")
@@ -249,7 +249,7 @@ class MaterialInput(BaseModel):
 
 class TransformInput(BaseModel):
     """Parameters for transforming an object."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     object_name: str = Field(..., description="Name of the object to transform")
     position: Optional[List[float]] = Field(default=None, description="New position [x, y, z]", min_length=3, max_length=3)
@@ -260,7 +260,7 @@ class TransformInput(BaseModel):
 
 class SceneQueryInput(BaseModel):
     """Parameters for querying the scene."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     object_type: Optional[str] = Field(default=None, description="Filter by type: mesh, light, camera, transform, etc.")
     name_filter: Optional[str] = Field(default=None, description="Filter by name (supports wildcards: *sphere*)")
@@ -268,7 +268,7 @@ class SceneQueryInput(BaseModel):
 
 class ExecutePythonInput(BaseModel):
     """Execute arbitrary Python code in Maya."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     code: str = Field(..., description="Python code to execute in Maya. Assign result to variable 'result'.")
     timeout: Optional[float] = Field(
@@ -284,14 +284,14 @@ class ExecutePythonInput(BaseModel):
 
 class DeleteObjectInput(BaseModel):
     """Parameters for deleting objects."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     object_name: str = Field(..., description="Name of the object to delete (supports wildcards)")
 
 
 class LightInput(BaseModel):
     """Parameters for creating a light."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     light_type: str = Field(default="directional", description="Type: directional, point, spot, area, ambient")
     name: Optional[str] = Field(default=None, description="Light name")
@@ -302,7 +302,7 @@ class LightInput(BaseModel):
 
 class CameraInput(BaseModel):
     """Parameters for creating a camera."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: Optional[str] = Field(default=None, description="Camera name")
     position: Optional[List[float]] = Field(default=None, description="Position [x, y, z]", min_length=3, max_length=3)
@@ -329,7 +329,7 @@ class SessionAction(str, Enum):
 
 class SessionDispatchInput(BaseModel):
     """Input for the maya_session dispatch tool."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     action: SessionAction = Field(..., description="Which session action to run")
     params: Optional[dict] = Field(default=None, description="Parameters for the chosen action (see tool description)")
@@ -348,7 +348,7 @@ class Vision3DAction(str, Enum):
 
 class Vision3DDispatchInput(BaseModel):
     """Input for the maya_vision3d dispatch tool."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     action: Vision3DAction = Field(..., description="Which Vision3D action to run")
     params: Optional[dict] = Field(default=None, description="Parameters for the chosen action (see tool description)")
@@ -378,6 +378,27 @@ def _handle_error(e: Exception) -> str:
     if isinstance(e, MayaBridgeError):
         return f"Maya error: {e}"
     return f"Unexpected error: {type(e).__name__}: {e}"
+
+
+def _py_str(value: object) -> str:
+    """Return a safe Python string literal for embedding *value* in generated
+    Maya Python.
+
+    The dedicated Maya tools (``maya_import_file``, ``maya_viewport_capture``,
+    ``maya_create_primitive`` …) build Maya Python by f-string interpolation and
+    — unlike ``maya_session(execute_python)`` / ``delete`` — do NOT run
+    ``check_dangerous`` on the result. A free-form path or object name
+    containing a quote, a backslash or a newline (e.g. a legitimate
+    ``Director's_cut/char.obj``) would otherwise break out of the
+    single-quoted literal: at best a ``SyntaxError`` on a valid asset, at worst
+    an injection that skips the safety layer entirely.
+
+    ``repr()`` emits a fully-escaped literal (choosing the quote style that
+    keeps the value intact), so the interpolated value is always inert *data*,
+    never executable code. Callers MUST drop the surrounding quotes they used
+    to wrap the old ``'{value}'`` form — ``repr`` supplies them.
+    """
+    return repr("" if value is None else str(value))
 
 
 async def _do_ping(params: dict) -> str:
@@ -479,7 +500,7 @@ async def maya_create_primitive(params: CreatePrimitiveInput) -> str:
             "torus": "cmds.polyTorus",
         }
         func = create_funcs[params.primitive_type.value]
-        name_arg = f"name='{params.name}'" if params.name else ""
+        name_arg = f"name={_py_str(params.name)}" if params.name else ""
 
         code = f"""
 import maya.cmds as cmds
@@ -504,17 +525,18 @@ async def maya_assign_material(params: MaterialInput) -> str:
     """Create a material (lambert, blinn, phong, aiStandardSurface) with RGB color and assign it to an object."""
     try:
         mat_name = params.material_name or f"{params.object_name}_mat"
+        sg_name = f"{mat_name}_SG"
         r, g, b = params.color
 
         code = f"""
 import maya.cmds as cmds
-mat = cmds.shadingNode('{params.material_type}', asShader=True, name='{mat_name}')
-sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name='{mat_name}_SG')
+mat = cmds.shadingNode({_py_str(params.material_type)}, asShader=True, name={_py_str(mat_name)})
+sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name={_py_str(sg_name)})
 cmds.connectAttr(mat + '.outColor', sg + '.surfaceShader')
 cmds.setAttr(mat + '.color', {r}, {g}, {b}, type='double3')
-cmds.select('{params.object_name}')
+cmds.select({_py_str(params.object_name)})
 cmds.sets(forceElement=sg)
-result = {{'material': mat, 'shading_group': sg, 'assigned_to': '{params.object_name}'}}
+result = {{'material': mat, 'shading_group': sg, 'assigned_to': {_py_str(params.object_name)}}}
 """
         return bridge.execute(code)
     except Exception as e:
@@ -528,19 +550,20 @@ async def maya_transform(params: TransformInput) -> str:
         ws = "False" if params.relative else "True"
         rel = "True" if params.relative else "False"
 
+        obj = _py_str(params.object_name)
         code = "import maya.cmds as cmds\n"
         if params.position:
-            code += f"cmds.xform('{params.object_name}', translation={params.position}, worldSpace={ws}, relative={rel})\n"
+            code += f"cmds.xform({obj}, translation={params.position}, worldSpace={ws}, relative={rel})\n"
         if params.rotation:
-            code += f"cmds.xform('{params.object_name}', rotation={params.rotation}, worldSpace={ws}, relative={rel})\n"
+            code += f"cmds.xform({obj}, rotation={params.rotation}, worldSpace={ws}, relative={rel})\n"
         if params.scale:
-            code += f"cmds.xform('{params.object_name}', scale={params.scale}, relative={rel})\n"
+            code += f"cmds.xform({obj}, scale={params.scale}, relative={rel})\n"
 
         code += f"""
-pos = cmds.xform('{params.object_name}', q=True, translation=True, worldSpace=True)
-rot = cmds.xform('{params.object_name}', q=True, rotation=True, worldSpace=True)
-scl = cmds.xform('{params.object_name}', q=True, scale=True)
-result = {{'object': '{params.object_name}', 'position': pos, 'rotation': rot, 'scale': scl}}
+pos = cmds.xform({obj}, q=True, translation=True, worldSpace=True)
+rot = cmds.xform({obj}, q=True, rotation=True, worldSpace=True)
+scl = cmds.xform({obj}, q=True, scale=True)
+result = {{'object': {obj}, 'position': pos, 'rotation': rot, 'scale': scl}}
 """
         return bridge.execute(code)
     except Exception as e:
@@ -557,9 +580,9 @@ async def _do_list_scene(params: dict) -> str:
     try:
         filters = []
         if validated.object_type:
-            filters.append(f"type='{validated.object_type}'")
+            filters.append(f"type={_py_str(validated.object_type)}")
         if validated.name_filter:
-            filters.append(f"'{validated.name_filter}'")
+            filters.append(_py_str(validated.name_filter))
 
         filter_str = ", ".join(filters)
 
@@ -591,14 +614,15 @@ async def _do_delete(params: dict) -> str:
         return json.dumps({"safety_warning": warning})
 
     try:
+        obj = _py_str(validated.object_name)
         code = f"""
 import maya.cmds as cmds
-targets = cmds.ls('{validated.object_name}')
+targets = cmds.ls({obj})
 if targets:
     cmds.delete(targets)
     result = {{'deleted': targets}}
 else:
-    result = {{'error': 'Not found: {validated.object_name}'}}
+    result = {{'error': 'Not found: ' + {obj}}}
 """
         response = bridge.execute(code)
         _stats["tokens_out"] += _tok(response)
@@ -620,7 +644,7 @@ async def maya_create_light(params: LightInput) -> str:
             "ambient": "cmds.ambientLight",
         }
 
-        name_kw = f"name='{params.name}'" if params.name else ""
+        name_kw = f"name={_py_str(params.name)}" if params.name else ""
 
         if params.light_type == "area":
             extra = f", {name_kw}" if name_kw else ""
@@ -647,7 +671,7 @@ parent = cmds.listRelatives(light, parent=True)[0]
 cmds.xform(parent, translation={params.position}, worldSpace=True)
 """
 
-        code += "result = {'light': light, 'type': '" + params.light_type + "'}\n"
+        code += "result = {'light': light, 'type': " + _py_str(params.light_type) + "}\n"
 
         return maybe_annotate_with_suggestions("maya_create_light", bridge.execute(code))
     except Exception as e:
@@ -659,7 +683,7 @@ async def maya_create_camera(params: CameraInput) -> str:
     """Create a camera in Maya with configurable position, look-at point, and focal length."""
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
-        name_arg = f"name='{params.name}'" if params.name else ""
+        name_arg = f"name={_py_str(params.name)}" if params.name else ""
         code = f"""
 import maya.cmds as cmds
 cam = cmds.camera({name_arg})[0]
@@ -769,12 +793,35 @@ async def _do_execute_python(params: dict, ctx: Context | None = None) -> str:
 
 
 async def _do_new_scene(params: dict) -> str:
-    """Create a new empty scene in Maya (discards current scene without saving)."""
+    """Create a new empty scene in Maya.
+
+    Guards unsaved work: ``cmds.file(new=True, force=True)`` is the exact
+    pattern safety.py flags as dangerous because it silently discards the
+    current scene. Unless the caller passes ``confirm=True``, this handler
+    first checks ``cmds.file(q=True, modified=True)`` and refuses (returning
+    an ``unsaved_changes`` error) when the scene has unsaved modifications,
+    so a daily user cannot lose work by accident.
+
+    Optional params: ``{"confirm": true}`` — discard unsaved changes anyway.
+    """
     try:
-        code = """
+        if bool(params.get("confirm", False)):
+            code = """
 import maya.cmds as cmds
 cmds.file(new=True, force=True)
 result = {'status': 'new_scene_created'}
+"""
+        else:
+            code = """
+import maya.cmds as cmds
+if cmds.file(q=True, modified=True):
+    result = {
+        'error': 'unsaved_changes',
+        'hint': 'The current scene has unsaved changes. Save it first, or re-run new_scene with confirm=True to discard them.',
+    }
+else:
+    cmds.file(new=True, force=True)
+    result = {'status': 'new_scene_created'}
 """
         return bridge.execute(code)
     except Exception as e:
@@ -815,7 +862,7 @@ class MeshOperationType(str, Enum):
 
 class MeshOperationInput(BaseModel):
     """Parameters for mesh operations."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     object_name: str = Field(..., description="Name of the mesh object")
     operation: MeshOperationType = Field(..., description="Type of operation")
@@ -827,7 +874,7 @@ class MeshOperationInput(BaseModel):
 
 class KeyframeInput(BaseModel):
     """Parameters for creating animation keyframes."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     object_name: str = Field(..., description="Name of the object to animate")
     attribute: str = Field(default="translateX", description="Attribute to animate (translateX/Y/Z, rotateX/Y/Z, scaleX/Y/Z, visibility)")
@@ -839,7 +886,7 @@ class KeyframeInput(BaseModel):
 
 class ImportFileInput(BaseModel):
     """Parameters for importing 3D files."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     file_path: str = Field(..., description="Absolute path to file to import (.obj, .fbx, .glb, .abc, .ma, .mb)")
     namespace: Optional[str] = Field(default=None, description="Namespace to avoid name collisions")
@@ -849,7 +896,7 @@ class ImportFileInput(BaseModel):
 
 class ViewportCaptureInput(BaseModel):
     """Parameters for capturing the Maya viewport."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     output_path: str = Field(default="/tmp/maya_viewport.png", description="Output path for image (.png/.jpg)")
     width: int = Field(default=1920, description="Capture width in pixels", ge=100, le=8192)
@@ -860,7 +907,7 @@ class ViewportCaptureInput(BaseModel):
 
 class ShelfButtonInput(BaseModel):
     """Parameters for creating a button on the Maya shelf."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     label: str = Field(..., description="Button label (short text)")
     command: str = Field(..., description="Python code that executes when button is clicked")
@@ -880,25 +927,28 @@ async def maya_mesh_operation(params: MeshOperationInput) -> str:
     try:
         op = params.operation.value
 
+        obj = _py_str(params.object_name)
+        second = _py_str(params.second_object) if params.second_object else None
+
         if op == "extrude":
-            faces = params.faces or f"{params.object_name}.f[:]"
+            faces = _py_str(params.faces or f"{params.object_name}.f[:]")
             code = f"""
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_extrude')
 try:
-    result_faces = cmds.polyExtrudeFacet('{faces}', localTranslateZ={params.offset}, divisions={params.divisions})
-    result = {{'operation': 'extrude', 'faces': '{faces}', 'offset': {params.offset}, 'result': str(result_faces)}}
+    result_faces = cmds.polyExtrudeFacet({faces}, localTranslateZ={params.offset}, divisions={params.divisions})
+    result = {{'operation': 'extrude', 'faces': {faces}, 'offset': {params.offset}, 'result': str(result_faces)}}
 finally:
     cmds.undoInfo(closeChunk=True)
 """
         elif op == "bevel":
-            faces = params.faces or f"{params.object_name}.e[:]"
+            faces = _py_str(params.faces or f"{params.object_name}.e[:]")
             code = f"""
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_bevel')
 try:
-    result_edges = cmds.polyBevel3('{faces}', offset={params.offset}, segments={params.divisions})
-    result = {{'operation': 'bevel', 'target': '{faces}', 'offset': {params.offset}, 'result': str(result_edges)}}
+    result_edges = cmds.polyBevel3({faces}, offset={params.offset}, segments={params.divisions})
+    result = {{'operation': 'bevel', 'target': {faces}, 'offset': {params.offset}, 'result': str(result_edges)}}
 finally:
     cmds.undoInfo(closeChunk=True)
 """
@@ -910,8 +960,8 @@ finally:
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_boolean')
 try:
-    result_node = cmds.polyCBoolOp('{params.object_name}', '{params.second_object}', op={bool_op}, ch=False)
-    result = {{'operation': '{op}', 'objects': ['{params.object_name}', '{params.second_object}'], 'result': str(result_node[0])}}
+    result_node = cmds.polyCBoolOp({obj}, {second}, op={bool_op}, ch=False)
+    result = {{'operation': {_py_str(op)}, 'objects': [{obj}, {second}], 'result': str(result_node[0])}}
 finally:
     cmds.undoInfo(closeChunk=True)
 """
@@ -922,7 +972,7 @@ finally:
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_combine')
 try:
-    combined = cmds.polyUnite('{params.object_name}', '{params.second_object}', ch=False)
+    combined = cmds.polyUnite({obj}, {second}, ch=False)
     result = {{'operation': 'combine', 'result': str(combined[0])}}
 finally:
     cmds.undoInfo(closeChunk=True)
@@ -932,7 +982,7 @@ finally:
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_separate')
 try:
-    separated = cmds.polySeparate('{params.object_name}', ch=False)
+    separated = cmds.polySeparate({obj}, ch=False)
     result = {{'operation': 'separate', 'parts': [str(s) for s in separated]}}
 finally:
     cmds.undoInfo(closeChunk=True)
@@ -942,10 +992,10 @@ finally:
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_smooth')
 try:
-    cmds.polySmooth('{params.object_name}', divisions={params.divisions})
-    verts = cmds.polyEvaluate('{params.object_name}', vertex=True)
-    faces = cmds.polyEvaluate('{params.object_name}', face=True)
-    result = {{'operation': 'smooth', 'object': '{params.object_name}', 'divisions': {params.divisions}, 'vertices': verts, 'faces': faces}}
+    cmds.polySmooth({obj}, divisions={params.divisions})
+    verts = cmds.polyEvaluate({obj}, vertex=True)
+    faces = cmds.polyEvaluate({obj}, face=True)
+    result = {{'operation': 'smooth', 'object': {obj}, 'divisions': {params.divisions}, 'vertices': verts, 'faces': faces}}
 finally:
     cmds.undoInfo(closeChunk=True)
 """
@@ -961,14 +1011,18 @@ finally:
 async def maya_set_keyframe(params: KeyframeInput) -> str:
     """Create an animation keyframe on an object. Allows animating translate, rotate, scale, and visibility per frame."""
     try:
+        obj = _py_str(params.object_name)
+        attr = _py_str(params.attribute)
+        in_tan = _py_str(params.in_tangent)
+        out_tan = _py_str(params.out_tangent)
         code = f"""
 import maya.cmds as cmds
 cmds.undoInfo(openChunk=True, chunkName='mcp_keyframe')
 try:
-    cmds.setKeyframe('{params.object_name}', attribute='{params.attribute}',
+    cmds.setKeyframe({obj}, attribute={attr},
                      value={params.value}, time={params.frame},
-                     inTangentType='{params.in_tangent}', outTangentType='{params.out_tangent}')
-    result = {{'object': '{params.object_name}', 'attribute': '{params.attribute}',
+                     inTangentType={in_tan}, outTangentType={out_tan})
+    result = {{'object': {obj}, 'attribute': {attr},
               'value': {params.value}, 'frame': {params.frame}}}
 finally:
     cmds.undoInfo(closeChunk=True)
@@ -991,12 +1045,14 @@ async def maya_import_file(params: ImportFileInput, ctx: Context | None = None) 
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
         ext = params.file_path.rsplit(".", 1)[-1].lower() if "." in params.file_path else ""
-        ns_opt = f", namespace='{params.namespace}'" if params.namespace else ""
+        fp = _py_str(params.file_path)  # safe literal for the import path
+        ns_opt = f", namespace={_py_str(params.namespace)}" if params.namespace else ""
         group_code = ""
         if params.group_under:
+            grp = _py_str(params.group_under)
             group_code = f"""
-if not cmds.objExists('{params.group_under}'):
-    cmds.group(empty=True, name='{params.group_under}')
+if not cmds.objExists({grp}):
+    cmds.group(empty=True, name={grp})
 """
         scale_code = ""
         if params.scale_factor:
@@ -1030,12 +1086,12 @@ for _mcp_obj in _mcp_imported:
             cmds.loadPlugin('libgltfsceneimport', quiet=True)
         except Exception:
             pass
-        cmds.file('{params.file_path}', i=True, ignoreVersion=True,
+        cmds.file({fp}, i=True, ignoreVersion=True,
                   mergeNamespacesOnClash=False, returnNewNodes=True,
                   type='glTF Import'{ns_opt})
     except RuntimeError as _mcp_e:
         import os as _mcp_os
-        _mcp_dir = _mcp_os.path.dirname('{params.file_path}')
+        _mcp_dir = _mcp_os.path.dirname({fp})
         _mcp_obj = _mcp_os.path.join(_mcp_dir, 'mesh_uv.obj')
         _mcp_tex = _mcp_os.path.join(_mcp_dir, 'texture_baked.png')
         if _mcp_os.path.isfile(_mcp_obj):
@@ -1069,7 +1125,7 @@ for _mcp_obj in _mcp_imported:
             import_block = f"""
     _mcp_method = '{ftype or 'auto'}'
     _mcp_warning = ''
-    cmds.file('{params.file_path}', i=True, ignoreVersion=True,
+    cmds.file({fp}, i=True, ignoreVersion=True,
               mergeNamespacesOnClash=False, returnNewNodes=True{ns_opt}{type_opt})
 """
 
@@ -1084,7 +1140,7 @@ try:
     _mcp_imported = list(_mcp_after - _mcp_before)
     {scale_code}
     result = {{'imported': len(_mcp_imported), 'objects': _mcp_imported[:20],
-              'file': '{params.file_path}', 'method': _mcp_method,
+              'file': {fp}, 'method': _mcp_method,
               'warning': _mcp_warning}}
 finally:
     cmds.undoInfo(closeChunk=True)
@@ -1112,14 +1168,16 @@ async def maya_viewport_capture(params: ViewportCaptureInput) -> list:
     try:
         camera_opt = ""
         if params.camera:
+            cam = _py_str(params.camera)
             camera_opt = f"""
 # Set camera for the active panel
 _mcp_panel = cmds.getPanel(withFocus=True)
 if cmds.getPanel(typeOf=_mcp_panel) == 'modelPanel':
-    cmds.modelPanel(_mcp_panel, edit=True, camera='{params.camera}')
+    cmds.modelPanel(_mcp_panel, edit=True, camera={cam})
 """
         frame_opt = f", frame=[{params.frame}]" if params.frame is not None else ""
         fmt = "png" if params.output_path.endswith(".png") else "jpg"
+        out_path = _py_str(params.output_path)
 
         code = f"""
 import maya.cmds as cmds
@@ -1128,16 +1186,16 @@ import os, base64
 cmds.undoInfo(stateWithoutFlush=False)
 try:
     _mcp_img = cmds.playblast(
-        completeFilename='{params.output_path}',
+        completeFilename={out_path},
         format='image', compression='{fmt}',
         width={params.width}, height={params.height},
         showOrnaments=False, viewer=False,
         offScreen=True, percent=100{frame_opt}
     )
-    _mcp_size = os.path.getsize('{params.output_path}') // 1024
-    with open('{params.output_path}', 'rb') as _f:
+    _mcp_size = os.path.getsize({out_path}) // 1024
+    with open({out_path}, 'rb') as _f:
         _mcp_b64 = base64.b64encode(_f.read()).decode('ascii')
-    result = {{'captured': '{params.output_path}', 'size_kb': _mcp_size,
+    result = {{'captured': {out_path}, 'size_kb': _mcp_size,
               'resolution': '{params.width}x{params.height}',
               'image_b64': _mcp_b64}}
 finally:
@@ -1207,25 +1265,33 @@ async def _do_shelf_button(params: dict) -> str:
     try:
         # Escape the command for embedding in Python string
         safe_command = validated.command.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        # Free-form display fields go in as safe literals too (a label like
+        # "Bob's Tool" would otherwise break the single-quoted literal). The
+        # shelf name flows through the _mcp_shelf variable into mel.eval so the
+        # MEL string is built by concatenation, not raw interpolation.
+        shelf_lit = _py_str(validated.shelf_name)
+        label_lit = _py_str(validated.label)
+        tooltip_lit = _py_str(validated.tooltip)
+        icon_lit = _py_str(validated.icon_label[:4])
         code = f"""
 import maya.cmds as cmds
 import maya.mel as mel
 
 # Create or find the shelf
-_mcp_shelf = '{validated.shelf_name}'
+_mcp_shelf = {shelf_lit}
 if not cmds.shelfLayout(_mcp_shelf, exists=True):
-    mel.eval('addNewShelfTab "{validated.shelf_name}"')
+    mel.eval('addNewShelfTab "' + _mcp_shelf + '"')
 
 _mcp_btn = cmds.shelfButton(
     parent=_mcp_shelf,
-    label='{validated.label}',
-    annotation='{validated.tooltip}',
-    imageOverlayLabel='{validated.icon_label[:4]}',
+    label={label_lit},
+    annotation={tooltip_lit},
+    imageOverlayLabel={icon_lit},
     image='pythonFamily.png',
     command='{safe_command}',
     sourceType='python'
 )
-result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': '{validated.label}'}}
+result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': {label_lit}}}
 """
         return await asyncio.to_thread(bridge.execute, code)
     except Exception as e:
@@ -1244,7 +1310,7 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
 
     • ping — Check connection to Maya, return version/scene/renderer. No params needed.
     • launch — Open Maya and wait for Command Port to respond. No params needed.
-    • new_scene — Create a new empty scene (discards unsaved). No params needed.
+    • new_scene — Create a new empty scene. Refuses if the current scene has unsaved changes; pass {"confirm": true} to discard them.
     • save_scene — Save the current scene. No params needed.
     • list_scene — List objects in the scene. Optional params: {"object_type": "mesh", "name_filter": "*sphere*"}
     • scene_snapshot — Full scene state: file, modified flag, frame range, object counts by type, renderer, plugins, resolution. No params needed.
@@ -1282,7 +1348,11 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
 
 # Connection-level configuration (shared by every vision3d server target)
 _GPU_API_KEY  = os.environ.get("GPU_API_KEY",  "")
-_GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "false").lower() in ("true", "1", "yes")
+# TLS certificate verification for https Vision3D targets. Secure-by-default:
+# verification is ON unless explicitly disabled with GPU_VERIFY_TLS=false (the
+# documented opt-out for self-signed LAN https endpoints). For plain-http URLs
+# httpx ignores this flag entirely, so LAN http deployments are unaffected.
+_GPU_VERIFY   = os.environ.get("GPU_VERIFY_TLS", "true").lower() in ("true", "1", "yes")
 _MAC_BASE_DIR = os.environ.get("MAYA_BASE_DIR",
                                 str(_PROJECT_ROOT))                          # project root on Mac
 
@@ -1411,9 +1481,12 @@ async def _download_file(job_id: str, filename: str, dest: Path) -> bool:
 def _build_quality_form_data(params) -> dict:
     """Build form_data dict with quality params from a ShapeGenerateInput or ShapeTextInput."""
     form_data = {}
+    # Only forward target_faces when the caller asked for decimation (> 0).
+    # target_faces == 0 (the ShapeTextInput default) means "no decimation":
+    # omit it so the GPU server applies its own default instead of being
+    # pinned to 0. Mirrors the octree_resolution / num_inference_steps guards
+    # below.
     if hasattr(params, "target_faces") and params.target_faces > 0:
-        form_data["target_faces"] = str(params.target_faces)
-    elif hasattr(params, "target_faces"):
         form_data["target_faces"] = str(params.target_faces)
     if params.preset:
         form_data["preset"] = params.preset
@@ -1438,7 +1511,7 @@ class ShapeGenerateInput(BaseModel):
       - high:   full,  octree 384, 30 steps, 150k faces  (~8 min, detailed)
       - ultra:  full,  octree 512, 50 steps, no limit    (~12 min, maximum detail)
     """
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     image_path: str = Field(
         ...,
@@ -1474,7 +1547,7 @@ class ShapeGenerateInput(BaseModel):
 
 class ShapeTextInput(BaseModel):
     """Parameters for initiating 3D generation from text in Vision3D."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     text_prompt: str = Field(
         ...,
@@ -1493,7 +1566,7 @@ class ShapeTextInput(BaseModel):
 
 class TextureRemoteInput(BaseModel):
     """Parameters for initiating texturing in Vision3D."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     output_subdir: str = Field(
         ...,
@@ -1511,14 +1584,14 @@ class TextureRemoteInput(BaseModel):
 
 class Vision3DPollInput(BaseModel):
     """Parameters for polling job status in Vision3D."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     job_id: str = Field(..., description="Job ID returned by shape_generate_remote/text/texture.")
 
 
 class Vision3DDownloadInput(BaseModel):
     """Parameters for downloading results from a completed job."""
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     job_id: str = Field(..., description="Completed job ID.")
     output_subdir: str = Field(..., description="Local output subdirectory (same as used when creating the job).")
@@ -2012,6 +2085,8 @@ async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
 
 class SearchMayaDocsInput(BaseModel):
     """Parameters for searching Maya API documentation."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     query: str = Field(
         description=(
             "Natural language query about Maya Python API. Examples: "
@@ -2074,6 +2149,8 @@ async def search_maya_docs_tool(params: SearchMayaDocsInput) -> str:
 
 class LearnPatternInput(BaseModel):
     """Parameters for saving a validated working pattern."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     description: str = Field(
         description="Short description of what the pattern does (e.g. 'set Arnold AOV via Python').",
     )
@@ -2130,7 +2207,15 @@ async def learn_pattern_tool(params: LearnPatternInput) -> str:
                 "status": "learned",
                 "description": params.description,
                 "file": doc_file,
-                "note": "Pattern appended to docs. Run build_index to include in RAG.",
+                "searchable": False,
+                "note": (
+                    f"Pattern appended to docs/{doc_file}, and the in-memory "
+                    "search cache was cleared. It is NOT searchable yet: the "
+                    "ChromaDB index and the BM25 corpus.json are built offline "
+                    "and are not rebuilt by this call. An operator must run "
+                    "`python -m maya_mcp.rag.build_index` before this pattern "
+                    "appears in search_maya_docs results."
+                ),
             })
         except Exception as e:
             return json.dumps({"error": f"Failed to write pattern: {e}"})
@@ -2304,8 +2389,8 @@ def _inject_user_setup():
         "def _mcp_open_command_port():",
         "    try:",
         "        import maya.cmds as _mc",
-        '        if not _mc.commandPort(":' + str(_mcp_port) + '", query=True):',
-        '            _mc.commandPort(name=":' + str(_mcp_port) + '", sourceType="mel")',
+        '        if not _mc.commandPort("localhost:' + str(_mcp_port) + '", query=True):',
+        '            _mc.commandPort(name="localhost:' + str(_mcp_port) + '", sourceType="mel")',
         "    except Exception:",
         "        pass",
         "def _mcp_menu_startup():",
@@ -2336,7 +2421,7 @@ def _inject_user_setup():
     if _SENTINEL in existing:
         _blk_end = existing.index(_END_SENTINEL) if _END_SENTINEL in existing else len(existing)
         _blk = existing[existing.index(_SENTINEL):_blk_end]
-        if ('_mcp_root = r"' + _mcp_root + '"') in _blk and (':' + str(_mcp_port) + '"') in _blk:
+        if ('_mcp_root = r"' + _mcp_root + '"') in _blk and ('localhost:' + str(_mcp_port) + '"') in _blk:
             return False
 
     if _SENTINEL in existing:

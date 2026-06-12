@@ -58,6 +58,40 @@ from typing import List, Optional, Set, Tuple
 # _ast_validate.py lives in src/maya_mcp/; the graph sits in src/maya_mcp/rag/.
 _API_GRAPH_PATH = Path(__file__).resolve().parent / "rag" / "api_graph.json"
 
+# Curated Arnold/mtoa command allowlist — IMMEDIATE UNBLOCK (audit blocker).
+#
+# The committed api_graph.json was introspected WITHOUT the mtoa plugin loaded
+# (_meta.plugins_loaded has no "mtoa"), so none of the Arnold commands appear in
+# its command set. F4b therefore statically rejected every corpus-recommended
+# ``cmds.arnoldRender(...)`` / ``cmds.arnoldExportAss(...)`` call before it ever
+# reached Maya, breaking Arnold batch rendering — a primary VFX deliverable —
+# out of the box.
+#
+# These are real, stable mtoa command names (Arnold for Maya). Adding them to
+# the validator's "valid" set lets the documented Arnold calls through today,
+# without weakening the hallucination guard for everything else. This is a
+# STOPGAP: the proper fix is to regenerate api_graph.json with mtoa loaded
+# (scripts/introspect_maya_api.py now wires mtoa into _PIPELINE_PLUGINS, so a
+# live `mayapy scripts/introspect_maya_api.py` on an Arnold-licensed box folds
+# these — and any others — into the graph and this list becomes redundant).
+_MTOA_COMMANDS: frozenset = frozenset({
+    "arnoldRender",
+    "arnoldRenderView",
+    "arnoldExportAss",
+    "arnoldExportOperators",
+    "arnoldIpr",
+    "arnoldBakeGeo",
+    "arnoldRenderToTexture",
+    "arnoldUpdateTx",
+    "arnoldFlushCache",
+    "arnoldScene",
+    "arnoldPlugins",
+    "arnoldLicenseInfo",
+    "arnoldTemperatureToColor",
+    "arnoldGpuCacheClear",
+    "arnoldGpuCachePopulate",
+})
+
 _GRAPH_CACHE: Optional[dict] = None
 _GRAPH_CACHE_PATH: Optional[Path] = None
 
@@ -193,6 +227,12 @@ def validate_python(
     valid = set((graph or {}).get("commands", {}))
     if not valid:
         return AstValidation(issues=[], graph_loaded=False)
+    # Fold in the curated Arnold/mtoa allowlist: the committed graph was built
+    # without the mtoa plugin, so without this the documented arnoldRender()
+    # call set is statically rejected. Only applied once a real graph is loaded
+    # (an empty graph still degrades to the no-op above so fresh clones / CI are
+    # unaffected). Redundant once api_graph.json is regenerated with mtoa.
+    valid |= _MTOA_COMMANDS
 
     try:
         tree = ast.parse(source)

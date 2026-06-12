@@ -8,7 +8,7 @@
 >
 > Executing AI-generated code inside a live Maya session carries real risks: **unexpected crashes, loss of unsaved work, unintended modifications to scenes, rigs, or assets.** Always work on a duplicate or test scene. Never run this on production material without a full backup. The author(s) accept no responsibility for data loss, corruption, or any other damage resulting from its use.
 
-> MCP server for Autodesk Maya — 14 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
+> MCP server for Autodesk Maya — 15 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
 
 ---
 
@@ -33,7 +33,7 @@ Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow
 ```
 Claude / LLM
     ↕  MCP protocol (stdio)
-FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
+FastMCP server (src/maya_mcp/server.py) — 15 MCP tools
     ├── RAG engine (src/maya_mcp/rag/)
     │     ├── ChromaDB + BM25 hybrid search
     │     ├── HyDE adaptive query expansion
@@ -87,7 +87,7 @@ FastMCP server (src/maya_mcp/server.py) — 14 MCP tools
 |--------|-------------|
 | `ping` | Verify connection, returns Maya version and scene info |
 | `launch` | Open Maya and wait for Command Port to respond (streams progress while waiting) |
-| `new_scene` | New empty scene |
+| `new_scene` | New empty scene (refuses if the scene has unsaved changes; pass confirm=true to discard them) |
 | `save_scene` | Save current scene |
 | `list_scene` | List scene objects with type and name filters |
 | `scene_snapshot` | Full scene state: file, renderer, object counts, plugins, units |
@@ -147,7 +147,7 @@ maya-mcp/
 │   └── maya_mcp/
 │       ├── __init__.py
 │       ├── __main__.py
-│       ├── server.py              # FastMCP server — 14 MCP tools
+│       ├── server.py              # FastMCP server — 15 MCP tools
 │       ├── maya_bridge.py         # TCP bridge → Maya Command Port :8100
 │       ├── safety.py              # Dangerous pattern detection (14+ patterns)
 │       ├── config.example.json
@@ -267,7 +267,7 @@ First run downloads the embedding model (~570 MB, cached afterwards). The index 
 **`install.sh` does this for you.** Step 7 of the installer detects every Maya version installed on the host, locates each version's user scripts dir, and writes an idempotent guarded block into `userSetup.py` that:
 
 - Adds the maya-mcp repo root to `sys.path`
-- Opens the Command Port on `MAYA_PORT` (from `.env`, default `8100`) using `sourceType='mel'` with the `name=` kwarg form (Maya 2027 silently ignores the positional form when `sourceType` is specified)
+- Opens the Command Port on `MAYA_PORT` (from `.env`, default `8100`) bound to `localhost` using `sourceType='mel'` with the `name=` kwarg form (the localhost bind keeps the port reachable only from this host — an all-interfaces bind would expose an unauthenticated arbitrary-code-execution port to the LAN; Maya 2027 also silently ignores the positional form when `sourceType` is specified)
 - Registers the MCP Pipeline menu via `executeDeferred`
 
 The block is bounded by sentinel markers and reruns of `install.sh` are safe — the installer replaces the whole region when the markers are found.
@@ -301,8 +301,10 @@ import maya.utils as _mcp_utils
 def _mcp_open_command_port():
     try:
         import maya.cmds as _mc
-        if not _mc.commandPort(":8100", query=True):
-            _mc.commandPort(name=":8100", sourceType="mel")
+        # Bind to localhost: an all-interfaces (":8100") bind exposes an
+        # unauthenticated arbitrary-code-execution port to the whole LAN.
+        if not _mc.commandPort("localhost:8100", query=True):
+            _mc.commandPort(name="localhost:8100", sourceType="mel")
     except Exception:
         pass
 
@@ -392,6 +394,7 @@ All operations go through the safety scanner before reaching Maya. Dangerous pat
 | `MAYA_PORT` | Maya Command Port | `8100` |
 | `GPU_API_URL` | **Optional** suggested default for the Vision3D URL prompt. Never auto-selected — Claude asks the user to confirm or override at the first Vision3D call of each session. | — |
 | `GPU_API_KEY` | Vision3D API key | — |
+| `GPU_VERIFY_TLS` | Verify TLS certificates for `https` Vision3D targets (ignored for plain-`http` LAN URLs). Set to `false` to opt out for a self-signed `https` endpoint. | `true` |
 | `SHAPE_TIMEOUT` | Shape generation timeout (seconds) | `900` |
 | `TEXTURE_TIMEOUT` | Texture generation timeout (seconds) | `600` |
 

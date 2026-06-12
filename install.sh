@@ -135,7 +135,7 @@ MAYA_PORT = int(sys.argv[3])
 
 SENTINEL_START = "# --- MCP Pipeline Console auto-setup ---"
 SENTINEL_END = "# --- end MCP Pipeline Console ---"
-BLOCK_VERSION = 2  # keep in sync with Step 7's BLOCK_VERSION
+BLOCK_VERSION = 3  # keep in sync with Step 7's BLOCK_VERSION
 
 RESET = "\033[0m"
 RED = "\033[0;31m"
@@ -359,7 +359,7 @@ def check_command_port() -> tuple[str, str]:
             f"Command Port :{MAYA_PORT} is in sourceType='python' — the "
             f"bridge sends MEL and the port must be 'mel'. Restart Maya (the "
             f"Step 7 userSetup.py opens it in the right mode) or manually "
-            f"reopen it with cmds.commandPort(name=\":{MAYA_PORT}\", "
+            f"reopen it with cmds.commandPort(name=\"localhost:{MAYA_PORT}\", "
             f"sourceType=\"mel\").",
         )
     # Strip trailing nulls / newlines for the display
@@ -796,10 +796,10 @@ from pathlib import Path
 #
 # Canonical MCP tool list for pre-approval.
 #
-# maya-mcp exposes exactly 14 MCP tools (decorated with @mcp.tool in
+# maya-mcp exposes exactly 15 MCP tools (decorated with @mcp.tool in
 # src/maya_mcp/server.py). 9 of them are "Tier-1" Maya operations that
 # are directly decorated, 2 are dispatch tools that group multiple
-# actions under a single MCP tool name, and 3 are RAG / meta tools.
+# actions under a single MCP tool name, and 4 are RAG / meta tools.
 #
 # Dispatch tools — each contains the following actions, all covered
 # by pre-approving the parent dispatch tool name:
@@ -811,7 +811,7 @@ from pathlib import Path
 #                   texture, poll, download
 #
 # Note: earlier versions of this script listed the 9 maya_session
-# actions and 6 vision3d action names as if they were individual tools.
+# actions and 7 vision3d action names as if they were individual tools.
 # They never were — they are dispatch actions, not @mcp.tool-decorated
 # functions. The correct surface to pre-approve is the dispatch tool
 # name, which is what this list now uses.
@@ -866,8 +866,8 @@ print(f"[maya-mcp] {new_count} new tools pre-approved ({len(merged)} total in ~/
 PYEOF
 
 if [[ $? -eq 0 ]]; then
-    success "14 maya-mcp tools pre-approved in ~/.claude/settings.json"
-    STEPS_OK+=("MCP tools pre-approved in ~/.claude/settings.json (14 tools)")
+    success "15 maya-mcp tools pre-approved in ~/.claude/settings.json"
+    STEPS_OK+=("MCP tools pre-approved in ~/.claude/settings.json (15 tools)")
 else
     warn "Tool pre-approval failed — you may see permission prompts on first use"
     STEPS_WARN+=("MCP tool pre-approval failed — run manually or approve at first prompt")
@@ -935,7 +935,11 @@ SENTINEL_END = "# --- end MCP Pipeline Console ---"
 #   v1 — command-port open added (name= kwarg form)
 #   v2 — version marker introduced; same content, bump forces one-time
 #        regeneration of any pre-v2 stale blocks (Chat 55 idempotency fix)
-BLOCK_VERSION = 2
+#   v3 — Command Port bound to localhost (name="localhost:PORT") instead of
+#        the all-interfaces bare ":PORT"; bump forces already-provisioned
+#        machines to drop the LAN-exposed bind on the next install run
+#        (audit blocker: unauthenticated arbitrary-code-execution port).
+BLOCK_VERSION = 3
 
 VERSION_MARKER = f"# MCP Pipeline Console block v{BLOCK_VERSION}"
 
@@ -1010,9 +1014,13 @@ def build_block(repo_root: str, port: str) -> str:
         for the panel install path — this is the persistence mechanism for
         the retain=True workspaceControl restore that .mod files could not
         solve on Maya 2026.
-      - _mcp_open_command_port uses name= kwarg on the open call because
-        Maya 2027 silently ignores cmds.commandPort(":8100", sourceType=...)
-        when the first arg is positional. The query form is unaffected.
+      - _mcp_open_command_port binds the port to localhost
+        (name="localhost:PORT") so it is reachable only from this host — the
+        bridge connects to localhost and an all-interfaces bind would expose
+        an unauthenticated arbitrary-code-execution port to the whole LAN.
+        It uses the name= kwarg on the open call because Maya 2027 silently
+        ignores cmds.commandPort("localhost:PORT", sourceType=...) when the
+        first arg is positional. The query form is unaffected.
       - Both helpers are wrapped in executeDeferred so Maya's main loop is
         ready before we touch UI / networking.
       - Every exception is swallowed: a broken userSetup.py would prevent
@@ -1035,8 +1043,8 @@ def build_block(repo_root: str, port: str) -> str:
         '    """Open the maya-mcp Command Port (mel sourceType, name= kwarg)."""',
         "    try:",
         "        import maya.cmds as _mc",
-        f'        if not _mc.commandPort(":{port}", query=True):',
-        f'            _mc.commandPort(name=":{port}", sourceType="mel")',
+        f'        if not _mc.commandPort("localhost:{port}", query=True):',
+        f'            _mc.commandPort(name="localhost:{port}", sourceType="mel")',
         "    except Exception:",
         "        pass",
         "",

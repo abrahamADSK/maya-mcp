@@ -54,7 +54,10 @@ See `MODEL_STRATEGY.md` in the ecosystem root for the full
 ```python
 # userSetup.py (Maya's script folder)
 import maya.cmds as cmds
-cmds.commandPort(name=":8100", sourceType="python", echoOutput=False)
+# Bind to localhost: the bridge connects only from this host, and an
+# all-interfaces (":8100") bind exposes an unauthenticated arbitrary-code
+# port to the whole LAN. sourceType MUST be 'mel' — the bridge sends MEL.
+cmds.commandPort(name="localhost:8100", sourceType="mel", echoOutput=False)
 ```
 
 ---
@@ -102,7 +105,8 @@ Add to Maya's `userSetup.py` (typically `~/Library/Preferences/Autodesk/maya/scr
 
 ```python
 import maya.cmds as cmds
-cmds.commandPort(name=":8100", sourceType="python", echoOutput=False)
+# localhost bind (not ":8100") + sourceType='mel' (the bridge sends MEL).
+cmds.commandPort(name="localhost:8100", sourceType="mel", echoOutput=False)
 ```
 
 The auto-setup in `maya_panel.py::_ensure_panel_installed()` injects this

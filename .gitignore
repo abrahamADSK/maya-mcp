@@ -56,6 +56,10 @@ hf_models/
 logs/
 src/maya_mcp/rag/index/
 src/maya_mcp/rag/corpus.json
+# learn_pattern staging file: non-trusted models write candidate code here for
+# review. Never commit it — `git add -A` would otherwise fold arbitrary
+# model-authored code into history.
+src/maya_mcp/rag/candidates.json
 
 # Coverage artifact from pytest-cov
 .coverage
