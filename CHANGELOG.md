@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-06-15
+
 ### Added
 
 - **Durable, append-only audit log of tool executions (opt-in, OFF by default)** —
