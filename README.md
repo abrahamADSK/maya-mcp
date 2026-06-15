@@ -8,6 +8,12 @@
 >
 > Executing AI-generated code inside a live Maya session carries real risks: **unexpected crashes, loss of unsaved work, unintended modifications to scenes, rigs, or assets.** Always work on a duplicate or test scene. Never run this on production material without a full backup. The author(s) accept no responsibility for data loss, corruption, or any other damage resulting from its use.
 
+## 📊 Code knowledge graph
+
+Interactive, auto-published map of this codebase — modules, functions, call/import edges and community clusters — rebuilt by [graphify](https://github.com/safishamsi/graphify) and deployed to GitHub Pages on every push to `src/`:
+
+**[abrahamadsk.github.io/maya-mcp](https://abrahamadsk.github.io/maya-mcp/)** · part of the [MCP ecosystem graph hub](https://abrahamadsk.github.io/mcp-graphs/).
+
 > MCP server for Autodesk Maya — 15 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
 
 ---
