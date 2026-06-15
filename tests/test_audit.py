@@ -349,3 +349,109 @@ def test_dispatcher_skips_readonly_actions(audit_log, monkeypatch) -> None:
     )
 
     assert not audit_log.exists()
+
+
+# ── read_records (the operation_history read side) ───────────────────────────
+
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+
+
+def test_read_records_empty_when_missing(tmp_path) -> None:
+    assert _audit.read_records(tmp_path / "nope.jsonl") == []
+
+
+def test_read_records_newest_first_and_limit(tmp_path) -> None:
+    log = tmp_path / "audit.jsonl"
+    _write_jsonl(log, [
+        {"ts": f"t{i}", "tool": "x", "action": "a", "status": "ok"} for i in range(5)
+    ])
+    out = _audit.read_records(log, limit=2)
+    assert [r["ts"] for r in out] == ["t4", "t3"]  # newest first, capped
+
+
+def test_read_records_filters(tmp_path) -> None:
+    log = tmp_path / "audit.jsonl"
+    _write_jsonl(log, [
+        {"ts": "1", "tool": "maya_transform", "action": "-", "status": "ok"},
+        {"ts": "2", "tool": "maya_session", "action": "execute_python", "status": "error"},
+    ])
+    assert len(_audit.read_records(log, status="error")) == 1
+    assert _audit.read_records(log, tool="maya_transform")[0]["ts"] == "1"
+    assert _audit.read_records(log, action="execute_python")[0]["tool"] == "maya_session"
+
+
+def test_read_records_skips_malformed_lines(tmp_path) -> None:
+    log = tmp_path / "audit.jsonl"
+    log.write_text('{"ts":"1","tool":"x","action":"a","status":"ok"}\nNOT JSON\n\n', encoding="utf-8")
+    out = _audit.read_records(log)
+    assert len(out) == 1 and out[0]["ts"] == "1"
+
+
+def test_read_records_spans_rotated_sibling(tmp_path) -> None:
+    log = tmp_path / "audit.jsonl"
+    _write_jsonl(log.with_name("audit.jsonl.1"), [
+        {"ts": "old", "tool": "x", "action": "a", "status": "ok"},
+    ])
+    _write_jsonl(log, [{"ts": "new", "tool": "x", "action": "a", "status": "ok"}])
+    out = _audit.read_records(log)
+    assert [r["ts"] for r in out] == ["new", "old"]  # newest first across rotation
+
+
+# ── operation_history dispatcher action ──────────────────────────────────────
+
+def test_operation_history_disabled_returns_hint(monkeypatch) -> None:
+    from maya_mcp import server
+
+    monkeypatch.delenv("MAYA_AUDIT_LOG", raising=False)
+    out = json.loads(asyncio.run(server._do_operation_history({})))
+    assert out["audit_enabled"] is False
+    assert out["records"] == []
+    assert "MAYA_AUDIT_LOG" in out["hint"]
+
+
+def test_operation_history_enabled_returns_records(tmp_path, monkeypatch) -> None:
+    from maya_mcp import server
+
+    monkeypatch.setenv("MAYA_AUDIT_LOG", "1")
+    log = tmp_path / "audit.jsonl"
+    _write_jsonl(log, [
+        {"ts": "1", "tool": "maya_transform", "action": "-", "status": "ok"},
+        {"ts": "2", "tool": "maya_session", "action": "execute_python", "status": "error"},
+    ])
+    monkeypatch.setattr(server, "_AUDIT_LOG", log)
+
+    out = json.loads(asyncio.run(server._do_operation_history({"limit": 10})))
+    assert out["audit_enabled"] is True
+    assert out["count"] == 2
+    assert out["records"][0]["ts"] == "2"  # newest first
+
+
+def test_operation_history_filter_passthrough(tmp_path, monkeypatch) -> None:
+    from maya_mcp import server
+
+    monkeypatch.setenv("MAYA_AUDIT_LOG", "1")
+    log = tmp_path / "audit.jsonl"
+    _write_jsonl(log, [
+        {"ts": "1", "tool": "a", "action": "-", "status": "ok"},
+        {"ts": "2", "tool": "b", "action": "-", "status": "error"},
+    ])
+    monkeypatch.setattr(server, "_AUDIT_LOG", log)
+
+    out = json.loads(asyncio.run(server._do_operation_history({"status": "error"})))
+    assert out["count"] == 1 and out["records"][0]["tool"] == "b"
+
+
+def test_operation_history_bad_limit_defaults(tmp_path, monkeypatch) -> None:
+    from maya_mcp import server
+
+    monkeypatch.setenv("MAYA_AUDIT_LOG", "1")
+    log = tmp_path / "audit.jsonl"
+    log.write_text("", encoding="utf-8")
+    monkeypatch.setattr(server, "_AUDIT_LOG", log)
+
+    out = json.loads(asyncio.run(server._do_operation_history({"limit": "abc"})))
+    assert out["audit_enabled"] is True and out["count"] == 0
