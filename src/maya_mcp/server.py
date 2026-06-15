@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import functools
 import json
 import os
 import time
@@ -49,6 +50,7 @@ from maya_mcp._session_stats import (
     reset_stats as _reset_stats_helper,
 )
 from maya_mcp._ast_validate import validate_python, format_issues
+from maya_mcp import _audit
 
 _SERVER_DIR = Path(__file__).parent          # src/maya_mcp/
 _PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
@@ -79,6 +81,14 @@ _last_call_at: Optional[datetime.datetime] = None
 # (the in-memory ring buffer in _stats['timings'] holds only the last 20 entries).
 # Written best-effort; failures never propagate.
 _TIMINGS_LOG = _SERVER_DIR / "logs" / "timings.jsonl"
+
+# Durable, append-only audit log of tool executions (forensics/accountability —
+# distinct from the F0 efficiency stream above). Opt-in via the MAYA_AUDIT_LOG
+# env var: OFF by default, so when unset the audit path is a no-op (no file, no
+# perf/disk/privacy impact, no behaviour change). Sibling of timings.jsonl under
+# the git-ignored logs/ dir. Record shape + sanitisation live in maya_mcp._audit;
+# persistence reuses _session_stats.persist_timing (5 MB + .1 rotation).
+_AUDIT_LOG = _SERVER_DIR / "logs" / "audit.jsonl"
 
 # RAG state
 _last_rag_score: int = 100
@@ -178,6 +188,62 @@ def _track_timing(entry: dict) -> None:
         **entry,
     }
     _persist_timing(_TIMINGS_LOG, enriched)
+
+
+def _audit_record(tool: str, action: str, params, status: str) -> None:
+    """Emit one best-effort durable audit entry for a tool execution.
+
+    No-op unless the MAYA_AUDIT_LOG toggle is set (default OFF). Wrapped in a
+    blanket try/except so an audit failure — serialisation, full disk, bad
+    permissions — can NEVER break or slow down the tool call it records. The
+    enrichment (model/backend) mirrors `_track_timing`; persistence reuses the
+    rotating, best-effort `_session_stats.persist_timing` via `_audit.write_record`.
+
+    Parameters
+    ----------
+    tool : str
+        MCP tool name (e.g. "maya_session", "maya_transform").
+    action : str
+        Sub-action for dispatcher tools ("execute_python", "delete", "launch")
+        or "-" for direct standalone tools.
+    params :
+        Raw params (dict or Pydantic model) — sanitised by `_audit.build_record`
+        (execute_python code is truncated + hashed; payloads are never stored).
+    status : str
+        One of `_audit.VALID_STATUSES`.
+    """
+    try:
+        if not _audit.audit_enabled():
+            return
+        cfg = _get_config()
+        record = _audit.build_record(
+            tool, action, params, status,
+            model=_get_current_model(),
+            backend=cfg.get("backend", "anthropic"),
+        )
+        _audit.write_record(_AUDIT_LOG, record)
+    except Exception:
+        pass  # Audit is best-effort — it must never break the tool call.
+
+
+def _audited(tool_name: str):
+    """Decorator: emit a best-effort audit entry for a standalone @mcp.tool
+    mutation, deriving the status from the returned payload.
+
+    Applied UNDER `@mcp.tool(...)` so FastMCP still introspects the real wrapped
+    signature (preserved by `functools.wraps`). The wrapped handlers catch their
+    own exceptions and always return a string, so the status is derived from
+    that string via `_audit.status_from_output`. The audit path never alters the
+    returned result and never raises out of the call.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(params, *args, **kwargs):
+            result = await func(params, *args, **kwargs)
+            _audit_record(tool_name, "-", params, _audit.status_from_output(result))
+            return result
+        return wrapper
+    return decorator
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +553,7 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
 
 
 @mcp.tool(name="maya_create_primitive")
+@_audited("maya_create_primitive")
 async def maya_create_primitive(params: CreatePrimitiveInput) -> str:
     """Create a 3D primitive in Maya (cube, sphere, cylinder, cone, plane, torus) with optional position, scale, and rotation."""
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
@@ -521,6 +588,7 @@ obj = {func}({name_arg})[0]
 
 
 @mcp.tool(name="maya_assign_material")
+@_audited("maya_assign_material")
 async def maya_assign_material(params: MaterialInput) -> str:
     """Create a material (lambert, blinn, phong, aiStandardSurface) with RGB color and assign it to an object."""
     try:
@@ -544,6 +612,7 @@ result = {{'material': mat, 'shading_group': sg, 'assigned_to': {_py_str(params.
 
 
 @mcp.tool(name="maya_transform")
+@_audited("maya_transform")
 async def maya_transform(params: TransformInput) -> str:
     """Move, rotate, or scale an object in the Maya scene."""
     try:
@@ -611,6 +680,7 @@ async def _do_delete(params: dict) -> str:
     warning = check_dangerous(f'cmds.delete("{validated.object_name}")')
     if warning:
         _stats["safety_blocks"] += 1
+        _audit_record("maya_session", "delete", params, _audit.AUDIT_SAFETY_BLOCKED)
         return json.dumps({"safety_warning": warning})
 
     try:
@@ -626,12 +696,16 @@ else:
 """
         response = await asyncio.to_thread(bridge.execute, code)
         _stats["tokens_out"] += _tok(response)
+        _audit_record("maya_session", "delete", params,
+                      _audit.status_from_output(response))
         return response
     except Exception as e:
+        _audit_record("maya_session", "delete", params, _audit.AUDIT_ERROR)
         return _handle_error(e)
 
 
 @mcp.tool(name="maya_create_light")
+@_audited("maya_create_light")
 async def maya_create_light(params: LightInput) -> str:
     """Create a light in Maya (directional, point, spot, area, ambient) with configurable intensity and color."""
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
@@ -679,6 +753,7 @@ cmds.xform(parent, translation={params.position}, worldSpace=True)
 
 
 @mcp.tool(name="maya_create_camera")
+@_audited("maya_create_camera")
 async def maya_create_camera(params: CameraInput) -> str:
     """Create a camera in Maya with configurable position, look-at point, and focal length."""
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
@@ -755,6 +830,8 @@ async def _do_execute_python(params: dict, ctx: Context | None = None) -> str:
     warning = check_dangerous(validated.code)
     if warning:
         _stats["safety_blocks"] += 1
+        _audit_record("maya_session", "execute_python", params,
+                      _audit.AUDIT_SAFETY_BLOCKED)
         return json.dumps({"safety_warning": warning})
 
     # F4b (3C Wave 4): AST dry-run — reject a hallucinated cmds.<command>
@@ -763,6 +840,8 @@ async def _do_execute_python(params: dict, ctx: Context | None = None) -> str:
     if _get_config().get("ast_dry_run", True):
         _validation = validate_python(validated.code)
         if not _validation.ok:
+            _audit_record("maya_session", "execute_python", params,
+                          _audit.AUDIT_AST_REJECTED)
             return json.dumps({"ast_warning": format_issues(_validation)})
 
     # F0: a "turn" is an execute_python that ran past the safety gate (the
@@ -781,6 +860,7 @@ async def _do_execute_python(params: dict, ctx: Context | None = None) -> str:
             "total_ms": round((time.monotonic() - _t0) * 1000),
             "error": False,
         })
+        _audit_record("maya_session", "execute_python", params, _audit.AUDIT_OK)
         return response
     except Exception as e:
         _stats["failed_turns"] += 1
@@ -789,6 +869,7 @@ async def _do_execute_python(params: dict, ctx: Context | None = None) -> str:
             "total_ms": round((time.monotonic() - _t0) * 1000),
             "error": True,
         })
+        _audit_record("maya_session", "execute_python", params, _audit.AUDIT_ERROR)
         return _handle_error(e)
 
 
@@ -922,6 +1003,7 @@ class ShelfButtonInput(BaseModel):
 
 
 @mcp.tool(name="maya_mesh_operation")
+@_audited("maya_mesh_operation")
 async def maya_mesh_operation(params: MeshOperationInput) -> str:
     """Execute mesh operations: extrude, bevel, boolean (union/difference/intersection), combine, separate, smooth."""
     try:
@@ -1008,6 +1090,7 @@ finally:
 
 
 @mcp.tool(name="maya_set_keyframe")
+@_audited("maya_set_keyframe")
 async def maya_set_keyframe(params: KeyframeInput) -> str:
     """Create an animation keyframe on an object. Allows animating translate, rotate, scale, and visibility per frame."""
     try:
@@ -1033,6 +1116,7 @@ finally:
 
 
 @mcp.tool(name="maya_import_file")
+@_audited("maya_import_file")
 async def maya_import_file(params: ImportFileInput, ctx: Context | None = None) -> str:
     """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. With namespace, parent group, and scale options.
 
@@ -1302,6 +1386,21 @@ result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': {label_lit}}}
 # Session Dispatch Tool
 # ─────────────────────────────────────────────
 
+# Session actions the dispatcher does NOT audit itself:
+#   • DELETE / EXECUTE_PYTHON self-audit inside their handlers (so they can emit
+#     the precise safety_blocked / ast_rejected status at their early returns);
+#   • PING / LIST_SCENE / SCENE_SNAPSHOT are read-only and excluded by default
+#     (the audit focuses on mutations + execute_python + blocked attempts — see
+#     proposals/maya-durable-audit-log.md §4). Everything else (new_scene,
+#     save_scene, shelf_button, launch) is audited centrally in the dispatcher.
+_AUDIT_DISPATCH_SKIP = frozenset({
+    SessionAction.DELETE,
+    SessionAction.PING,
+    SessionAction.LIST_SCENE,
+    SessionAction.SCENE_SNAPSHOT,
+})
+
+
 @mcp.tool(name="maya_session")
 async def maya_session(params: SessionDispatchInput, ctx: Context | None = None) -> str:
     """Manage Maya session, query scene state, and run utility commands.
@@ -1323,8 +1422,12 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     # the rest keep the plain (params) signature on purpose — no silent
     # param drift. Dispatched directly so the types stay honest.
     if params.action == SessionAction.LAUNCH:
-        return await _do_launch(params.params or {}, ctx)
+        result = await _do_launch(params.params or {}, ctx)
+        _audit_record("maya_session", "launch", params.params,
+                      _audit.status_from_output(result))
+        return result
     if params.action == SessionAction.EXECUTE_PYTHON:
+        # _do_execute_python self-audits (ok/error/safety_blocked/ast_rejected).
         return await _do_execute_python(params.params or {}, ctx)
     dispatch = {
         SessionAction.PING: _do_ping,
@@ -1336,7 +1439,12 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
         SessionAction.SHELF_BUTTON: _do_shelf_button,
     }
     handler = dispatch[params.action]
-    return await handler(params.params or {})
+    result = await handler(params.params or {})
+    # DELETE self-audits; PING/LIST_SCENE/SCENE_SNAPSHOT are read-only (skipped).
+    if params.action not in _AUDIT_DISPATCH_SKIP:
+        _audit_record("maya_session", params.action.value, params.params,
+                      _audit.status_from_output(result))
+    return result
 
 
 # ─────────────────────────────────────────────

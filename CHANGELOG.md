@@ -11,6 +11,26 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+
+- **Durable, append-only audit log of tool executions (opt-in, OFF by default)** —
+  a new `src/maya_mcp/_audit.py` module writes a forensic/accountability record
+  to `src/maya_mcp/logs/audit.jsonl`, distinct from the F0 efficiency stream in
+  `logs/timings.jsonl`. Enabled only when the **`MAYA_AUDIT_LOG`** env var is set
+  to `1`/`true`/`yes`/`on`; unset/empty is a no-op (no file, no perf/disk/privacy
+  impact, no behaviour change). Each entry records `ts`, `tool`, `action`,
+  sanitised `params`, `status` (`ok` / `error` / `safety_blocked` /
+  `ast_rejected`), and `model`/`backend`. For `execute_python` the code is stored
+  **truncated to ~2000 chars plus a SHA-256 of the full code** and its length;
+  Maya result payloads are never stored. Wired at the `maya_session` dispatcher,
+  on the standalone mutation tools (a one-line `@_audited` decorator), and inside
+  `_do_execute_python` / `_do_delete` so safety/AST **blocked** attempts are
+  captured; read-only actions (`ping`, `list_scene`, `scene_snapshot`) are
+  excluded. Persistence reuses `_session_stats.persist_timing` (5 MB + `.1`
+  rotation, best-effort — an audit failure never breaks a tool call). Write-only:
+  **no new MCP tool** (the 15-tool count is unchanged); inspect it with
+  `jq`/`grep`. Documented in `README.md`, `.env.example`, and `CLAUDE.md` §6.
+
 ### Fixed
 
 - **`_meta.plugins_loaded` no longer lists `mtoa` twice** — the introspector
