@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-06-15
+
 ### Added
 - **`maya_session(action="operation_history")`** — a read-only companion to the
   durable audit log (`_audit.py` / `MAYA_AUDIT_LOG`), which was previously
