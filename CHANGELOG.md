@@ -11,6 +11,15 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`_meta.plugins_loaded` no longer lists `mtoa` twice** — the introspector
+  concatenated the default `_PIPELINE_PLUGINS` (which includes `mtoa`) with the
+  `MAYA_INTROSPECT_PLUGINS` env var (commonly also `mtoa`), recording the
+  plugin twice. `scripts/introspect_maya_api.py` now de-duplicates the plugin
+  list preserving order, and the committed `api_graph.json` `_meta` was edited
+  to drop the duplicate. Cosmetic only — the 4851-command set is unchanged.
+
 ## [1.11.0] — 2026-06-15
 
 ### Changed

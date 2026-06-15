@@ -63,3 +63,9 @@ src/maya_mcp/rag/candidates.json
 
 # Coverage artifact from pytest-cov
 .coverage
+
+# ── Graphify (generated knowledge graph) ─────────────────────
+# graphify-out/ holds the persistent knowledge-graph artifacts
+# produced by the /graphify skill. Generated locally, never
+# committed.
+src/graphify-out/
