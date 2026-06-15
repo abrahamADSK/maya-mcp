@@ -397,6 +397,18 @@ All operations go through the safety scanner before reaching Maya. Dangerous pat
 | `GPU_VERIFY_TLS` | Verify TLS certificates for `https` Vision3D targets (ignored for plain-`http` LAN URLs). Set to `false` to opt out for a self-signed `https` endpoint. | `true` |
 | `SHAPE_TIMEOUT` | Shape generation timeout (seconds) | `900` |
 | `TEXTURE_TIMEOUT` | Texture generation timeout (seconds) | `600` |
+| `MAYA_AUDIT_LOG` | Opt-in durable audit log of tool executions. Set to `1`/`true`/`yes`/`on` to enable. Unset/empty = no-op (no file, no perf/disk/privacy impact). | _off_ |
+
+---
+
+## Audit Log (opt-in)
+
+A durable, append-only record of **what the model executed in Maya, and what happened** — for accountability and forensics, separate from the `logs/timings.jsonl` efficiency telemetry.
+
+- **Off by default.** It only writes when `MAYA_AUDIT_LOG` is set to a truthy value (`1`/`true`/`yes`/`on`). When unset there is zero perf, disk, or privacy impact and no behaviour change.
+- **What it records.** One JSON line per call to `src/maya_mcp/logs/audit.jsonl`: `ts`, `tool`, `action`, sanitised `params`, `status` (`ok` / `error` / `safety_blocked` / `ast_rejected`), plus `model`/`backend`. It covers `execute_python`, the dedicated mutation tools, the mutating `maya_session` actions, **and blocked attempts** (safety scan / AST dry-run rejections). Read-only actions (`ping`, `list_scene`, `scene_snapshot`) are excluded.
+- **Size & privacy.** For `execute_python` the code is stored **truncated to ~2000 chars** plus a **SHA-256 of the full code** and its length; Maya result payloads are **never** stored. The file rotates at 5 MB to `audit.jsonl.1` (one rollover) and lives under the git-ignored `logs/` dir.
+- **Write-only.** There is no MCP tool to read it (the tool count is unchanged). Inspect it with `jq`/`grep`, e.g. `jq 'select(.status=="safety_blocked")' src/maya_mcp/logs/audit.jsonl`.
 
 ---
 

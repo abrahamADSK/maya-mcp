@@ -53,7 +53,12 @@ build/
 *.ckpt
 *.bin
 hf_models/
+# Telemetry + durable audit log (best-effort JSONL under src/maya_mcp/logs/).
+# `logs/` already matches any logs dir; the explicit paths document that the
+# opt-in audit log (MAYA_AUDIT_LOG=1) and its rotated .1 must never be committed.
 logs/
+src/maya_mcp/logs/audit.jsonl
+src/maya_mcp/logs/audit.jsonl.1
 src/maya_mcp/rag/index/
 src/maya_mcp/rag/corpus.json
 # learn_pattern staging file: non-trusted models write candidate code here for

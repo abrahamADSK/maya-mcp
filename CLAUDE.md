@@ -230,6 +230,28 @@ a real command. It degrades to a no-op when `api_graph.json` is missing.
 - **Bypass**: set `ast_dry_run: false` in `config.json` (e.g. if you are on a
   newer Maya than the committed graph and hit a false rejection).
 
+### Audit log (opt-in, OFF by default)
+
+`src/maya_mcp/_audit.py` writes a durable, append-only JSONL record of tool
+executions to `src/maya_mcp/logs/audit.jsonl` — the accountability/forensics
+stream, distinct from the F0 efficiency telemetry in `logs/timings.jsonl`.
+
+- **Toggle**: `MAYA_AUDIT_LOG` env var. OFF unless set to `1`/`true`/`yes`/`on`;
+  when unset the whole path is a no-op (no file, no perf/disk/privacy impact, no
+  behaviour change).
+- **Each entry**: `ts`, `tool`, `action`, sanitised `params`, `status`
+  (`ok` / `error` / `safety_blocked` / `ast_rejected`), plus `model`/`backend`.
+  For `execute_python` the code is truncated to ~2000 chars **plus a SHA-256 of
+  the full code** + its length; Maya result payloads are **never** stored.
+- **Coverage**: wired at the `maya_session` dispatcher, on the standalone
+  mutation tools (one-line `@_audited(...)` decorator under `@mcp.tool`), and
+  inside `_do_execute_python` / `_do_delete` so safety/AST **blocked** attempts
+  are captured. Read-only actions (`ping`, `list_scene`, `scene_snapshot`) are
+  excluded.
+- **Substrate**: reuses `_session_stats.persist_timing` (5 MB + `.1` rotation,
+  best-effort — an audit failure never breaks a tool call). Write-only: **no new
+  MCP tool** (the tool count is unchanged); read it with `jq`/`grep`.
+
 ---
 
 ## 7. Vision3D Flow (Optional Addon — Non-Blocking)
