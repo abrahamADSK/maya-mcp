@@ -106,6 +106,12 @@ def _load_pipeline_plugins() -> tuple[list[str], list[str]]:
         for p in os.environ.get("MAYA_INTROSPECT_PLUGINS", "").split(",")
         if p.strip()
     ]
+    # De-duplicate preserving first-seen order: the default set and the
+    # MAYA_INTROSPECT_PLUGINS env var can name the same plugin (e.g. mtoa is in
+    # _PIPELINE_PLUGINS and operators commonly also export MAYA_INTROSPECT_PLUGINS=mtoa),
+    # which would otherwise attempt it twice and record it twice in
+    # _meta.plugins_loaded. This does NOT change which plugins are loaded.
+    plugins = list(dict.fromkeys(plugins))
 
     loaded: list[str] = []
     failed: list[str] = []
