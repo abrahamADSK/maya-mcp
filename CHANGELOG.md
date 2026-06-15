@@ -11,6 +11,32 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **`maya_session(action="operation_history")`** — a read-only companion to the
+  durable audit log (`_audit.py` / `MAYA_AUDIT_LOG`), which was previously
+  write-only (`jq`/`grep` only). New `_audit.read_records(log_path, *, limit,
+  tool, action, status)` returns recent records **newest-first**, spans the
+  rotated `.1` sibling, and mirrors the substrate's best-effort contract (missing
+  file → `[]`, malformed line skipped, never raises). The action returns an
+  explanatory payload (not an error) when the log is OFF, so the caller knows to
+  set `MAYA_AUDIT_LOG=1`. It is a **dispatcher action, not a new tool** — the
+  tool count stays **15** — and a pure file read (no Command Port traffic,
+  nothing on Maya's main thread). Excluded from self-auditing. Resolves the
+  Chat 66 P3 follow-up. +14 tests in `tests/test_audit.py`.
+- **Shared OPSEC error sanitisation** (`error_scrub.py`) — `server._handle_error`
+  now scrubs credential-shaped tokens and length-bounds (300 chars) the
+  exception text it returns to the model, via the byte-identical ecosystem helper
+  (canonical `~/Projects/error_scrub_canonical.py`; same copy in fpt-mcp /
+  flame-mcp). The `Maya error` / `Unexpected error` prefixes are preserved so
+  `_audit.status_from_output` still classifies failures. +10 tests
+  (`tests/test_error_scrub.py`).
+
+### CI / Docs
+- **Code knowledge graph auto-publishes to GitHub Pages** on push to `src/**`
+  (`.github/workflows/graphify-pages.yml` + `scripts/graphify/`), original
+  force-directed layout + deterministic file-based community names (no LLM key);
+  README links the live graph. `src/graphify-out/` is gitignored.
+
 ## [1.12.0] — 2026-06-15
 
 ### Added

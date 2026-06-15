@@ -51,6 +51,7 @@ from maya_mcp._session_stats import (
 )
 from maya_mcp._ast_validate import validate_python, format_issues
 from maya_mcp import _audit
+from maya_mcp.error_scrub import safe_error_message
 
 _SERVER_DIR = Path(__file__).parent          # src/maya_mcp/
 _PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
@@ -391,6 +392,7 @@ class SessionAction(str, Enum):
     DELETE = "delete"
     EXECUTE_PYTHON = "execute_python"
     SHELF_BUTTON = "shelf_button"
+    OPERATION_HISTORY = "operation_history"
 
 
 class SessionDispatchInput(BaseModel):
@@ -440,10 +442,18 @@ async def _run_cmd(cmd: List[str], timeout: int = 60) -> tuple:
 
 
 def _handle_error(e: Exception) -> str:
-    """Consistent error formatting."""
+    """Consistent error formatting.
+
+    The exception text is scrubbed of credential-shaped tokens and
+    length-bounded (300 chars) by the shared OPSEC helper
+    (``error_scrub.safe_error_message``) before it reaches the model. The
+    ``Maya error`` / ``Unexpected error`` prefixes are preserved so
+    ``_audit.status_from_output`` still classifies the result as an error.
+    """
+    msg = safe_error_message(e)
     if isinstance(e, MayaBridgeError):
-        return f"Maya error: {e}"
-    return f"Unexpected error: {type(e).__name__}: {e}"
+        return f"Maya error: {msg}"
+    return f"Unexpected error: {type(e).__name__}: {msg}"
 
 
 def _py_str(value: object) -> str:
@@ -1382,6 +1392,46 @@ result = {{'button': _mcp_btn, 'shelf': _mcp_shelf, 'label': {label_lit}}}
         return _handle_error(e)
 
 
+async def _do_operation_history(params: dict) -> str:
+    """Read recent durable-audit records (read-only; no Maya round-trip).
+
+    Read companion to the write-only audit log (``_audit.py`` / the
+    ``MAYA_AUDIT_LOG`` toggle). Returns the most recent records newest-first as
+    JSON, with optional ``limit`` / ``tool`` / ``action`` / ``status`` filters.
+    When the audit log is OFF it returns an explanatory payload (not an error)
+    so the caller knows to set ``MAYA_AUDIT_LOG=1``. Pure file read: no Command
+    Port traffic, nothing scheduled on Maya's main thread.
+
+    Optional params: {"limit": 50, "tool": "maya_transform",
+                      "action": "execute_python", "status": "error"}
+    """
+    if not _audit.audit_enabled():
+        return json.dumps({
+            "audit_enabled": False,
+            "records": [],
+            "hint": "Durable audit logging is OFF. Set MAYA_AUDIT_LOG=1 (or "
+                    "true/yes/on) and relaunch the server to record operations.",
+        })
+    p = params or {}
+    try:
+        limit = int(p.get("limit", 50))
+    except (TypeError, ValueError):
+        limit = 50
+    records = _audit.read_records(
+        _AUDIT_LOG,
+        limit=limit,
+        tool=p.get("tool"),
+        action=p.get("action"),
+        status=p.get("status"),
+    )
+    return json.dumps({
+        "audit_enabled": True,
+        "count": len(records),
+        "log_path": str(_AUDIT_LOG),
+        "records": records,
+    })
+
+
 # ─────────────────────────────────────────────
 # Session Dispatch Tool
 # ─────────────────────────────────────────────
@@ -1398,6 +1448,7 @@ _AUDIT_DISPATCH_SKIP = frozenset({
     SessionAction.PING,
     SessionAction.LIST_SCENE,
     SessionAction.SCENE_SNAPSHOT,
+    SessionAction.OPERATION_HISTORY,
 })
 
 
@@ -1416,6 +1467,7 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     • delete — Delete objects by name (wildcards supported). Required params: {"object_name": "*sphere*"}
     • execute_python — Run arbitrary Python in Maya. Assign result to 'result' variable. Required params: {"code": "import maya.cmds as cmds; ..."} Optional: {"timeout": 60} — seconds to wait for Maya (default 10, max 600); use for long operations, progress heartbeats stream every 10s while waiting.
     • shelf_button — Create a shelf button with Python code. Required params: {"label": "MyBtn", "command": "print('hello')"} Optional: {"tooltip": "...", "shelf_name": "Custom", "icon_label": "MCP"}
+    • operation_history — Read recent durable-audit records (read-only; needs MAYA_AUDIT_LOG=1). Optional params: {"limit": 50, "tool": "maya_transform", "action": "execute_python", "status": "error"}
     """
     _track_call()
     # The two long-running handlers stream progress and take (params, ctx);
@@ -1437,6 +1489,7 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
         SessionAction.SCENE_SNAPSHOT: _do_scene_snapshot,
         SessionAction.DELETE: _do_delete,
         SessionAction.SHELF_BUTTON: _do_shelf_button,
+        SessionAction.OPERATION_HISTORY: _do_operation_history,
     }
     handler = dispatch[params.action]
     result = await handler(params.params or {})

@@ -249,3 +249,64 @@ def write_record(log_path: Path, record: dict) -> None:
     best-effort (never-raises) contract are reused verbatim — no duplication.
     """
     persist_timing(log_path, record)
+
+
+def read_records(
+    log_path: Path,
+    *,
+    limit: int = 50,
+    tool: Optional[str] = None,
+    action: Optional[str] = None,
+    status: Optional[str] = None,
+) -> list[dict]:
+    """Return recent audit records, **newest first**, with optional filters.
+
+    Read companion to :func:`write_record` powering the ``operation_history``
+    read action. Reads the rotated ``.1`` sibling (older) then the active log
+    (newer), so a rotation boundary never hides recent history. The substrate's
+    best-effort contract is mirrored on the read side: a missing/unreadable file
+    yields ``[]`` and a malformed line is skipped — this never raises into a tool
+    call.
+
+    Parameters
+    ----------
+    log_path : Path
+        The active audit log (``logs/audit.jsonl``); its ``.1`` sibling is read
+        automatically when present.
+    limit : int
+        Cap on the number of (filtered) records returned, counted from the
+        newest. ``limit <= 0`` means no cap.
+    tool, action, status : str, optional
+        Exact-match filters on the corresponding record fields; ``None`` (the
+        default) does not filter that field.
+    """
+    # Oldest-on-disk first so the concatenated stream is chronological, then
+    # reverse for newest-first output.
+    files = [log_path.with_name(log_path.name + ".1"), log_path]
+    records: list[dict] = []
+    for fpath in files:
+        try:
+            with open(fpath, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except (ValueError, TypeError):
+                        continue  # skip a torn/partial line, never raise
+                    if not isinstance(rec, dict):
+                        continue
+                    if tool is not None and rec.get("tool") != tool:
+                        continue
+                    if action is not None and rec.get("action") != action:
+                        continue
+                    if status is not None and rec.get("status") != status:
+                        continue
+                    records.append(rec)
+        except OSError:
+            continue  # missing/unreadable file → contribute nothing
+    records.reverse()
+    if limit and limit > 0:
+        records = records[:limit]
+    return records
