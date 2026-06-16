@@ -7,7 +7,7 @@ Communicates with Maya via Command Port (TCP) using maya_bridge.
 
 Features:
     - 9 Tier-1 Maya tools (always visible)
-    - 9 session tools (behind maya_session dispatch)
+    - 11 session actions (behind maya_session dispatch)
     - 7 Vision3D tools (behind maya_vision3d dispatch)
     - 4 RAG tools (search_maya_docs, learn_pattern, session_stats, reset_session_stats)
     - Dangerous pattern detection (safety.py)
@@ -52,6 +52,11 @@ from maya_mcp._session_stats import (
 from maya_mcp._ast_validate import validate_python, format_issues
 from maya_mcp import _audit
 from maya_mcp.error_scrub import safe_error_message
+from maya_mcp.publish import (
+    PUBLISH_EXECUTE_CODE as _PUBLISH_EXECUTE_CODE,
+    PUBLISH_PREVIEW_CODE as _PUBLISH_PREVIEW_CODE,
+    expand_tokens as _expand_tokens,
+)
 
 _SERVER_DIR = Path(__file__).parent          # src/maya_mcp/
 _PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
@@ -393,6 +398,7 @@ class SessionAction(str, Enum):
     EXECUTE_PYTHON = "execute_python"
     SHELF_BUTTON = "shelf_button"
     OPERATION_HISTORY = "operation_history"
+    PUBLISH = "publish"
 
 
 class SessionDispatchInput(BaseModel):
@@ -401,6 +407,40 @@ class SessionDispatchInput(BaseModel):
 
     action: SessionAction = Field(..., description="Which session action to run")
     params: Optional[dict] = Field(default=None, description="Parameters for the chosen action (see tool description)")
+
+
+class PublishMode(str, Enum):
+    """Mode for maya_session(action='publish')."""
+    PREVIEW = "preview"
+    PUBLISH = "publish"
+
+
+class PublishInput(BaseModel):
+    """Parameters for maya_session(action='publish').
+
+    Drives the NATIVE tk-multi-publish2 PublishManager inside the engine'd Maya.
+    'preview' collects the session and returns the publish tree (read-only).
+    'publish' activates tasks per include/exclude, then validate->publish->finalize.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    mode: PublishMode = Field(
+        default=PublishMode.PREVIEW,
+        description="'preview' (read the tree, no side effects) or 'publish' (run it).")
+    include: Optional[List[str]] = Field(
+        default=None,
+        description="Whitelist tokens (step/output/plugin/type) -- only matching "
+                    "tasks publish. e.g. ['rig'], ['model','usd'].")
+    exclude: Optional[List[str]] = Field(
+        default=None,
+        description="Blacklist tokens over the config defaults. e.g. ['render'] "
+                    "('no render'/'sin render').")
+    comment: Optional[str] = Field(
+        default=None,
+        description="Publish comment/description stamped on each active item.")
+    timeout: Optional[float] = Field(
+        default=None, ge=1, le=600,
+        description="Command Port wait in seconds (default 120 preview / 600 publish).")
 
 
 class Vision3DAction(str, Enum):
@@ -1432,6 +1472,46 @@ async def _do_operation_history(params: dict) -> str:
     })
 
 
+async def _do_publish(params: dict, ctx: Context | None = None) -> str:
+    """Drive the native tk-multi-publish2 PublishManager inside the engine'd Maya.
+
+    'preview' returns the collected publish tree as JSON (no side effects).
+    'publish' activates tasks per include/exclude over the LIVE tree, then runs
+    validate -> publish -> finalize, returning per-item status + errors as JSON.
+    Long-running, so it streams heartbeats via _execute_with_heartbeat. The
+    generated payload is curated and self-contained (it drives the Toolkit API,
+    not free-form user code), so it is NOT run through the check_dangerous / AST
+    gate — same as _do_save_scene / maya_import_file.
+    """
+    from pydantic import ValidationError
+    try:
+        validated = PublishInput(**(params or {}))
+    except ValidationError as e:
+        return json.dumps({"error": f"Invalid params for publish: {e}"})
+
+    try:
+        if validated.mode == PublishMode.PREVIEW:
+            code = _PUBLISH_PREVIEW_CODE
+            timeout = validated.timeout or 120.0
+        else:
+            include = _expand_tokens(validated.include)
+            exclude = _expand_tokens(validated.exclude)
+            comment = validated.comment or ""
+            header = (
+                "_INCLUDE = " + json.dumps(include) + "\n"
+                + "_EXCLUDE = " + json.dumps(exclude) + "\n"
+                + "_COMMENT = " + json.dumps(comment) + "\n"
+            )
+            code = header + _PUBLISH_EXECUTE_CODE
+            timeout = validated.timeout or 600.0
+
+        return await _execute_with_heartbeat(
+            code, ctx, f"publish:{validated.mode.value}", bridge_timeout=timeout,
+        )
+    except Exception as e:
+        return _handle_error(e)
+
+
 # ─────────────────────────────────────────────
 # Session Dispatch Tool
 # ─────────────────────────────────────────────
@@ -1468,6 +1548,7 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     • execute_python — Run arbitrary Python in Maya. Assign result to 'result' variable. Required params: {"code": "import maya.cmds as cmds; ..."} Optional: {"timeout": 60} — seconds to wait for Maya (default 10, max 600); use for long operations, progress heartbeats stream every 10s while waiting.
     • shelf_button — Create a shelf button with Python code. Required params: {"label": "MyBtn", "command": "print('hello')"} Optional: {"tooltip": "...", "shelf_name": "Custom", "icon_label": "MCP"}
     • operation_history — Read recent durable-audit records (read-only; needs MAYA_AUDIT_LOG=1). Optional params: {"limit": 50, "tool": "maya_transform", "action": "execute_python", "status": "error"}
+    • publish — Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya (launched via 'tank'). params: {"mode": "preview"|"publish", "include": ["rig"], "exclude": ["render"], "comment": "...", "timeout": 600}. 'preview' returns the collected publish tree; 'publish' activates matching tasks then validate→publish→finalize. Dependencies are captured automatically by the publish plugins.
     """
     _track_call()
     # The two long-running handlers stream progress and take (params, ctx);
@@ -1481,6 +1562,13 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     if params.action == SessionAction.EXECUTE_PYTHON:
         # _do_execute_python self-audits (ok/error/safety_blocked/ast_rejected).
         return await _do_execute_python(params.params or {}, ctx)
+    if params.action == SessionAction.PUBLISH:
+        # Native Toolkit publish — long op, takes (params, ctx) like the two
+        # above. Audited centrally here (a mutation, not in the skip set).
+        result = await _do_publish(params.params or {}, ctx)
+        _audit_record("maya_session", "publish", params.params,
+                      _audit.status_from_output(result))
+        return result
     dispatch = {
         SessionAction.PING: _do_ping,
         SessionAction.NEW_SCENE: _do_new_scene,
