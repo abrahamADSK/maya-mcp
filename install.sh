@@ -805,7 +805,8 @@ from pathlib import Path
 # by pre-approving the parent dispatch tool name:
 #
 #   maya_session → ping, launch, new_scene, save_scene, list_scene,
-#                  scene_snapshot, delete, execute_python, shelf_button
+#                  scene_snapshot, delete, execute_python, shelf_button,
+#                  operation_history, publish
 #
 #   maya_vision3d → select_server, health, generate_image, generate_text,
 #                   texture, poll, download

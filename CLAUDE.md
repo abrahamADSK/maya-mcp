@@ -9,7 +9,7 @@
 
 **maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **15 MCP tools** organized in three layers:
 
-1. **Maya Control** (9 direct tools + 1 dispatch tool with 10 actions) — Scene manipulation, modeling, animation, I/O, rendering
+1. **Maya Control** (9 direct tools + 1 dispatch tool with 11 actions) — Scene manipulation, modeling, animation, I/O, rendering
    - Communicates with Maya via **TCP Command Port** (default port 8100; moved from the historical 7001 because that port is held by Flame's S+W services on hosts with Autodesk Flame installed)
    - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
    - All operations use undo chunks for safe rollback
@@ -108,7 +108,7 @@ GPU_VERIFY_TLS=true          # Verify TLS for https Vision3D targets (default tr
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale (streams progress; 120s bridge budget) |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
-### Maya Session Actions (10 actions behind `maya_session` dispatch tool)
+### Maya Session Actions (11 actions behind `maya_session` dispatch tool)
 
 <!-- concept:maya_session_actions start -->
 | Action | Description |
@@ -123,6 +123,7 @@ GPU_VERIFY_TLS=true          # Verify TLS for https Vision3D targets (default tr
 | `execute_python` | Executes arbitrary Python in Maya (safety scanning; optional timeout param 1-600s for long ops — Command Port default wait is 10s — with progress heartbeats every 10s) |
 | `shelf_button` | Create shelf buttons with custom Python commands |
 | `operation_history` | Read recent durable-audit records (read-only; requires MAYA_AUDIT_LOG=1). Optional filters: limit, tool, action, status |
+| `publish` | Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya launched via tank. params: mode (preview/publish), include/exclude intent tokens, comment, timeout. Preview reads the collected publish tree; publish activates matching tasks then validate→publish→finalize. Dependencies captured automatically by the plugins. |
 <!-- concept:maya_session_actions end -->
 
 ### Vision3D Actions (7 actions behind `maya_vision3d` dispatch — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))

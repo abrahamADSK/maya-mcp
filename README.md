@@ -87,7 +87,7 @@ FastMCP server (src/maya_mcp/server.py) — 15 MCP tools
 | `reset_session_stats` | Zero the session counters immediately (manual companion to the 30-min idle auto-reset) |
 <!-- concept:mcp_tool_table end -->
 
-### Maya Session Dispatcher (`maya_session` — 10 actions)
+### Maya Session Dispatcher (`maya_session` — 11 actions)
 <!-- concept:maya_session_actions start -->
 | Action | Description |
 |--------|-------------|
@@ -101,6 +101,7 @@ FastMCP server (src/maya_mcp/server.py) — 15 MCP tools
 | `execute_python` | Execute arbitrary Python in Maya (safety scanning; optional timeout param up to 600s with 10s progress heartbeats) |
 | `shelf_button` | Create reusable shelf buttons with custom Python commands |
 | `operation_history` | Read recent durable-audit records (read-only; requires MAYA_AUDIT_LOG=1). Optional filters: limit, tool, action, status |
+| `publish` | Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya launched via tank. mode preview/publish, include/exclude intent tokens, comment, timeout. Captures dependencies automatically. |
 <!-- concept:maya_session_actions end -->
 
 ### Vision3D Dispatcher (`maya_vision3d` — 7 actions, optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
