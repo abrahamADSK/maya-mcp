@@ -1,6 +1,6 @@
 {
   "backend": "anthropic",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-opus-4-8",
   "ollama_url": "http://glorfindel:11434",
   "ollama_mac_url": "http://localhost:11434",
   "ollama_keep_alive": "30m",
