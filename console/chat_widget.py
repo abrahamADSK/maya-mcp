@@ -17,7 +17,7 @@ from typing import Optional
 
 from .qt_compat import QtWidgets, QtCore, QtGui
 
-from .claude_worker import AVAILABLE_MODELS, ClaudeWorker
+from .claude_worker import AVAILABLE_MODELS, AVAILABLE_EFFORTS, ClaudeWorker
 from .server_panel import ServerStatusBar, detect_mcp_servers
 
 
@@ -223,6 +223,7 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._progress_lines: list[str] = []
         self._servers: dict = {}
         self._selected_model_idx = 0
+        self._selected_effort_idx = 0
 
         self._build_ui()
         self.setStyleSheet(DARK_STYLE)
@@ -269,6 +270,18 @@ class MCPChatWidget(QtWidgets.QWidget):
             "border-radius: 6px; padding: 2px 6px; font-size: 11px; }"
         )
         h_lay.addWidget(self._model_combo)
+
+        # Effort selector combo
+        self._effort_combo = QtWidgets.QComboBox()
+        for label, _ in AVAILABLE_EFFORTS:
+            self._effort_combo.addItem(label)
+        self._effort_combo.setCurrentIndex(self._selected_effort_idx)
+        self._effort_combo.currentIndexChanged.connect(self._on_effort_changed)
+        self._effort_combo.setStyleSheet(
+            "QComboBox { background: #1e293b; color: #e0e0e0; border: 1px solid #334155; "
+            "border-radius: 6px; padding: 2px 6px; font-size: 11px; }"
+        )
+        h_lay.addWidget(self._effort_combo)
 
         # Compact server status dots
         self._status_bar = ServerStatusBar()
@@ -332,6 +345,12 @@ class MCPChatWidget(QtWidgets.QWidget):
         """Return (model_id, backend) for the currently selected model."""
         _, model_id, backend = AVAILABLE_MODELS[self._selected_model_idx]
         return model_id, backend
+
+    def _on_effort_changed(self, index: int):
+        self._selected_effort_idx = index
+
+    def _get_selected_effort(self) -> str:
+        return AVAILABLE_EFFORTS[self._selected_effort_idx][1]
 
     # ------------------------------------------------------------------
     # Quick actions
@@ -479,6 +498,7 @@ class MCPChatWidget(QtWidgets.QWidget):
             available_servers=self._servers,
             model_id=model_id,
             backend=backend,
+            effort_level=self._get_selected_effort(),
             parent=self,
         )
         self._worker.progress.connect(self._on_progress)
