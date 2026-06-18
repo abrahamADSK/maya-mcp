@@ -375,6 +375,21 @@ The Console panel passes `--model` and env vars (`ANTHROPIC_BASE_URL`, `ANTHROPI
 `ANTHROPIC_API_KEY`) to the Claude Code CLI subprocess. For Ollama backends, the Anthropic
 SDK is redirected to the Ollama Messages-compatible endpoint (Ollama v0.14+).
 
+### Effort selector
+A second combo in the Console panel header (mirroring the model selector) controls the
+reasoning effort of the spawned `claude` subprocess: **Auto / Low / Medium / High / Max**,
+default **Auto** (index 0). It only affects the MCP-spawned subprocess, never the user's
+own top-level `claude` session.
+
+| Selection | Subprocess env | Effect |
+|---|---|---|
+| **Auto** (default) | both `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` and `CLAUDE_CODE_EFFORT_LEVEL` ABSENT | CLI uses its adaptive-thinking default |
+| **Low / Medium / High / Max** | `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING="1"` + `CLAUDE_CODE_EFFORT_LEVEL=<level>` | adaptive thinking off, forced at that effort |
+
+`Auto` clears both vars explicitly in `ClaudeWorker.run()` — Maya builds `run_env` from the
+captured login-shell env (`_SHELL_ENV`), which could otherwise carry an inherited hardening
+value into the child. The fixed levels are wired in `build_backend_env(model_id, backend, effort)`.
+
 ### Write-allowed models (RAG trust gates)
 Only Claude models can write patterns via `learn_pattern`. Local models (Ollama) are
 read-only — they can search docs but cannot persist new patterns. Configured via

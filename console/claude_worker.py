@@ -148,6 +148,18 @@ AVAILABLE_MODELS = [
     ("Qwen3.5 4B 🍎",         "qwen3.5:4b",                "ollama_mac"),
 ]
 
+# Each entry: (display_label, effort_value). "auto" re-enables adaptive
+# thinking (both hardening env vars cleared); fixed levels force that effort
+# with adaptive thinking off. Default = "auto" (index 0).
+AVAILABLE_EFFORTS = [
+    ("Auto", "auto"),
+    ("Low", "low"),
+    ("Medium", "medium"),
+    ("High", "high"),
+    ("Max", "max"),
+]
+DEFAULT_EFFORT = "auto"
+
 # Models allowed to write RAG patterns (learn_pattern). Local models are read-only.
 # Self-learning is reserved for the two top cloud tiers: Opus and Fable.
 WRITE_ALLOWED_MODELS = ["claude-opus", "claude-fable"]
@@ -175,24 +187,27 @@ def _load_config() -> dict:
         return {}
 
 
-def build_backend_env(model_id: str, backend: str) -> dict:
+def build_backend_env(model_id: str, backend: str, effort: str = "auto") -> dict:
     """Return env-var overrides for the selected backend.
 
     For Ollama backends, redirects the Anthropic SDK to the Ollama
     Messages-compatible endpoint (Ollama v0.14+).
 
-    Also hardens reasoning quality on every claude subprocess spawned
-    from the Maya console panel: adaptive thinking off, effort level
-    max. Set unconditionally so the behavior is identical regardless
-    of backend switch order (Ollama ignores the vars in practice).
-    The user controls their own top-level claude session via /effort —
-    these overrides apply to the MCP-spawned subprocess only.
+    The ``effort`` parameter controls reasoning hardening on the claude
+    subprocess spawned from the Maya console panel. Default ``"auto"``
+    adds neither hardening var, so the CLI uses its adaptive-thinking
+    default (``run()`` additionally strips any inherited value from
+    ``_SHELL_ENV``). A fixed level (``low``/``medium``/``high``/``max``)
+    forces adaptive thinking off at that effort. The user controls their
+    own top-level claude session via /effort — these overrides apply to
+    the MCP-spawned subprocess only.
     """
     cfg = _load_config()
-    env = {
-        "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
-        "CLAUDE_CODE_EFFORT_LEVEL": "max",
-    }
+    env = {}
+    if effort and effort != "auto":
+        env["CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING"] = "1"
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
+    # "auto": add nothing here; run() removes any inherited hardening vars.
 
     if backend == "ollama":
         base_url = cfg.get("ollama_url", DEFAULT_OLLAMA_URL)
@@ -505,6 +520,7 @@ class ClaudeWorker(QThread):
         available_servers: dict | None = None,
         model_id: str | None = None,
         backend: str | None = None,
+        effort_level: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -514,6 +530,7 @@ class ClaudeWorker(QThread):
         self._servers = available_servers or {}
         self._model_id = model_id
         self._backend = backend
+        self._effort_level = effort_level or DEFAULT_EFFORT
 
     def _label_for_tool(self, tool_name: str) -> str:
         """Return a human-friendly label for an MCP tool name."""
@@ -558,7 +575,12 @@ class ClaudeWorker(QThread):
             # Build environment with backend-specific overrides
             run_env = {**_SHELL_ENV, "CLAUDE_NO_TELEMETRY": "1"}
             if self._model_id and self._backend:
-                run_env.update(build_backend_env(self._model_id, self._backend))
+                run_env.update(build_backend_env(self._model_id, self._backend, self._effort_level))
+            # "auto" → ensure neither hardening var leaks in from _SHELL_ENV;
+            # the CLI then uses its adaptive-thinking default.
+            if not self._effort_level or self._effort_level == "auto":
+                run_env.pop("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING", None)
+                run_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
 
             cmd = [CLAUDE_BIN, "-p", prompt,
                    "--output-format", "stream-json", "--verbose",
