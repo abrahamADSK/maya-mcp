@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-06-22
+
 ### Added
 - **Native Toolkit publish** — `maya_session(action="publish")` drives the
   `tk-multi-publish2` PublishManager inside an engine'd (tank-launched) Maya:
