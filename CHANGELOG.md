@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-06-22
+
 ### Added
 - **Console binds fpt-mcp ShotGrid ops to the Toolkit engine's project**
   (Chat 69). When Maya is launched via `tank` into a Task/Asset/Shot, the
