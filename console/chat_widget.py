@@ -19,6 +19,7 @@ from .qt_compat import QtWidgets, QtCore, QtGui
 
 from .claude_worker import AVAILABLE_MODELS, AVAILABLE_EFFORTS, ClaudeWorker
 from .server_panel import ServerStatusBar, detect_mcp_servers
+from .project_context import resolve_engine_project
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,13 @@ class MCPChatWidget(QtWidgets.QWidget):
         self.setObjectName("mcpChatRoot")
         self._history: list[dict] = []
         self._context: dict = {}
+        # Bind to the Toolkit engine's project at launch (authoritative when
+        # Maya was tank-launched into a Task): fpt-mcp ShotGrid ops then target
+        # that project. Absent (plain Maya) → claude_worker injects "0" so a
+        # create fails rather than hitting a stale .env default. Chat 69.
+        _engine_pid = resolve_engine_project()
+        if _engine_pid:
+            self._context["project_id"] = _engine_pid
         self._maya_context_fn = maya_context_fn
         self._worker: Optional[ClaudeWorker] = None
         self._progress_lines: list[str] = []

@@ -332,6 +332,7 @@ The `console/` package provides a dockable panel inside Maya via `cmds.workspace
 - `claude_worker.py` — QThread that spawns `claude -p --output-format stream-json`
 - `server_panel.py` — MCP server discovery from `~/.claude.json`, health checks, `ServerStatusBar`
 - `userSetup_snippet.py` — Ready-to-paste snippet for Maya's `userSetup.py`
+- `project_context.py` — resolves the ShotGrid project from the `tk-maya` engine context at launch (Chat 69)
 
 **How it works:**
 1. **Auto-setup on first connect:** `maya_ping` / `maya_launch` call `_ensure_panel_installed()` which injects Python via Command Port to add `sys.path`, register the menu, and open the panel. No manual `userSetup.py` editing needed.
@@ -339,7 +340,7 @@ The `console/` package provides a dockable panel inside Maya via `cmds.workspace
 3. `show()` creates a `workspaceControl(retain=True)` docked next to AttributeEditor
 4. `_build_panel()` is called by Maya's `uiScript` — wraps Qt pointer, creates `MCPChatWidget`
 5. Maya callbacks push selection/scene context into the widget before each message
-6. `claude_worker.py` spawns Claude CLI — all MCPs discovered via `~/.claude.json` automatically
+6. `claude_worker.py` spawns Claude CLI — all MCPs discovered via `~/.claude.json` automatically. It injects `SHOTGRID_PROJECT_ID` from the `tk-maya` engine's project (`project_context.resolve_engine_project`, captured at widget init) so fpt-mcp ShotGrid ops (e.g. `tk_publish`) target the launched project; absent (plain Maya) → `"0"` so a create fails rather than hitting a stale `.env` default. Chat 69.
 7. Panel persists across Maya sessions (retain=True + uiScript auto-rebuilds on restore)
 
 **Standalone consoles** (app.py, chat_window.py) are legacy — use fpt-mcp or flame-mcp consoles instead.

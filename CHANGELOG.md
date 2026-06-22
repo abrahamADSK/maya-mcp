@@ -11,6 +11,17 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **Console binds fpt-mcp ShotGrid ops to the Toolkit engine's project**
+  (Chat 69). When Maya is launched via `tank` into a Task/Asset/Shot, the
+  embedded console now reads the `tk-maya` engine's project at launch
+  (`console/project_context.py::resolve_engine_project`) and injects it as
+  `SHOTGRID_PROJECT_ID` into the spawned `claude` subprocess, so fpt-mcp ops
+  (e.g. `tk_publish`) target the launched project — no guessing. Plain (non-tank)
+  Maya has no engine context → `"0"` ("no project") so a project-scoped create
+  fails loudly instead of writing to a stale `.env` default. Mirrors fpt-mcp's
+  console project-resolution. New `tests/test_project_context.py` (7 tests).
+
 ## [1.14.0] — 2026-06-22
 
 ### Added

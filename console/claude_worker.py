@@ -22,6 +22,7 @@ import urllib.request
 from pathlib import Path
 
 from .qt_compat import QtCore
+from .project_context import project_env
 
 QThread = QtCore.QThread
 Signal = QtCore.Signal
@@ -581,6 +582,10 @@ class ClaudeWorker(QThread):
             if not self._effort_level or self._effort_level == "auto":
                 run_env.pop("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING", None)
                 run_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+            # Bind fpt-mcp ShotGrid ops to the Maya Toolkit engine's project
+            # (authoritative when tank-launched); else "0" so a project-scoped
+            # create fails rather than hitting a stale .env default. Chat 69.
+            run_env.update(project_env(self._context.get("project_id")))
 
             cmd = [CLAUDE_BIN, "-p", prompt,
                    "--output-format", "stream-json", "--verbose",
