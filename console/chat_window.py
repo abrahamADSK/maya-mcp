@@ -7,7 +7,7 @@ flame-mcp, vision3d).
 Differences from fpt-mcp console:
   - Server panel showing all MCP servers and their status
   - Multi-context support (ShotGrid entity + Maya scene)
-  - Maya-blue accent theme (#00b4d8) instead of fpt-mcp red (#e94560)
+  - Maya-blue accent theme (#ffff00) instead of fpt-mcp red (#ffff00)
   - Dynamic system prompt based on available servers
 """
 
@@ -42,23 +42,23 @@ from .server_panel import ServerPanel
 
 DARK_STYLE = """
 QMainWindow, QWidget#central {
-    background-color: #1a1a2e;
+    background-color: #1c1c1c;
 }
 QLabel#title {
-    color: #00b4d8;
+    color: #ffff00;
     font-size: 15px;
     font-weight: 700;
 }
 QLabel#contextBadge {
-    background-color: #0f3460;
-    color: #94a3b8;
+    background-color: #2f2f2f;
+    color: #9a9a9a;
     padding: 3px 10px;
     border-radius: 10px;
     font-size: 12px;
 }
 QLabel#contextBadge[active="true"] {
-    background-color: #164e63;
-    color: #67e8f9;
+    background-color: #2a2a2a;
+    color: #cccccc;
 }
 QLabel#statusDot {
     min-width: 10px;
@@ -69,26 +69,26 @@ QLabel#statusDot {
     background-color: #22c55e;
 }
 QTextBrowser#chat {
-    background-color: #1a1a2e;
-    color: #cbd5e1;
+    background-color: #1c1c1c;
+    color: #cccccc;
     border: none;
     font-size: 14px;
-    selection-background-color: #334155;
+    selection-background-color: #3a3a3a;
 }
 QLineEdit#input {
-    background-color: #1e293b;
-    border: 1px solid #334155;
+    background-color: #252525;
+    border: 1px solid #3a3a3a;
     color: #e0e0e0;
     padding: 10px 14px;
     border-radius: 10px;
     font-size: 14px;
 }
 QLineEdit#input:focus {
-    border-color: #00b4d8;
+    border-color: #ffff00;
 }
 QPushButton#sendBtn {
-    background-color: #00b4d8;
-    color: white;
+    background-color: #ffff00;
+    color: #1c1c1c;
     border: none;
     padding: 10px 22px;
     border-radius: 10px;
@@ -96,21 +96,21 @@ QPushButton#sendBtn {
     font-weight: 600;
 }
 QPushButton#sendBtn:hover {
-    background-color: #0096b7;
+    background-color: #cccc00;
 }
 QPushButton#sendBtn:disabled {
-    background-color: #334155;
+    background-color: #3a3a3a;
 }
 QWidget#header {
-    background-color: #16213e;
-    border-bottom: 1px solid #0f3460;
+    background-color: #202020;
+    border-bottom: 1px solid #2f2f2f;
 }
 QWidget#inputBar {
-    background-color: #16213e;
-    border-top: 1px solid #0f3460;
+    background-color: #202020;
+    border-top: 1px solid #2f2f2f;
 }
 QSplitter::handle {
-    background-color: #1e3a5f;
+    background-color: #2a2a2a;
     width: 1px;
 }
 """
@@ -132,7 +132,7 @@ def _md_to_html(text: str) -> str:
                 out.append("</pre>")
                 in_code = False
             else:
-                out.append('<pre style="background:#0f172a;color:#93c5fd;'
+                out.append('<pre style="background:#1c1c1c;color:#cccccc;'
                            'padding:10px;border-radius:6px;font-size:13px;'
                            'overflow-x:auto;">')
                 in_code = True
@@ -171,12 +171,12 @@ def _inline_fmt(text: str) -> str:
     """Apply inline markdown formatting."""
     text = html.escape(text)
     text = re.sub(r"`([^`]+)`",
-                  r'<code style="background:#1e293b;padding:2px 5px;'
-                  r'border-radius:3px;color:#93c5fd;">\1</code>', text)
+                  r'<code style="background:#252525;padding:2px 5px;'
+                  r'border-radius:3px;color:#cccccc;">\1</code>', text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)",
-                  r'<a style="color:#67e8f9;" href="\2">\1</a>', text)
+                  r'<a style="color:#cccccc;" href="\2">\1</a>', text)
     return text
 
 
@@ -339,10 +339,10 @@ class ChatWindow(QMainWindow):
     def _append_bubble(self, html_content: str, role: str):
         """Add a message bubble to the chat."""
         colors = {
-            "user":      ("text-align:right;", "#0f3460", "#e0e0e0"),
-            "assistant": ("text-align:left;",  "#1e293b", "#cbd5e1"),
+            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
+            "assistant": ("text-align:left;",  "#252525", "#cccccc"),
             "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
-            "thinking":  ("text-align:left;",  "#1e293b", "#64748b"),
+            "thinking":  ("text-align:left;",  "#252525", "#888888"),
         }
         align, bg, fg = colors.get(role, colors["assistant"])
         bubble = (
@@ -387,7 +387,7 @@ class ChatWindow(QMainWindow):
         lines_html = "<br>".join(html.escape(l) for l in visible)
         if len(self._progress_lines) > 12:
             lines_html = (
-                f"<i style='color:#4a5568;'>... ({len(self._progress_lines) - 12} "
+                f"<i style='color:#4a4a4a;'>... ({len(self._progress_lines) - 12} "
                 f"previous lines)</i><br>" + lines_html
             )
         self._update_last_bubble(
@@ -399,10 +399,10 @@ class ChatWindow(QMainWindow):
     def _update_last_bubble(self, html_content: str, role: str):
         """Replace the last bubble with new content."""
         colors = {
-            "user":      ("text-align:right;", "#0f3460", "#e0e0e0"),
-            "assistant": ("text-align:left;",  "#1e293b", "#cbd5e1"),
+            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
+            "assistant": ("text-align:left;",  "#252525", "#cccccc"),
             "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
-            "thinking":  ("text-align:left;",  "#1e293b", "#64748b"),
+            "thinking":  ("text-align:left;",  "#252525", "#888888"),
         }
         align, bg, fg = colors.get(role, colors["assistant"])
         bubble = (
