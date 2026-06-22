@@ -11,6 +11,25 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **Native Toolkit publish** — `maya_session(action="publish")` drives the
+  `tk-multi-publish2` PublishManager inside an engine'd (tank-launched) Maya:
+  `preview` reads the collected publish tree, `publish` runs
+  validate → publish → finalize, and dependencies are captured automatically by
+  the plugins. +19 offline tests. (PR #12)
+- **Reasoning-effort selector in the Console panel** — header combo
+  (Auto / Low / Medium / High / Max, default **Auto**) controlling the spawned
+  `claude` subprocess effort via `build_backend_env`; affects only the
+  MCP-spawned subprocess, never the user's top-level session. (PR #14)
+
+### Changed
+- **Console default model → Claude Opus 4.8** (Fable 5 kept as a selectable
+  option, Sonnet 4.6 retained). (PR #13)
+- **Console panel colour scheme → Autodesk palette** — neutral grayscale base
+  with Autodesk yellow (`#ffff00`) for accents, titles and primary buttons
+  (dark `#1c1c1c` text on yellow); the previous blue/slate base and cyan accent
+  are retired. Status colours (green / red) unchanged.
+
 ## [1.13.0] — 2026-06-15
 
 ### Added

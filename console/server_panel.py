@@ -180,13 +180,13 @@ class HealthChecker(QThread):
 
 PANEL_STYLE = """
 QFrame#serverPanel {
-    background-color: #0f172a;
-    border-left: 1px solid #1e3a5f;
+    background-color: #1c1c1c;
+    border-left: 1px solid #2a2a2a;
     min-width: 220px;
     max-width: 260px;
 }
 QLabel#panelTitle {
-    color: #64748b;
+    color: #888888;
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -199,7 +199,7 @@ QLabel#serverName {
     font-weight: 600;
 }
 QLabel#serverDetail {
-    color: #64748b;
+    color: #888888;
     font-size: 11px;
 }
 QLabel#statusDotGreen {
@@ -218,14 +218,14 @@ QLabel#statusDotYellow {
     min-width: 8px; max-width: 8px;
     min-height: 8px; max-height: 8px;
     border-radius: 4px;
-    background-color: #eab308;
+    background-color: #ffff00;
 }
 QFrame#serverRow {
     padding: 8px 14px;
-    border-bottom: 1px solid #1e293b;
+    border-bottom: 1px solid #252525;
 }
 QFrame#serverRow:hover {
-    background-color: #1e293b;
+    background-color: #252525;
 }
 """
 
@@ -365,10 +365,10 @@ QLabel#dotRed {
 }
 QLabel#dotYellow {
     min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;
-    border-radius: 4px; background-color: #eab308;
+    border-radius: 4px; background-color: #ffff00;
 }
 QLabel#serverTag {
-    color: #64748b; font-size: 10px; font-weight: 600;
+    color: #888888; font-size: 10px; font-weight: 600;
 }
 """
 

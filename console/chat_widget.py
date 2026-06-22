@@ -27,45 +27,45 @@ from .server_panel import ServerStatusBar, detect_mcp_servers
 
 DARK_STYLE = """
 QWidget#mcpChatRoot {
-    background-color: #1a1a2e;
+    background-color: #1c1c1c;
 }
 QLabel#title {
-    color: #00b4d8;
+    color: #ffff00;
     font-size: 14px;
     font-weight: 700;
 }
 QLabel#contextBadge {
-    background-color: #0f3460;
-    color: #94a3b8;
+    background-color: #2f2f2f;
+    color: #9a9a9a;
     padding: 2px 8px;
     border-radius: 8px;
     font-size: 11px;
 }
 QLabel#contextBadge[active="true"] {
-    background-color: #164e63;
-    color: #67e8f9;
+    background-color: #2a2a2a;
+    color: #cccccc;
 }
 QTextBrowser#chat {
-    background-color: #1a1a2e;
-    color: #cbd5e1;
+    background-color: #1c1c1c;
+    color: #cccccc;
     border: none;
     font-size: 13px;
-    selection-background-color: #334155;
+    selection-background-color: #3a3a3a;
 }
 QLineEdit#input {
-    background-color: #1e293b;
-    border: 1px solid #334155;
+    background-color: #252525;
+    border: 1px solid #3a3a3a;
     color: #e0e0e0;
     padding: 8px 12px;
     border-radius: 8px;
     font-size: 13px;
 }
 QLineEdit#input:focus {
-    border-color: #00b4d8;
+    border-color: #ffff00;
 }
 QPushButton#sendBtn {
-    background-color: #00b4d8;
-    color: white;
+    background-color: #ffff00;
+    color: #1c1c1c;
     border: none;
     padding: 8px 16px;
     border-radius: 8px;
@@ -73,29 +73,29 @@ QPushButton#sendBtn {
     font-weight: 600;
 }
 QPushButton#sendBtn:hover {
-    background-color: #0096b7;
+    background-color: #cccc00;
 }
 QPushButton#sendBtn:disabled {
-    background-color: #334155;
+    background-color: #3a3a3a;
 }
 QPushButton#quickBtn {
-    background-color: #1e293b;
-    color: #94a3b8;
-    border: 1px solid #334155;
+    background-color: #252525;
+    color: #9a9a9a;
+    border: 1px solid #3a3a3a;
     padding: 3px 10px;
     border-radius: 6px;
     font-size: 11px;
     font-weight: 600;
 }
 QPushButton#quickBtn:hover {
-    background-color: #334155;
+    background-color: #3a3a3a;
     color: #e0e0e0;
 }
 QWidget#header {
-    background-color: #16213e;
+    background-color: #202020;
 }
 QWidget#inputBar {
-    background-color: #16213e;
+    background-color: #202020;
 }
 QLabel#statusDot {
     min-width: 8px; max-width: 8px;
@@ -122,7 +122,7 @@ def _md_to_html(text: str) -> str:
                 in_code = False
             else:
                 out.append(
-                    '<pre style="background:#0f172a;color:#93c5fd;'
+                    '<pre style="background:#1c1c1c;color:#cccccc;'
                     'padding:10px;border-radius:6px;font-size:12px;'
                     'overflow-x:auto;">'
                 )
@@ -165,15 +165,15 @@ def _inline_fmt(text: str) -> str:
     text = html.escape(text)
     text = re.sub(
         r"`([^`]+)`",
-        r'<code style="background:#1e293b;padding:1px 4px;'
-        r'border-radius:3px;color:#93c5fd;">\1</code>',
+        r'<code style="background:#252525;padding:1px 4px;'
+        r'border-radius:3px;color:#cccccc;">\1</code>',
         text,
     )
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
     text = re.sub(
         r"\[([^\]]+)\]\(([^)]+)\)",
-        r'<a style="color:#67e8f9;" href="\2">\1</a>',
+        r'<a style="color:#cccccc;" href="\2">\1</a>',
         text,
     )
     return text
@@ -266,7 +266,7 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._model_combo.setCurrentIndex(self._selected_model_idx)
         self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         self._model_combo.setStyleSheet(
-            "QComboBox { background: #1e293b; color: #e0e0e0; border: 1px solid #334155; "
+            "QComboBox { background: #252525; color: #e0e0e0; border: 1px solid #3a3a3a; "
             "border-radius: 6px; padding: 2px 6px; font-size: 11px; }"
         )
         h_lay.addWidget(self._model_combo)
@@ -278,7 +278,7 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._effort_combo.setCurrentIndex(self._selected_effort_idx)
         self._effort_combo.currentIndexChanged.connect(self._on_effort_changed)
         self._effort_combo.setStyleSheet(
-            "QComboBox { background: #1e293b; color: #e0e0e0; border: 1px solid #334155; "
+            "QComboBox { background: #252525; color: #e0e0e0; border: 1px solid #3a3a3a; "
             "border-radius: 6px; padding: 2px 6px; font-size: 11px; }"
         )
         h_lay.addWidget(self._effort_combo)
@@ -425,10 +425,10 @@ class MCPChatWidget(QtWidgets.QWidget):
 
     def _append_bubble(self, html_content: str, role: str):
         colors = {
-            "user":      ("text-align:right;", "#0f3460", "#e0e0e0"),
-            "assistant": ("text-align:left;",  "#1e293b", "#cbd5e1"),
+            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
+            "assistant": ("text-align:left;",  "#252525", "#cccccc"),
             "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
-            "thinking":  ("text-align:left;",  "#1e293b", "#64748b"),
+            "thinking":  ("text-align:left;",  "#252525", "#888888"),
         }
         align, bg, fg = colors.get(role, colors["assistant"])
         bubble = (
@@ -443,10 +443,10 @@ class MCPChatWidget(QtWidgets.QWidget):
 
     def _update_last_bubble(self, html_content: str, role: str):
         colors = {
-            "user":      ("text-align:right;", "#0f3460", "#e0e0e0"),
-            "assistant": ("text-align:left;",  "#1e293b", "#cbd5e1"),
+            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
+            "assistant": ("text-align:left;",  "#252525", "#cccccc"),
             "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
-            "thinking":  ("text-align:left;",  "#1e293b", "#64748b"),
+            "thinking":  ("text-align:left;",  "#252525", "#888888"),
         }
         align, bg, fg = colors.get(role, colors["assistant"])
         bubble = (
@@ -511,7 +511,7 @@ class MCPChatWidget(QtWidgets.QWidget):
         lines_html = "<br>".join(html.escape(l) for l in visible)
         if len(self._progress_lines) > 10:
             lines_html = (
-                f"<i style='color:#4a5568;'>... ({len(self._progress_lines) - 10} "
+                f"<i style='color:#4a4a4a;'>... ({len(self._progress_lines) - 10} "
                 f"previous)</i><br>" + lines_html
             )
         self._update_last_bubble(
