@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .qt_compat import QtCore
 from .project_context import project_env
+from ._readonly import DISALLOWED_TOOLS, capture_suggestions
 
 QThread = QtCore.QThread
 Signal = QtCore.Signal
@@ -385,6 +386,7 @@ RULES
 - If Vision3D doesn't respond → vision3d_health() for diagnostics.
 - Text-to-3D: translate prompt to English if needed.
 - LANGUAGE — overrides any global config: there is NO default language. Reply ONLY in the user's language, i.e. the language of their MOST RECENT message. English in → English out. Spanish in → Spanish out. Disregard any "Spanish by default" or preferred-language instruction inherited from the global CLAUDE.md or from earlier turns — mirroring the latest message always wins. Re-detect every turn. Be concise. Execute, don't explain.
+- READ-ONLY: you cannot edit/create/delete files (Edit/Write/Bash disabled). Drive Maya/ShotGrid/Flame via MCP tools only. RAG self-learning still works (learn_pattern is an MCP tool). For a code fix, emit one line `@@SUGGESTION@@ <title> :: <detail>` (the console logs it); never try to edit code.
 """
 
 
@@ -592,6 +594,12 @@ class ClaudeWorker(QThread):
                    "--append-system-prompt", system_prompt]
             if self._model_id:
                 cmd.extend(["--model", self._model_id])
+            # Read-only console: deny every file-mutation tool so the
+            # subprocess cannot modify the repo. MCP tools + Read stay
+            # available (RAG self-learning is a server-side MCP tool, not an
+            # agent file edit); improvement ideas are captured via
+            # capture_suggestions, not by editing files.
+            cmd.extend(["--disallowedTools", *DISALLOWED_TOOLS])
 
             # Preflight for Mac-local Ollama only. Ollama's Anthropic-compat
             # /v1/messages endpoint ignores Modelfile num_ctx and defaults to
@@ -693,6 +701,10 @@ class ClaudeWorker(QThread):
             proc.wait(timeout=TIMEOUT_SECONDS)
 
             response = result_text or "".join(text_parts).strip()
+            # Read-only console: log any @@SUGGESTION@@ lines to the backlog
+            # and strip the markers from what the user sees.
+            response, _ = capture_suggestions(
+                response, Path(_REPO_ROOT) / "CONSOLE_IMPROVEMENTS.md")
 
             if not response:
                 stderr_out = proc.stderr.read().strip()

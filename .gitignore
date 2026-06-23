@@ -74,3 +74,9 @@ src/maya_mcp/rag/candidates.json
 # produced by the /graphify skill. Generated locally, never
 # committed.
 src/graphify-out/
+
+# ── Console improvement backlog ──────────────────────────────
+# Auto-captured by the read-only console worker (console._readonly.
+# capture_suggestions). Local-only: picked up in dev sessions / PRs,
+# not tracked, keeps the working tree clean during recordings.
+CONSOLE_IMPROVEMENTS.md
