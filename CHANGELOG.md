@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.16.0] — 2026-06-23
+
 ### Changed
 - **Console panel runs read-only (recording-safe)** — the spawned `claude`
   subprocess is now launched with `--disallowedTools Edit Write MultiEdit
