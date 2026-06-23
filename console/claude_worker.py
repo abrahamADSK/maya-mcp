@@ -23,7 +23,11 @@ from pathlib import Path
 
 from .qt_compat import QtCore
 from .project_context import project_env
-from ._readonly import DISALLOWED_TOOLS, capture_suggestions
+from ._readonly import (
+    DISALLOWED_TOOLS,
+    build_scoped_mcp_config,
+    capture_suggestions,
+)
 
 QThread = QtCore.QThread
 Signal = QtCore.Signal
@@ -128,6 +132,11 @@ CLAUDE_BIN = _find_claude()
 # MCP config from .claude/settings.json instead of requiring global config.
 # console/claude_worker.py → parent = console/ → parent.parent = repo root
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+
+# Per-console MCP scoping: the Maya console only needs Maya + ShotGrid (fpt).
+# Flame's ~38 tool schemas would bloat every request for no benefit here, so we
+# load only these two via --strict-mcp-config / --mcp-config (see run()).
+_CONSOLE_MCP_SERVERS = {"maya-mcp", "fpt-mcp"}
 
 # Max time for a single invocation (shape gen can take ~15 min)
 TIMEOUT_SECONDS = 900
@@ -575,8 +584,15 @@ class ClaudeWorker(QThread):
         system_prompt = build_system_prompt(self._servers)
 
         try:
-            # Build environment with backend-specific overrides
-            run_env = {**_SHELL_ENV, "CLAUDE_NO_TELEMETRY": "1"}
+            # Build environment with backend-specific overrides.
+            # ENABLE_TOOL_SEARCH defers MCP tool schemas: only tool NAMES load
+            # upfront and the model fetches a tool's schema on demand, so the
+            # request isn't bloated by every server's full tool definitions.
+            run_env = {
+                **_SHELL_ENV,
+                "CLAUDE_NO_TELEMETRY": "1",
+                "ENABLE_TOOL_SEARCH": "true",
+            }
             if self._model_id and self._backend:
                 run_env.update(build_backend_env(self._model_id, self._backend, self._effort_level))
             # "auto" → ensure neither hardening var leaks in from _SHELL_ENV;
@@ -600,6 +616,15 @@ class ClaudeWorker(QThread):
             # agent file edit); improvement ideas are captured via
             # capture_suggestions, not by editing files.
             cmd.extend(["--disallowedTools", *DISALLOWED_TOOLS])
+            # Per-console MCP scoping: load ONLY the servers this console needs
+            # (Maya + ShotGrid, not Flame) via strict config, so Flame's tool
+            # schemas never enter the request. Deferred loading (ENABLE_TOOL_SEARCH
+            # above) further shrinks what the remaining servers contribute.
+            _scoped_mcp = build_scoped_mcp_config(
+                Path(_REPO_ROOT) / ".mcp.json", _CONSOLE_MCP_SERVERS
+            )
+            if _scoped_mcp:
+                cmd.extend(["--strict-mcp-config", "--mcp-config", _scoped_mcp])
 
             # Preflight for Mac-local Ollama only. Ollama's Anthropic-compat
             # /v1/messages endpoint ignores Modelfile num_ctx and defaults to

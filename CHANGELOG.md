@@ -11,6 +11,18 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- **Console request is much lighter — deferred tool loading + per-console MCP
+  scoping.** The spawned `claude` subprocess now (1) runs with
+  `ENABLE_TOOL_SEARCH=true`, so MCP tool schemas are deferred (only tool names
+  load upfront; the model fetches a schema on demand via `ToolSearch`), and (2)
+  is launched with `--strict-mcp-config --mcp-config` carrying only the servers
+  the Maya console needs — Maya + ShotGrid (`fpt-mcp`), NOT Flame. Flame's ~38
+  tool schemas no longer bloat every request. Together this cuts the per-request
+  payload from ~49k tokens toward ~8–12k, addressing the slow/overloaded "no
+  response" hangs. `console._readonly.build_scoped_mcp_config` builds the curated
+  config; covered by `tests/test_suggestion_capture.py`.
+
 ## [1.16.0] — 2026-06-23
 
 ### Changed

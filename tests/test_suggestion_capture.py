@@ -8,7 +8,40 @@ These tests cover that pure capture / strip / append logic — imported from the
 Qt-free ``console._readonly`` module, so no PySide / Maya is needed.
 """
 
-from console._readonly import DISALLOWED_TOOLS, capture_suggestions
+import json
+
+from console._readonly import (
+    DISALLOWED_TOOLS,
+    build_scoped_mcp_config,
+    capture_suggestions,
+)
+
+
+def _write_mcp(tmp_path, servers):
+    p = tmp_path / ".mcp.json"
+    p.write_text(
+        json.dumps({"mcpServers": {s: {"command": "x"} for s in servers}}),
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_scoped_mcp_keeps_only_wanted_servers(tmp_path):
+    p = _write_mcp(tmp_path, ["maya-mcp", "flame", "fpt-mcp"])
+    out = build_scoped_mcp_config(p, {"maya-mcp", "fpt-mcp"})
+    assert out is not None
+    cfg = json.loads(out)
+    assert set(cfg["mcpServers"]) == {"maya-mcp", "fpt-mcp"}
+    assert "flame" not in cfg["mcpServers"]  # the dropped server
+
+
+def test_scoped_mcp_none_when_file_missing(tmp_path):
+    assert build_scoped_mcp_config(tmp_path / "nope.json", {"maya-mcp"}) is None
+
+
+def test_scoped_mcp_none_when_no_server_matches(tmp_path):
+    p = _write_mcp(tmp_path, ["flame"])
+    assert build_scoped_mcp_config(p, {"maya-mcp", "fpt-mcp"}) is None
 
 
 def test_captures_and_strips_single_suggestion(tmp_path):

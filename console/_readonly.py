@@ -18,6 +18,7 @@ Pure stdlib (no Qt / no Maya deps) so it is unit-testable outside the host app.
 from __future__ import annotations
 
 import datetime
+import json
 import re
 from pathlib import Path
 
@@ -58,3 +59,26 @@ def capture_suggestions(text: str, dest) -> tuple[str, int]:
     except OSError:
         return clean, 0
     return clean, len(matches)
+
+
+def build_scoped_mcp_config(mcp_json_path, keep_servers):
+    """Return a ``--mcp-config`` JSON string with only *keep_servers*, read from
+    *mcp_json_path* (the repo's ``.mcp.json``).
+
+    Used with ``--strict-mcp-config`` so a console loads ONLY the MCP servers it
+    needs — e.g. the Maya console doesn't need Flame's ~38 tool schemas bloating
+    every request. Returns None on any failure (missing file, no matching
+    servers, parse error) so the caller can fall back to default MCP discovery.
+    """
+    try:
+        data = json.loads(Path(mcp_json_path).read_text(encoding="utf-8"))
+        servers = {
+            k: v
+            for k, v in (data.get("mcpServers") or {}).items()
+            if k in keep_servers
+        }
+        if not servers:
+            return None
+        return json.dumps({"mcpServers": servers})
+    except Exception:
+        return None
