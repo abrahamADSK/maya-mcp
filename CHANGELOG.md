@@ -23,6 +23,13 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   backlog (for a later dev session / PR) and strips from the reply. Covered by
   `tests/test_suggestion_capture.py`.
 
+### Fixed
+- **Console mirrors the user's language per message** — the spawned `claude`
+  subprocess inherited the global `CLAUDE.md` "Spanish by default" bias and
+  replied in Spanish to English orders. The console system prompt now carries an
+  explicit LANGUAGE directive that overrides any inherited default and re-detects
+  the latest message's language every turn.
+
 ## [1.15.0] — 2026-06-22
 
 ### Added
