@@ -27,6 +27,7 @@ from ._readonly import (
     DISALLOWED_TOOLS,
     build_scoped_mcp_config,
     capture_suggestions,
+    log_usage,
 )
 
 QThread = QtCore.QThread
@@ -711,6 +712,7 @@ class ClaudeWorker(QThread):
                     r = event.get("result", "")
                     if r:
                         result_text = r
+                    log_usage(event.get("usage"), "maya")
 
                 elif ev_type == "message":
                     content = event.get("content", [])

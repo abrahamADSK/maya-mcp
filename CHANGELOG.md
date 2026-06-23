@@ -11,6 +11,13 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **Per-call token-usage monitoring.** Each `claude -p` turn now logs its token
+  usage (input context + cache + reasoning output) to the shared
+  `~/Library/Logs/mcp-console-usage.log` via `console._readonly.log_usage`, so
+  request weight is objectively visible across consoles. Covered by
+  `tests/test_suggestion_capture.py`.
+
 ### Changed
 - **Console request is much lighter — deferred tool loading + per-console MCP
   scoping.** The spawned `claude` subprocess now (1) runs with
