@@ -329,7 +329,8 @@ The `console/` package provides a dockable panel inside Maya via `cmds.workspace
 - `qt_compat.py` — PySide2 (Maya 2023-2024) / PySide6 (Maya 2025+) compatibility shim
 - `maya_panel.py` — workspaceControl wrapper, Maya callbacks (selection/scene), menu registration
 - `chat_widget.py` — Reusable `MCPChatWidget` with context badge, server status dots, markdown rendering
-- `claude_worker.py` — QThread that spawns `claude -p --output-format stream-json`
+- `claude_worker.py` — QThread that spawns `claude -p --output-format stream-json`. **Read-only lockdown** (recording-safe): launched with `--disallowedTools Edit Write MultiEdit NotebookEdit Bash` (`console._readonly.DISALLOWED_TOOLS`), so the agent CANNOT modify the repo. MCP tools + Read stay available; RAG self-learning is unaffected (`learn_pattern` writes server-side). Improvement ideas are not applied — the agent emits `@@SUGGESTION@@ <title> :: <detail>` lines, which `capture_suggestions` logs to the git-ignored `CONSOLE_IMPROVEMENTS.md` and strips from the reply.
+- `_readonly.py` — Qt-free helper: `DISALLOWED_TOOLS` deny-list + `capture_suggestions` (backlog writer). Unit-tested in `tests/test_suggestion_capture.py`.
 - `server_panel.py` — MCP server discovery from `~/.claude.json`, health checks, `ServerStatusBar`
 - `userSetup_snippet.py` — Ready-to-paste snippet for Maya's `userSetup.py`
 - `project_context.py` — resolves the ShotGrid project from the `tk-maya` engine context at launch (Chat 69)

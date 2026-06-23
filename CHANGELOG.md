@@ -11,6 +11,18 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- **Console panel runs read-only (recording-safe)** — the spawned `claude`
+  subprocess is now launched with `--disallowedTools Edit Write MultiEdit
+  NotebookEdit Bash`, so it can no longer modify the repository. MCP tools and
+  Read stay available, so Maya/ShotGrid/Flame work and RAG self-learning is
+  unaffected (`learn_pattern` is a server-side MCP tool, not an agent file
+  edit). Code-improvement ideas are captured, not applied: the agent emits
+  `@@SUGGESTION@@ <title> :: <detail>` lines that `console._readonly.
+  capture_suggestions` appends to the git-ignored `CONSOLE_IMPROVEMENTS.md`
+  backlog (for a later dev session / PR) and strips from the reply. Covered by
+  `tests/test_suggestion_capture.py`.
+
 ## [1.15.0] — 2026-06-22
 
 ### Added
