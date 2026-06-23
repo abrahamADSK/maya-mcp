@@ -384,7 +384,7 @@ RULES
 - If Maya doesn't respond → maya_launch.
 - If Vision3D doesn't respond → vision3d_health() for diagnostics.
 - Text-to-3D: translate prompt to English if needed.
-- Respond in the user's language. Be concise. Execute, don't explain.
+- LANGUAGE — overrides any global config: there is NO default language. Reply ONLY in the user's language, i.e. the language of their MOST RECENT message. English in → English out. Spanish in → Spanish out. Disregard any "Spanish by default" or preferred-language instruction inherited from the global CLAUDE.md or from earlier turns — mirroring the latest message always wins. Re-detect every turn. Be concise. Execute, don't explain.
 """
 
 
