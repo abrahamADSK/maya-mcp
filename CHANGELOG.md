@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.18.4] — 2026-06-24
+
 ### Fixed
 - **`review_turntable` no longer frames non-geometry → empty turntable.** With no
   explicit `objects`/selection the recipe framed *every* top-level assembly,
