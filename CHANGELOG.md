@@ -24,6 +24,17 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   `worldlabs/{tool,maya_build}.py` + a gsbox SPZ→PLY branch in `convert.py`; 33
   tests in `tests/test_worldlabs_tool.py`. The `build` action runs inside Maya;
   generation spends World Labs credits only with `confirm=true`.
+- **`maya_session(action="review_turntable")` — deterministic review turntable.**
+  Codifies the model-review playblast so it never depends on the LLM improvising
+  (which hung the MCP console: a playblast that captured an Arnold/IPR panel
+  saturated Maya's main thread and timed out). Frames the model, orbits 360° over
+  a range at the chosen fps, sets 16:9 / square pixels / overscan, and playblasts
+  in **Viewport 2.0 offScreen pinned to the captured panel** (never Arnold) → a
+  .mov, with an avfoundation→PNG fallback; leaves the scene untouched (restores
+  panel camera/renderer + time unit, deletes the turntable nodes). Returns a
+  Version code `{Asset}_{Task}` so the review Version is named after the task it
+  was generated in (new module `review_build.py`). Multi-agent reviewed — the
+  `editorPanelName` hang-repro bug was caught and fixed before merge.
 
 ## [1.17.0] — 2026-06-24
 
