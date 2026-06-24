@@ -11,6 +11,23 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **Console system prompt now reflects the real Maya tool hierarchy.** The
+  in-Maya console (`console/claude_worker.py::build_system_prompt`) hard-coded a
+  stale tool inventory — pre-dispatcher flat names (`maya_execute_python`,
+  `maya_launch`, `maya_list_scene`, `vision3d_health`…) — and never listed the
+  `maya_session` dispatcher, `review_turntable`, `publish`, or `maya_worldlabs`.
+  Asked for a review turntable, the console LLM therefore **improvised** a
+  playblast via `execute_python` instead of calling the deterministic
+  `maya_session action=review_turntable` → it produced an **empty/mis-framed**
+  `.mov` and ballooned the request to ~482k tokens (observed in-vivo on the DJ
+  Model task). The prompt now lists the dispatcher hierarchy (maya_session +
+  actions, maya_vision3d, maya_worldlabs, search_maya_docs) plus a hard rule:
+  review-turntable and publish are deterministic tools, **never** hand-built with
+  `execute_python` (a hand-built playblast yields empty frames and can hang Maya's
+  main thread). Guarded by `tests/test_system_prompt.py` (pins the hierarchy,
+  forbids the stale flat names).
+
 ## [1.18.2] — 2026-06-24
 
 ### Fixed
