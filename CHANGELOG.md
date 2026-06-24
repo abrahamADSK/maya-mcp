@@ -29,6 +29,11 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   payload from ~49k tokens toward ~8–12k, addressing the slow/overloaded "no
   response" hangs. `console._readonly.build_scoped_mcp_config` builds the curated
   config; covered by `tests/test_suggestion_capture.py`.
+- **CI Python matrix realigned to the real runtimes.** The test matrix now runs
+  `[3.13, 3.14]` (Maya 2027 ships 3.13; the dev venv is 3.14) instead of
+  `[3.10, 3.11, 3.12]`, which tested zero versions Maya actually deploys on.
+  `requires-python` raised to `>=3.13`; the ruff/mypy/verify_concepts jobs and
+  the Codecov upload pin moved to 3.13; the README requirement was corrected.
 
 ## [1.16.0] — 2026-06-23
 
