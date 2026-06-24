@@ -60,7 +60,7 @@ OPENCV_TO_DCC_SCALE = (1.0, -1.0, -1.0)
 _CONVERTER_ENV = "WORLDLABS_SPZ_CONVERTER"
 
 # CLI converter candidates, in preference order (see module docstring).
-_CONVERTER_CANDIDATES = ("spz", "3dgsconverter")
+_CONVERTER_CANDIDATES = ("gsbox", "spz", "3dgsconverter")
 
 
 class SpzConversionError(RuntimeError):
@@ -102,6 +102,10 @@ def _build_command(converter_bin: str, spz_path: Path, ply_path: Path) -> list[s
     different converter can be wired by editing one place.
     """
     name = Path(converter_bin).name.lower()
+    if "gsbox" in name:
+        # gsbox v4.8.4: `gsbox z2p -i <in.spz> -o <out.ply>` (validated in-vivo,
+        # Chat 71 — the converter actually installed on this workstation).
+        return [converter_bin, "z2p", "-i", str(spz_path), "-o", str(ply_path)]
     if "3dgsconverter" in name:
         return [converter_bin, "-i", str(spz_path), "-o", str(ply_path), "-f", "3dgs"]
     return [converter_bin, "convert", str(spz_path), str(ply_path)]

@@ -462,6 +462,24 @@ class Vision3DDispatchInput(BaseModel):
     params: Optional[dict] = Field(default=None, description="Parameters for the chosen action (see tool description)")
 
 
+class WorldLabsAction(str, Enum):
+    """Actions available in the maya_worldlabs dispatch tool."""
+    HEALTH = "health"
+    GENERATE = "generate"
+    POLL = "poll"
+    DOWNLOAD = "download"
+    CONVERT = "convert"
+    BUILD = "build"
+
+
+class WorldLabsDispatchInput(BaseModel):
+    """Input for the maya_worldlabs dispatch tool."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    action: WorldLabsAction = Field(..., description="Which WorldLabs action to run")
+    params: Optional[dict] = Field(default=None, description="Parameters for the chosen action (see tool description)")
+
+
 # ─────────────────────────────────────────────
 # Tools
 # ─────────────────────────────────────────────
@@ -2326,6 +2344,109 @@ async def maya_vision3d(params: Vision3DDispatchInput, ctx: Context) -> str:
     handler = dispatch[params.action]
     out = await handler(params.params or {}, ctx)
     return maybe_annotate_with_suggestions("maya_vision3d", out)
+
+
+# ─────────────────────────────────────────────
+# WorldLabs Dispatch Tool (Gaussian-splat environments via the Marble API)
+# ─────────────────────────────────────────────
+
+async def _do_wl_health(params: dict, ctx: Context) -> str:
+    from maya_mcp.worldlabs import tool as wl
+    return await asyncio.to_thread(wl.health)
+
+
+async def _do_wl_generate(params: dict, ctx: Context) -> str:
+    from maya_mcp.worldlabs import tool as wl
+    image = params.get("image")
+    if not image:
+        return json.dumps({"error": "generate requires params.image (local path or https URI)"})
+    return await asyncio.to_thread(
+        wl.generate, image, params.get("output_subdir", "world"),
+        params.get("model", "marble-1.1"), params.get("display_name"),
+        params.get("text_prompt"), bool(params.get("confirm", False)),
+    )
+
+
+async def _do_wl_poll(params: dict, ctx: Context) -> str:
+    from maya_mcp.worldlabs import tool as wl
+    op = params.get("operation_id")
+    if not op:
+        return json.dumps({"error": "poll requires params.operation_id"})
+    return await asyncio.to_thread(wl.poll, op)
+
+
+async def _do_wl_download(params: dict, ctx: Context) -> str:
+    from maya_mcp.worldlabs import tool as wl
+    op = params.get("operation_id")
+    dest = params.get("dest_dir")
+    if not op or not dest:
+        return json.dumps({"error": "download requires params.operation_id and params.dest_dir"})
+    which = tuple(params.get("which") or ("splats_full_res", "pano"))
+    return await asyncio.to_thread(wl.download, op, dest, which)
+
+
+async def _do_wl_convert(params: dict, ctx: Context) -> str:
+    from maya_mcp.worldlabs import tool as wl
+    spz = params.get("spz_path")
+    if not spz:
+        return json.dumps({"error": "convert requires params.spz_path"})
+    return await asyncio.to_thread(wl.convert, spz, params.get("ply_path"))
+
+
+async def _do_wl_build(params: dict, ctx: Context) -> str:
+    # RUNS IN MAYA: ships the validated build recipe to the Command Port bridge.
+    from maya_mcp.worldlabs import tool as wl
+    ply = params.get("ply_path")
+    if not ply:
+        return json.dumps({"error": "build requires params.ply_path"})
+    code = wl.build_maya_code(
+        ply, params.get("pano_path"),
+        float(params.get("eye_height", 1.5)),
+        int(params.get("proxy_step", 1)),
+        bool(params.get("relight", False)),
+    )
+    try:
+        return await asyncio.to_thread(
+            bridge.execute, code, timeout=int(params.get("timeout", 300))
+        )
+    except MayaBridgeError as exc:
+        return json.dumps({
+            "error": f"Maya bridge error: {exc}",
+            "hint": "The build action runs inside Maya — ensure Maya is open "
+                    "with the Command Port active.",
+        })
+
+
+@mcp.tool(name="maya_worldlabs")
+async def maya_worldlabs(params: WorldLabsDispatchInput, ctx: Context) -> str:
+    """Generate a World Labs (Marble) Gaussian-splat ENVIRONMENT from an image
+    and load it into Maya for Arnold.
+
+    Pipeline — call the actions in order: generate → poll → download → convert →
+    build. Credits are spent ONLY by generate with confirm=true.
+
+    Actions:
+
+    • health — Check the WorldLabs API key + credit balance. No params.
+    • generate — Start image→world generation. Required params: {"image": "/path.png" or "https://..."}. Optional: {"output_subdir": "world", "model": "marble-1.1"|"marble-1.1-plus", "display_name": ..., "text_prompt": ..., "confirm": true}. WITHOUT confirm=true it returns a cost-confirmation payload and spends NOTHING.
+    • poll — Poll a generation (~5 min). Required params: {"operation_id": "..."}.
+    • download — Download a finished world's assets. Required params: {"operation_id": "...", "dest_dir": "/path"}. Optional: {"which": ["splats_full_res", "pano"]}.
+    • convert — Convert the downloaded SPZ to PLY (Arnold-readable, via gsbox). Required params: {"spz_path": "/path.spz"}. Optional: {"ply_path": "/out.ply"}.
+    • build — Load into Maya (RUNS IN MAYA): aiGaussianSplat + coloured point proxy + emission shader + eye-level centred camera, plus a fake-HDR panorama dome if given. Required params: {"ply_path": "/world.ply"}. Optional: {"pano_path": "/pano.png", "eye_height": 1.5, "proxy_step": 1, "relight": false, "timeout": 300}.
+    """
+    from maya_mcp.suggestions import maybe_annotate_with_suggestions
+    _track_call()
+    dispatch = {
+        WorldLabsAction.HEALTH: _do_wl_health,
+        WorldLabsAction.GENERATE: _do_wl_generate,
+        WorldLabsAction.POLL: _do_wl_poll,
+        WorldLabsAction.DOWNLOAD: _do_wl_download,
+        WorldLabsAction.CONVERT: _do_wl_convert,
+        WorldLabsAction.BUILD: _do_wl_build,
+    }
+    handler = dispatch[params.action]
+    out = await handler(params.params or {}, ctx)
+    return maybe_annotate_with_suggestions("maya_worldlabs", out)
 
 
 # ---------------------------------------------------------------------------

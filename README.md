@@ -14,7 +14,7 @@ Interactive, auto-published map of this codebase — modules, functions, call/im
 
 **[abrahamadsk.github.io/maya-mcp](https://abrahamadsk.github.io/maya-mcp/)** · part of the [MCP ecosystem graph hub](https://abrahamadsk.github.io/mcp-graphs/).
 
-> MCP server for Autodesk Maya — 15 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
+> MCP server for Autodesk Maya — 16 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
 
 ---
 
@@ -39,7 +39,7 @@ Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow
 ```
 Claude / LLM
     ↕  MCP protocol (stdio)
-FastMCP server (src/maya_mcp/server.py) — 15 MCP tools
+FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
     ├── RAG engine (src/maya_mcp/rag/)
     │     ├── ChromaDB + BM25 hybrid search
     │     ├── HyDE adaptive query expansion
@@ -55,7 +55,7 @@ FastMCP server (src/maya_mcp/server.py) — 15 MCP tools
 ---
 
 <!-- concept:mcp_tool_count start -->
-## Tools (15 MCP tools)
+## Tools (16 MCP tools)
 <!-- concept:mcp_tool_count end -->
 
 <!-- concept:mcp_tool_table start -->
@@ -72,11 +72,12 @@ FastMCP server (src/maya_mcp/server.py) — 15 MCP tools
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale (streams progress; 120s budget for heavy assets) |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
-### Dispatcher Tools (2 tools)
+### Dispatcher Tools (3 tools)
 | Tool | Description |
 |------|-------------|
 | `maya_session` | Session lifecycle + generic Maya ops (see action table below) |
 | `maya_vision3d` | Optional Vision3D addon (see action table below) |
+| `maya_worldlabs` | Optional World Labs (Marble) addon — image→Gaussian-splat environment, convert + load into Maya for Arnold (see action table below) |
 
 ### RAG & Intelligence (4 tools)
 | Tool | Description |
@@ -155,7 +156,7 @@ maya-mcp/
 │   └── maya_mcp/
 │       ├── __init__.py
 │       ├── __main__.py
-│       ├── server.py              # FastMCP server — 15 MCP tools
+│       ├── server.py              # FastMCP server — 16 MCP tools
 │       ├── maya_bridge.py         # TCP bridge → Maya Command Port :8100
 │       ├── safety.py              # Dangerous pattern detection (14+ patterns)
 │       ├── config.example.json
