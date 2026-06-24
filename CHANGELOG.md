@@ -11,6 +11,20 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **`maya_worldlabs` dispatcher (16th tool) — World Labs (Marble) Gaussian-splat
+  environments.** Image→world generation via the Marble API, SPZ→PLY conversion
+  (gsbox), and an in-Maya build recipe validated in-vivo (Maya 2027 + MtoA 5.6.2
+  / Arnold 7.5.2): `aiGaussianSplat` (Arnold render) + a coloured native
+  point-cloud proxy (render-excluded, VP2.0 navigation) + `aiGaussianSplatShader`
+  (emission/diffuse) + an eye-level camera centred in the world (ground from a
+  low Y-percentile, +1.5 m) + an optional fake-HDR panorama dome (light-linked to
+  exclude the splat). Actions: `health` / `generate` (confirm-before-spend cost
+  guardrail) / `poll` / `download` / `convert` / `build`. New modules
+  `worldlabs/{tool,maya_build}.py` + a gsbox SPZ→PLY branch in `convert.py`; 33
+  tests in `tests/test_worldlabs_tool.py`. The `build` action runs inside Maya;
+  generation spends World Labs credits only with `confirm=true`.
+
 ## [1.17.0] — 2026-06-24
 
 ### Added

@@ -832,6 +832,7 @@ TOOLS = [
     # Dispatch tools (cover multiple actions each — see comment above)
     "maya_session",
     "maya_vision3d",
+    "maya_worldlabs",
     # RAG & intelligence
     "search_maya_docs",
     "learn_pattern",

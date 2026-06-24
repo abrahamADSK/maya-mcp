@@ -7,7 +7,7 @@
 
 ## 1. Architecture
 
-**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **15 MCP tools** organized in three layers:
+**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **16 MCP tools** organized in three layers (plus the optional WorldLabs environment addon):
 
 1. **Maya Control** (9 direct tools + 1 dispatch tool with 11 actions) — Scene manipulation, modeling, animation, I/O, rendering
    - Communicates with Maya via **TCP Command Port** (default port 8100; moved from the historical 7001 because that port is held by Flame's S+W services on hosts with Autodesk Flame installed)
@@ -35,7 +35,7 @@
 └────────┬─────────┘
          │ (MCP Protocol — stdio)
 ┌────────▼──────────────────────────────────────────┐
-│   maya-mcp FastMCP Server (15 tools)              │
+│   maya-mcp FastMCP Server (16 tools)              │
 │                                                    │
 │  ┌─────────┐ ┌─────────┐ ┌──────────────────────┐│
 │  │ RAG     │ │ Safety  │ │ Token Tracking       ││
@@ -92,7 +92,7 @@ GPU_VERIFY_TLS=true          # Verify TLS for https Vision3D targets (default tr
 
 ---
 
-## 4. Available Tools (<!-- concept:mcp_tool_count start -->15<!-- concept:mcp_tool_count end --> MCP tools)
+## 4. Available Tools (<!-- concept:mcp_tool_count start -->16<!-- concept:mcp_tool_count end --> MCP tools)
 
 ### Maya Direct Tools (9 MCP tools)
 
