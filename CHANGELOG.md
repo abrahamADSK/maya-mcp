@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-06-24
+
 ### Added
 - **Per-call token-usage monitoring.** Each `claude -p` turn now logs its token
   usage (input context + cache + reasoning output) to the shared
