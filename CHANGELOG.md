@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-06-24
+
 ### Added
 - **`maya_worldlabs` dispatcher (16th tool) — World Labs (Marble) Gaussian-splat
   environments.** Image→world generation via the Marble API, SPZ→PLY conversion
