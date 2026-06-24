@@ -198,7 +198,7 @@ maya-mcp/
 
 - macOS
 - Autodesk Maya 2023 or later
-- Python 3.9 or higher (ships with Maya)
+- Python 3.13 or higher (ships with Maya 2027)
 - Node.js v22 or higher (required by Claude Code)
 - Claude Code 2.x
 - A Claude account — Pro, Max, or API key
