@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.18.1] — 2026-06-24
+
 ### Fixed
 - **`review_turntable` no longer passes the non-existent `maintainRatio` flag to
   `cmds.playblast`.** Maya 2027's `playblast` has no such flag, so the turntable
