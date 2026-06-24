@@ -11,6 +11,27 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **`review_turntable` no longer frames non-geometry → empty turntable.** With no
+  explicit `objects`/selection the recipe framed *every* top-level assembly,
+  including non-renderable nodes. In-vivo (DJ Model) the published scene held an
+  `aiGaussianSplat`-free `aiSkyDomeLight` (`GI_skydome`, default bbox ~±1000); its
+  huge bounds dominated `exactWorldBoundingBox`, so the camera framed a ~2000-unit
+  object and the actual model (~2 units) rendered as a speck → a visibly **empty**
+  `.mov` (the container was a valid 1920×1080/100f, only the *content* was empty).
+  The default now frames the **renderable mesh geometry** (mesh-shape parents),
+  falling back to assemblies only when the scene has no mesh. Verified in-vivo by
+  inspecting an actual frame; guarded by `tests/test_review_build.py`.
+
+### Changed
+- **`maya_session action=publish` returns a leaner payload (context hygiene).** The
+  `publish` result dropped the full per-`(item,task)` `requested` tree and the
+  all-passed `validation` list (kept only an `activation` count summary + the
+  `published` deliverables + any `failures`); `preview` dropped `tree_pformat` and
+  the verbose per-plugin `description`/`item_filters`. The old payload could be
+  large enough to bloat the console's context and slow/stall its next request
+  (Chat 72). No information the LLM acts on is lost.
+
 ## [1.18.3] — 2026-06-24
 
 ### Fixed

@@ -121,9 +121,47 @@ def test_review_turntable_errors_on_empty_scene(tmp_path, monkeypatch):
     """No geometry and no selection → a clean error, not a crash."""
     record: dict = {}
     cmds = _install_fake_maya(monkeypatch, record)
-    cmds.ls.return_value = []  # nothing selected
+    cmds.ls.return_value = []  # nothing selected, no meshes, no assemblies
     out = str(tmp_path / "tt.mov")
 
     res = review_build.review_turntable(out, objects=None)
     assert "error" in res
     assert "pb" not in record  # never reached the playblast
+
+
+def test_review_turntable_frames_meshes_not_lights(tmp_path, monkeypatch):
+    """Default framing (no objects/selection) frames the MESH geometry, NOT a
+    huge non-geometry assembly. Chat 72: the DJ asset was framed together with a
+    GI_skydome (aiSkyDomeLight, ~±1000 bbox), which shrank the model to a speck →
+    an empty-looking turntable. The bounding box must come from the meshes only.
+    """
+    record: dict = {}
+    cmds = _install_fake_maya(monkeypatch, record)
+
+    def _ls(*a, **k):
+        if k.get("type") == "mesh":
+            return ["|DJ:Mesh|DJ:MeshShape"]
+        if k.get("assemblies"):
+            # the skydome transform IS a top-level assembly — must be ignored
+            return ["DJ:Mesh", "transform1", "persp", "top", "front", "side"]
+        return []  # nothing selected
+
+    cmds.ls.side_effect = _ls
+    cmds.listRelatives.side_effect = (
+        lambda *a, **k: ["|DJ:Mesh"] if k.get("parent") else None
+    )
+    framed: dict = {}
+
+    def _bbox(objs):
+        framed["objs"] = objs
+        return [-0.7, 0.0, -0.4, 0.7, 2.0, 0.4]
+
+    cmds.exactWorldBoundingBox.side_effect = _bbox
+
+    review_build.review_turntable(
+        str(tmp_path / "tt.mov"), start=1, end=4, fps=25,
+        width=1920, height=1080, objects=None,
+    )
+
+    assert "|DJ:Mesh" in framed["objs"]
+    assert "transform1" not in framed["objs"]  # the skydome must NOT drive framing
