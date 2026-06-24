@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.18.3] — 2026-06-24
+
 ### Fixed
 - **Console system prompt now reflects the real Maya tool hierarchy.** The
   in-Maya console (`console/claude_worker.py::build_system_prompt`) hard-coded a
