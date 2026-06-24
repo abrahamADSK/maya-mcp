@@ -11,6 +11,24 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **`.env` is now actually loaded — secret handling is coherent with fpt-mcp.**
+  maya-mcp declared `python-dotenv` as a dependency and its `.env.example` +
+  tool hints promised a repo-root `.env`, but nothing ever called `load_dotenv`,
+  so `WORLDLABS_API_KEY`, `GPU_API_KEY` and `GPU_API_URL` were only read if
+  already exported in the process environment — a bare `.env` was silently
+  ignored. Added `load_dotenv(override=False)` at package import
+  (`src/maya_mcp/__init__.py`), mirroring fpt-mcp (which is the canonical pattern:
+  secrets in a git-ignored `.env`, read via `os.environ`). `override=False` is
+  deliberate — process-env values (e.g. the console-injected `SHOTGRID_PROJECT_ID`,
+  Chat 69, or a shell-exported key) win over `.env` and are never clobbered.
+
+### Added
+- **`WORLDLABS_API_KEY` documented in `.env.example`.** The World Labs (Marble)
+  connector's key was missing from the env template; added a value-less entry
+  with a "never commit a real key" note (closes the doc gap from the v1.18.0
+  `maya_worldlabs` feature).
+
 ## [1.18.1] — 2026-06-24
 
 ### Fixed
