@@ -152,19 +152,14 @@ try:
                 tasks = []
                 for task in item.tasks:
                     plugin = task.plugin
-                    try:
-                        item_filters = list(plugin.item_filters)
-                    except Exception:
-                        item_filters = []
+                    # keep it lean: drop per-plugin description + item_filters
+                    # (verbose, rarely needed — they bloat the preview payload).
                     tasks.append({
                         "task_name": task.name,
                         "plugin_name": plugin.name,
-                        "plugin_hook_name": getattr(plugin, "plugin_name", None),
-                        "description": plugin.description,
                         "active": bool(task.active),
                         "visible": bool(task.visible),
                         "enabled": bool(task.enabled),
-                        "item_filters": item_filters,
                     })
                 parent = item.parent
                 top_level = (parent is not None and parent.is_root)
@@ -183,11 +178,6 @@ try:
                     "tasks": tasks,
                 })
 
-            try:
-                tree_text = manager.tree.pformat()
-            except Exception:
-                tree_text = None
-
             _payload = {
                 "ok": True,
                 "mode": "preview",
@@ -196,7 +186,6 @@ try:
                 "session_context": _ctx_summary(manager.context),
                 "item_count": len(items),
                 "items": items,
-                "tree_pformat": tree_text,
             }
 except Exception as _e:
     _payload = {
@@ -299,7 +288,11 @@ try:
                                     "tasks for this context."}
             else:
                 # ---- activation over the LIVE tree ----------------------------
-                requested = []
+                # NOTE: keep the response LEAN. The LLM only needs what got
+                # published (+ failures); the full per-(item,task) tree and the
+                # all-passed validation list are debug noise that bloats the
+                # context and can stall the console's next request (Chat 72).
+                activated = 0
                 for item, task in all_tasks:
                     parts = _match_parts(item, task)
                     inc_hit = _hit(_INCLUDE, parts) if _INCLUDE else None
@@ -311,12 +304,8 @@ try:
                         # blacklist: collector defaults minus excludes
                         want = exc_hit is None
                     task.active = bool(want)
-                    requested.append({
-                        "item": item.name, "type_spec": item.type_spec,
-                        "task": task.name, "plugin": task.plugin.name,
-                        "active": bool(want),
-                        "matched_include": inc_hit, "matched_exclude": exc_hit,
-                    })
+                    if want:
+                        activated += 1
 
                 # keep item.active in sync; stamp the publish comment
                 for item in manager.tree:
@@ -329,27 +318,32 @@ try:
                             except Exception:
                                 pass
 
+                _activation = {"total_tasks": len(all_tasks),
+                               "activated": activated,
+                               "include": _INCLUDE, "exclude": _EXCLUDE}
                 active_tasks = [(i, t) for (i, t) in all_tasks if t.active]
                 if not active_tasks:
                     _payload = {"ok": False, "error": "nothing_selected",
                                 "hint": "include/exclude deactivated every task.",
-                                "requested": requested}
+                                "activation": _activation}
                 else:
                     # ---- VALIDATE (default generator = active items/tasks) ----
                     failed = manager.validate()  # [(task, exc|None), ...] FAILED
                     failed_ids = set(id(t) for (t, _x) in failed)
-                    validation = []
+                    # keep ONLY the failures (on success this is empty -> omitted)
+                    failures = []
                     for item, task in active_tasks:
+                        if id(task) not in failed_ids:
+                            continue
                         err = None
                         for (ft, fe) in failed:
                             if ft is task:
                                 err = (("%s: %s" % (type(fe).__name__, fe))
                                        if fe else "validation returned False")
                                 break
-                        validation.append({
+                        failures.append({
                             "item": item.name, "task": task.name,
-                            "plugin": task.plugin.name,
-                            "passed": id(task) not in failed_ids, "error": err,
+                            "plugin": task.plugin.name, "error": err,
                         })
 
                     if failed:
@@ -358,8 +352,8 @@ try:
                                     "error": "validation_failed",
                                     "comment": _COMMENT,
                                     "session_context": _ctx_summary(manager.context),
-                                    "requested": requested,
-                                    "validation": validation}
+                                    "activation": _activation,
+                                    "failures": failures}
                     else:
                         phase = "publish"
                         pub_error = None
@@ -397,7 +391,7 @@ try:
                             "phase": phase, "error": pub_error,
                             "comment": _COMMENT,
                             "session_context": _ctx_summary(manager.context),
-                            "requested": requested, "validation": validation,
+                            "activation": _activation,
                             "published": published,
                             "published_count": len(published),
                         }

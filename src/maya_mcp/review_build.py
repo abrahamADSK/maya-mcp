@@ -94,9 +94,22 @@ def review_turntable(
     if parent and not os.path.isdir(parent):
         os.makedirs(parent, exist_ok=True)
 
-    objs = (objects or cmds.ls(sl=True, long=True)
-            or [a for a in (cmds.ls(assemblies=True) or [])
-                if a not in ("persp", "top", "front", "side")])
+    objs = objects or cmds.ls(sl=True, long=True)
+    if not objs:
+        # Frame the renderable MESH geometry, NOT every top-level assembly. A
+        # non-geometry node (e.g. an aiSkyDomeLight, whose default bbox is
+        # ~±1000) would dominate the bounding box and shrink the model to a
+        # speck → an "empty"-looking turntable (Chat 72: DJ asset framed against
+        # a GI_skydome). Fall back to assemblies only when there is no mesh.
+        mesh_parents = set()
+        for shape in (cmds.ls(type="mesh", long=True, noIntermediate=True) or []):
+            parent = cmds.listRelatives(shape, parent=True, fullPath=True)
+            if parent:
+                mesh_parents.add(parent[0])
+        objs = sorted(mesh_parents) or [
+            a for a in (cmds.ls(assemblies=True) or [])
+            if a not in ("persp", "top", "front", "side")
+        ]
     if not objs:
         return {"error": "nothing to frame (empty scene / no selection)"}
     bb = cmds.exactWorldBoundingBox(objs)
