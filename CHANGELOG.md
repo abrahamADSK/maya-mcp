@@ -11,6 +11,18 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **`review_turntable` no longer passes the non-existent `maintainRatio` flag to
+  `cmds.playblast`.** Maya 2027's `playblast` has no such flag, so the turntable
+  raised `TypeError: Invalid flag 'maintainRatio'` and produced no `.mov` — a
+  regression shipped in v1.18.0 (the recipe had no test exercising the real
+  `playblast` call). The 16:9 square-pixel guarantee already comes from the
+  camera (Film Aspect 1.778 + square pixels + Overscan film fit) plus an explicit
+  16:9 `widthHeight`; the flag was redundant *and* invalid. Validated in-vivo on
+  Maya 2027 (1920×1080 / 25 fps `.mov`, scene restored, no main-thread hang) and
+  guarded by a new `tests/test_review_build.py` that whitelists the real
+  `cmds.playblast` flag set (closes the mock blindspot that let the bug ship).
+
 ## [1.18.0] — 2026-06-24
 
 ### Added

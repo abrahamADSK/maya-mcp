@@ -16,7 +16,7 @@ What :func:`review_turntable` does, deterministically:
 2. Frames the model and builds a camera that orbits it 360° over the range.
 3. Camera Film Aspect = 1.778, lens squeeze (pixel aspect) = 1.0, Film Fit =
    Overscan → 16:9 square-pixel framing (the anti-anamorphic guarantee comes
-   from the camera + ``maintainRatio=False``, not render globals).
+   from the camera plus an explicit 16:9 ``widthHeight``, not render globals).
 4. Resolves the panel the playblast WILL capture (the focused model panel, else
    the last one), forces **Viewport 2.0** (NEVER Arnold) + the turntable camera
    ON THAT panel, and playblasts **offScreen** with ``editorPanelName`` pinned —
@@ -152,7 +152,7 @@ def review_turntable(
         # choose an available movie encoder, else fall back (never raise out)
         fmts = cmds.playblast(query=True, format=True) or []
         pb = dict(filename=out_path, widthHeight=(int(width), int(height)),
-                  percent=100, quality=95, maintainRatio=False, forceOverwrite=True,
+                  percent=100, quality=95, forceOverwrite=True,
                   viewer=False, offScreen=True, showOrnaments=False, framePadding=4,
                   startTime=start, endTime=end)
         if panel:
