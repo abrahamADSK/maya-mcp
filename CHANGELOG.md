@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.18.2] — 2026-06-24
+
 ### Fixed
 - **`.env` is now actually loaded — secret handling is coherent with fpt-mcp.**
   maya-mcp declared `python-dotenv` as a dependency and its `.env.example` +
