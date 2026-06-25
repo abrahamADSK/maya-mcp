@@ -1561,7 +1561,9 @@ async def _do_review_turntable(params: dict, ctx: Context | None = None) -> str:
     if not out_path:
         return json.dumps({
             "error": "review_turntable requires params.out_path",
-            "hint": "Resolve it first via fpt tk_resolve_path(template='movie_asset_publish').",
+            "hint": "Resolve it first via fpt tk_resolve_path(template='movie_asset_publish', "
+                    "name=<the task name>) so the .mov is {Asset}_{Task}_v###.mov "
+                    "(e.g. DJ_Model_v001.mov), NOT 'turntable'.",
         })
     from pathlib import Path as _Path
     src = (_Path(__file__).parent / "review_build.py").read_text()
@@ -1601,7 +1603,7 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     • shelf_button — Create a shelf button with Python code. Required params: {"label": "MyBtn", "command": "print('hello')"} Optional: {"tooltip": "...", "shelf_name": "Custom", "icon_label": "MCP"}
     • operation_history — Read recent durable-audit records (read-only; needs MAYA_AUDIT_LOG=1). Optional params: {"limit": 50, "tool": "maya_transform", "action": "execute_python", "status": "error"}
     • publish — Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya (launched via 'tank'). params: {"mode": "preview"|"publish", "include": ["rig"], "exclude": ["render"], "comment": "...", "timeout": 600}. 'preview' returns the collected publish tree; 'publish' activates matching tasks then validate→publish→finalize. Dependencies are captured automatically by the publish plugins.
-    • review_turntable — Deterministic Viewport-2.0 turntable playblast → .mov (RUNS IN MAYA, long op). Frames the model, orbits 360° over [start,end] at fps, 16:9 / square pixels / overscan, offScreen (never Arnold). Required params: {"out_path": "/path.mov"} (resolve via fpt tk_resolve_path template 'movie_asset_publish'). Optional: {"start":1,"end":100,"fps":25,"width":1920,"height":1080,"objects":[...],"focal":50,"timeout":600}. Returns the .mov plus the engine asset/task and a Version code {Asset}_{Task} so the review Version is named after the task it was generated in.
+    • review_turntable — Deterministic Viewport-2.0 turntable playblast → .mov (RUNS IN MAYA, long op). Frames the model, orbits 360° over [start,end] at fps, 16:9 / square pixels / overscan, offScreen (never Arnold). Required params: {"out_path": "/path.mov"} (resolve via fpt tk_resolve_path template 'movie_asset_publish' with name=<the task name> so the file is {Asset}_{Task}_v###.mov, e.g. DJ_Model_v001.mov — NOT 'turntable'). Optional: {"start":1,"end":100,"fps":25,"width":1920,"height":1080,"objects":[...],"focal":50,"timeout":600}. Returns the .mov plus the engine asset/task and a Version code {Asset}_{Task} so the review Version is named after the task it was generated in.
     """
     _track_call()
     # The two long-running handlers stream progress and take (params, ctx);
