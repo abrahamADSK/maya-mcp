@@ -106,9 +106,9 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   the `.ma` task mis-reported the texture's PNG id. Now an id-watermark is taken
   before publishing and a single ShotGrid query returns the PublishedFiles with
   `id > watermark`, reporting each created file distinctly (Maya Scene / Texture /
-  USD with their real ids, types and paths). **Pending in-vivo validation**: the
-  publish payload is a module constant loaded at server start, so it needs a server
-  restart to take effect.
+  USD with their real ids, types and paths). **Validated in-vivo** after a server
+  restart (the publish payload is a module constant loaded at server start): the
+  publish and the review Version were confirmed correct against the live engine.
 
 ## [1.18.4] — 2026-06-24
 
