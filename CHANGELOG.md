@@ -53,6 +53,13 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   `tests/test_system_prompt.py` (+2 tests).
 
 ### Fixed
+- **Review media (the `.mov`) is named after the task too, not "turntable".** The
+  turntable→Version recipe (console prompt + `review_turntable` tool note/description)
+  now resolves the `.mov` path with `tk_resolve_path(movie_asset_publish, name=<the
+  task>)` so the file is `{Asset}_{Task}_v###.mov` (e.g. `DJ_Model_v001.mov`),
+  matching the Version `code` — instead of the generic `name='turntable'` that
+  produced `DJ_turntable_v001.mov`. The Version code was already fixed; this makes the
+  **file** follow the same `{Asset}_{Task}` convention.
 - **Console Version naming: use `review_turntable`'s `version_code` exactly.** The
   turntable→Version system prompt now states the new Version's `code` MUST be the
   returned `version_code` (the `{Asset}_{Task}` convention, e.g. `DJ_Model`) and

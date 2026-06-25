@@ -332,6 +332,8 @@ def review_turntable(
         "asset": asset,
         "task": task,
         "version_code": version_code,  # {Asset}_{Task} — name the Version after the task
-        "note": "Set the Version code to version_code (+ _v###), sg_path_to_movie "
-                "to mov, and sg_upload mov to sg_uploaded_movie.",
+        "note": "Name BOTH the .mov and the Version after the task: resolve the .mov "
+                "path via tk_resolve_path(movie_asset_publish, name=<task>) → "
+                "{Asset}_{Task}_v###.mov (NEVER 'turntable'); set the Version code to "
+                "version_code, sg_path_to_movie to mov, sg_upload mov to sg_uploaded_movie.",
     }
