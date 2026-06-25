@@ -205,6 +205,24 @@ result = _payload
 PUBLISH_EXECUTE_CODE = r'''
 import sgtk
 import traceback
+import time as _pt_time
+import os as _pt_os
+
+_PT_LOG = _pt_os.path.expanduser("~/Library/Logs/maya-mcp-publish.log")
+
+
+def _pt(msg):
+    """Best-effort phase timing → a tailable log, to locate where the publish
+    spends its time (collect / validate / publish / finalize). Never raises.
+    Tail:  tail -f ~/Library/Logs/maya-mcp-publish.log"""
+    try:
+        with open(_PT_LOG, "a") as _fh:
+            _fh.write("%s %s\n" % (_pt_time.strftime("%H:%M:%S"), msg))
+    except Exception:
+        pass
+
+
+_pt("=== publish START ===")
 
 
 def _ctx_summary(ctx):
@@ -275,8 +293,11 @@ try:
                         "available_apps": sorted(engine.apps.keys()),
                         "hint": "tk-multi-publish2 not configured for this context."}
         else:
+            _pt("create_publish_manager START")
             manager = app.create_publish_manager()
+            _pt("create_publish_manager done; collect_session START")
             manager.collect_session()
+            _pt("collect_session done; items=%d" % len(list(manager.tree)))
 
             all_tasks = [(item, task)
                          for item in manager.tree
@@ -328,7 +349,9 @@ try:
                                 "activation": _activation}
                 else:
                     # ---- VALIDATE (default generator = active items/tasks) ----
+                    _pt("validate START; active_tasks=%d" % len(active_tasks))
                     failed = manager.validate()  # [(task, exc|None), ...] FAILED
+                    _pt("validate done; failed=%d" % len(failed))
                     failed_ids = set(id(t) for (t, _x) in failed)
                     # keep ONLY the failures (on success this is empty -> omitted)
                     failures = []
@@ -357,34 +380,78 @@ try:
                     else:
                         phase = "publish"
                         pub_error = None
+                        # PublishedFile ids are monotonic, so an id watermark
+                        # taken BEFORE publishing pinpoints exactly the files THIS
+                        # run creates — accurately per file, with no clock skew and
+                        # (crucially) no item.properties clobber. Several plugins
+                        # publish from the same item (the .ma session + the texture
+                        # both attach to maya.session), so the GLOBAL
+                        # sg_publish_data only holds the LAST plugin's data; reading
+                        # it per task reported the texture's PNG for the .ma task.
                         try:
+                            _sg = getattr(engine, "shotgun", None) or engine.sgtk.shotgun
+                        except Exception:
+                            _sg = None
+                        _entities = []
+                        for _it in manager.tree:
+                            if _it.tasks and any(t.active for t in _it.tasks):
+                                _e = getattr(_it.context, "entity", None)
+                                if isinstance(_e, dict):
+                                    _ref = {"type": _e.get("type"), "id": _e.get("id")}
+                                    if _ref.get("id") and _ref not in _entities:
+                                        _entities.append(_ref)
+                        _watermark = 0
+                        if _sg and _entities:
+                            try:
+                                _prev = _sg.find(
+                                    "PublishedFile", [["entity", "in", _entities]],
+                                    ["id"], order=[{"field_name": "id",
+                                                    "direction": "desc"}], limit=1)
+                                _watermark = _prev[0]["id"] if _prev else 0
+                            except Exception:
+                                _watermark = 0
+                        try:
+                            _pt("publish() START")
                             manager.publish()
+                            _pt("publish() done -> PublishedFiles created")
                             phase = "finalize"
+                            _pt("finalize() START (post-publish hooks: deps, "
+                                "thumbnails, review versions...)")
                             manager.finalize()
+                            _pt("finalize() done")
                             phase = "done"
                         except Exception as _pe:
                             pub_error = "%s: %s" % (type(_pe).__name__, _pe)
 
+                        # Report the PublishedFiles ACTUALLY created this run
+                        # (id > watermark), straight from ShotGrid — distinct per
+                        # file/type, not the clobbered per-task global property.
                         published = []
-                        for item, task in active_tasks:
-                            sg = None
+                        if _sg and _entities:
                             try:
-                                data = item.properties.get("sg_publish_data")
-                                if isinstance(data, dict):
-                                    path = data.get("path")
-                                    local = (path.get("local_path")
-                                             if isinstance(path, dict) else None)
-                                    sg = {"id": data.get("id"),
-                                          "type": data.get("type"),
-                                          "name": data.get("code") or data.get("name"),
-                                          "path": local,
-                                          "version_number": data.get("version_number")}
-                            except Exception:
-                                sg = None
-                            published.append({
-                                "item": item.name, "task": task.name,
-                                "plugin": task.plugin.name,
-                                "type_spec": item.type_spec, "sg_publish": sg})
+                                _rows = _sg.find(
+                                    "PublishedFile",
+                                    [["entity", "in", _entities],
+                                     ["id", "greater_than", _watermark]],
+                                    ["code", "name", "published_file_type",
+                                     "path_cache", "version_number", "task"],
+                                    order=[{"field_name": "id", "direction": "asc"}])
+                                for _r in _rows:
+                                    _pft = _r.get("published_file_type") or {}
+                                    _tsk = _r.get("task") or {}
+                                    published.append({
+                                        "id": _r.get("id"),
+                                        "name": _r.get("code") or _r.get("name"),
+                                        "published_file_type": (
+                                            _pft.get("name")
+                                            if isinstance(_pft, dict) else None),
+                                        "path": _r.get("path_cache"),
+                                        "version_number": _r.get("version_number"),
+                                        "task": (_tsk.get("name")
+                                                 if isinstance(_tsk, dict) else None)})
+                            except Exception as _qe:
+                                published = [{"warning": "could not query created "
+                                              "PublishedFiles: %s" % _qe}]
 
                         _payload = {
                             "ok": pub_error is None, "mode": "publish",
@@ -393,7 +460,8 @@ try:
                             "session_context": _ctx_summary(manager.context),
                             "activation": _activation,
                             "published": published,
-                            "published_count": len(published),
+                            "published_count": len([p for p in published
+                                                    if p.get("id")]),
                         }
 except Exception as _e:
     _payload = {"ok": False, "error": "publish_failed",
