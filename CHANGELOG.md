@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-06-26
+
 ### Added
 - **Console live progress feedback, on par with the Flow Production Tracking
   console.** The Maya console now shows (1) a rotating "thinking" bubble — 45
