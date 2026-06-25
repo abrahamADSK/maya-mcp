@@ -58,6 +58,50 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   returned `version_code` (the `{Asset}_{Task}` convention, e.g. `DJ_Model`) and
   NEVER the `.mov` filename (e.g. `DJ_turntable_v001`) — the console agent had been
   naming the Version after the movie file. Guarded by `tests/test_system_prompt.py`.
+- **Bridge return latency no longer tied to the per-call timeout — every tool
+  was affected.** `MayaBridge._send_raw` read Maya's Command Port reply in a
+  `recv()` loop that, because the MEL Command Port protocol has no terminator
+  and Maya keeps the connection open, only stopped on the *socket timeout*. So
+  after the reply had already arrived the loop blocked for the **entire**
+  per-call timeout before returning: a trivial call with `timeout=8` took ~8 s,
+  and `maya_session action=publish` / `review_turntable` with `timeout=600`
+  appeared to "hang" ~10 min *after the work was already done* (the real result
+  is routed via the result file, so the trailing socket wait was pure dead
+  time). The fix shrinks the socket timeout to a short idle-grace (0.3 s) once
+  the first bytes arrive, so a call returns at `work_time + 0.3 s` instead of
+  `≈ timeout`. Measured in-vivo against the live Command Port: `about -v`
+  5.01 s → 0.30 s (17×); a Model publish drops from ~timeout to ~9 s. Fixes
+  **all** tools at once (single chokepoint — `send_mel` / `send_python` /
+  `execute` all route through `_send_raw`). Regression guard:
+  `tests/test_maya_bridge.py::TestSendRawReturnLatency`.
+- **Review turntable: no longer crashes, renders grey, or clips the model
+  (`review_build.py`).** Three in-vivo failures on the DJ Model asset, each found
+  by inspecting the actual frames (not by guessing):
+  - **Crash** — with a non-geometry node selected (e.g. the Arnold/USD options
+    node `tmpArnoldMayaUsdOptions`) the recipe framed it, got the empty world-bbox
+    sentinel `[1e20…-1e20]` → a degenerate camera placed at ~1e20 that crashed the
+    onscreen playblast inside Arnold. Framing is now restricted to mesh-carrying
+    nodes, and a degenerate/empty bbox is refused before the camera is built.
+  - **Grey/empty `.mov`** — `cmds.isolateSelect(panel, loadSelected=True)` leaves
+    the isolate view set EMPTY on Maya 2027 (proven by querying `viewObjects`), so
+    the panel isolated *nothing* and the capture was solid grey. Use
+    `addSelected=True`, which populates the set with the model.
+  - **Cropped head/feet** — the camera at `size*2.4` filled the frame edge-to-edge;
+    pulled back to `size*3.2` with a gentler −3° tilt to leave margin (worst at the
+    front/back orbit angles where the arms spread widest).
+  - Also pins the **visible** model panel (not the last in the list) so the panel
+    configured to VP2.0 is the one actually captured. Guarded by
+    `tests/test_review_build.py` (+2 tests: non-geometry selection, degenerate bbox).
+- **`maya_session action=publish` reports the correct PublishedFile per task
+  (`publish.py`).** The result read the GLOBAL `item.properties["sg_publish_data"]`;
+  when several plugins publish from the same item (the `.ma` session + the texture
+  both attach to `maya.session`) that global holds only the LAST plugin's data, so
+  the `.ma` task mis-reported the texture's PNG id. Now an id-watermark is taken
+  before publishing and a single ShotGrid query returns the PublishedFiles with
+  `id > watermark`, reporting each created file distinctly (Maya Scene / Texture /
+  USD with their real ids, types and paths). **Pending in-vivo validation**: the
+  publish payload is a module constant loaded at server start, so it needs a server
+  restart to take effect.
 
 ## [1.18.4] — 2026-06-24
 

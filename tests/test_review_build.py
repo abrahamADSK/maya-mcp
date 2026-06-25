@@ -100,8 +100,14 @@ def test_review_turntable_passes_only_valid_playblast_flags(tmp_path, monkeypatc
     assert not bad, f"review_turntable passed non-existent playblast flags: {bad}"
 
 
-def test_review_turntable_pins_offscreen_vp2_and_resolution(tmp_path, monkeypatch):
-    """The anti-hang guarantees: offScreen + the captured panel pinned + 16:9."""
+def test_review_turntable_pins_onscreen_vp2_and_resolution(tmp_path, monkeypatch):
+    """ONSCREEN (visible) playblast + the captured panel pinned to VP2.0 + 16:9.
+
+    offScreen is now False: an on-screen viewport always has a valid render
+    context (the offScreen buffer drew nothing when Maya was occluded → empty
+    .mov), and the VP2.0-pinned ``editorPanelName`` is what keeps it off an
+    Arnold/IPR panel (the Chat 71 main-thread hang), not offScreen.
+    """
     record: dict = {}
     _install_fake_maya(monkeypatch, record)
     out = str(tmp_path / "tt.mov")
@@ -111,7 +117,7 @@ def test_review_turntable_pins_offscreen_vp2_and_resolution(tmp_path, monkeypatc
     )
 
     pb = record["pb"]
-    assert pb["offScreen"] is True
+    assert pb["offScreen"] is False
     assert pb["editorPanelName"] == "modelPanel4"
     assert pb["widthHeight"] == (1920, 1080)
     assert pb["filename"] == out
@@ -165,3 +171,44 @@ def test_review_turntable_frames_meshes_not_lights(tmp_path, monkeypatch):
 
     assert "|DJ:Mesh" in framed["objs"]
     assert "transform1" not in framed["objs"]  # the skydome must NOT drive framing
+
+
+def test_review_turntable_filters_nongeometry_selection(tmp_path, monkeypatch):
+    """Chat 74 crash: a SELECTED non-geometry node (``tmpArnoldMayaUsdOptions``,
+    an Arnold/USD options node) has the empty world-bbox sentinel; a camera built
+    from it sits at ~1e20 and crashed the onscreen playblast. The recipe must
+    filter the non-geometry selection out, and — with no renderable mesh anywhere
+    — refuse cleanly WITHOUT reaching the playblast.
+    """
+    record: dict = {}
+    cmds = _install_fake_maya(monkeypatch, record)
+
+    def _ls(*a, **k):
+        if k.get("sl"):
+            return ["tmpArnoldMayaUsdOptions"]   # the selected options node
+        if k.get("type") == "mesh":
+            return []                            # node is no mesh; scene has none
+        return []
+
+    cmds.ls.side_effect = _ls
+    cmds.listRelatives.return_value = None       # no mesh descendants anywhere
+
+    res = review_build.review_turntable(str(tmp_path / "tt.mov"), objects=None)
+    assert "error" in res
+    assert "pb" not in record                    # NEVER reached the playblast → no crash
+
+
+def test_review_turntable_refuses_degenerate_bbox(tmp_path, monkeypatch):
+    """Crash-proofing backstop: even if something is framed, an empty bbox
+    sentinel ``[1e20…-1e20]`` (max < min) must be refused before the camera is
+    built — that camera is what crashed Maya's playblast (Chat 74)."""
+    record: dict = {}
+    cmds = _install_fake_maya(monkeypatch, record)
+    # ``geo`` passes the mesh filter (default listRelatives MagicMock is truthy),
+    # but exactWorldBoundingBox returns the empty sentinel.
+    cmds.exactWorldBoundingBox.return_value = [1e20, 1e20, 1e20, -1e20, -1e20, -1e20]
+
+    res = review_build.review_turntable(str(tmp_path / "tt.mov"), objects=["geo"])
+    assert "error" in res
+    assert "degenerate" in res["error"].lower()
+    assert "pb" not in record                    # never reached the playblast
