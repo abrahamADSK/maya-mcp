@@ -11,7 +11,53 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **Console live progress feedback, on par with the Flow Production Tracking
+  console.** The Maya console now shows (1) a rotating "thinking" bubble — 45
+  whimsical gerunds ("pondering…/musing…") cycling every 2.5 s in orange while the
+  worker is busy, accumulating the last 12 event lines (was a static "Thinking…");
+  (2) **action-aware dispatcher labels** — `maya_session`/`maya_vision3d`/
+  `maya_worldlabs` calls now show what they're actually doing ("Polling Vision3D
+  progress", "Rendering review turntable", "Publishing asset (native Toolkit)",
+  "Building World Labs environment…") instead of a generic tool name, parsed live
+  from the streamed `input_json_delta`; and (3) **job log surfacing** — a tool
+  result's `new_log_lines` (the Vision3D / World Labs poll contract) is emitted as
+  progress, so long jobs show live output instead of a silent spinner. Mirrors
+  `fpt-mcp`'s `claude_worker`/`chat_window`. Guarded by `tests/test_console_labels.py`.
+
+### Changed
+- **Console rebrand: ShotGrid → Flow Production Tracking (user-facing).** Autodesk
+  renamed ShotGrid to Flow Production Tracking; every user-visible reference in the
+  console — the "Ask anything…" placeholder, the Publish suggestion button, the
+  MCP-server status descriptions, the per-tool progress labels (`_TOOL_LABELS`) and
+  the system prompt that drives the assistant's replies — now says "Flow Production
+  Tracking". Code identifiers stay (`sg_*`, `SHOTGRID_PROJECT_ID`, `shotgun_api3`):
+  the SDK is still ShotGrid under the hood. No test broke (689 passed).
+- **Console system prompt: explicit INTENT→ACTION map + "version" disambiguation
+  (`console/claude_worker.py`).** The matcher is the LLM reading
+  `--append-system-prompt`; robustness across phrasings now comes from an explicit
+  intent vocabulary instead of relying on the user knowing tool names. Natural
+  language like *"publish / sube el asset"* → `maya_session action=publish` and
+  *"turntable / giratoria / review turntable"* → `maya_session action=review_turntable`.
+  The publish/turntable mapping that was triplicated (workflow step 6, RULES, and the
+  maya server block) is **consolidated** into one denser block in the maya server
+  block (net ≈ +150 prompt tokens; mostly in the session-cached prefix). The
+  "NEVER hand-build the playblast" guard is preserved.
+- **Console system prompt: disambiguate the two meanings of "version" (fpt block).**
+  A ShotGrid **Version** entity is *review media* (`sg_uploaded_movie` streaming,
+  `sg_path_to_movie`, `sg_path_to_frames`) and is now kept distinct from **file
+  versioning** (`PublishedFile.version_number` → `_v###`, automatic inside publish).
+  "Create a turntable review version" now routes to a `sg_create` type=Version +
+  `sg_upload`→`sg_uploaded_movie` recipe (using `review_turntable`'s returned
+  `version_code`) rather than depending on the tool's returned note. Guarded by
+  `tests/test_system_prompt.py` (+2 tests).
+
 ### Fixed
+- **Console Version naming: use `review_turntable`'s `version_code` exactly.** The
+  turntable→Version system prompt now states the new Version's `code` MUST be the
+  returned `version_code` (the `{Asset}_{Task}` convention, e.g. `DJ_Model`) and
+  NEVER the `.mov` filename (e.g. `DJ_turntable_v001`) — the console agent had been
+  naming the Version after the movie file. Guarded by `tests/test_system_prompt.py`.
 - **Bridge return latency no longer tied to the per-call timeout — every tool
   was affected.** `MayaBridge._send_raw` read Maya's Command Port reply in a
   `recv()` loop that, because the MEL Command Port protocol has no terminator
