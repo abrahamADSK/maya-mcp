@@ -2,12 +2,12 @@
 
 Runs in a QThread so the UI stays responsive.  Uses --output-format
 stream-json to provide real-time progress feedback for long-running
-operations (shape generation, texturing, ShotGrid queries, etc.).
+operations (shape generation, texturing, Flow Production Tracking queries, etc.).
 
 Differences from fpt-mcp's worker:
   - Dynamic system prompt based on which MCP servers are available
   - Tool labels for the entire ecosystem (maya-mcp + fpt-mcp + flame-mcp)
-  - Multi-context support (ShotGrid entity + Maya scene)
+  - Multi-context support (Flow Production Tracking entity + Maya scene)
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ CLAUDE_BIN = _find_claude()
 # console/claude_worker.py → parent = console/ → parent.parent = repo root
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 
-# Per-console MCP scoping: the Maya console only needs Maya + ShotGrid (fpt).
+# Per-console MCP scoping: the Maya console only needs Maya + Flow Production Tracking (fpt).
 # Flame's ~38 tool schemas would bloat every request for no benefit here, so we
 # load only these two via --strict-mcp-config / --mcp-config (see run()).
 _CONSOLE_MCP_SERVERS = {"maya-mcp", "fpt-mcp"}
@@ -364,7 +364,7 @@ to verify if the Vision3D server is running and accessible.
    - If available=true → offer both options (AI generation + Maya modeling)
    - If available=false → inform the user and only offer Maya modeling.
 
-2. IDENTIFY ENTITY: If there's ShotGrid context (fpt-mcp available) → \
+2. IDENTIFY ENTITY: If there's Flow Production Tracking context (fpt-mcp available) → \
 use sg_find to search. If not → ask user or proceed with Maya directly.
 
 3. SEARCH REFERENCES: If fpt-mcp is available, search Versions, \
@@ -398,7 +398,7 @@ RULES
 - DETERMINISTIC TOOLS: never improvise a publish or a review turntable with execute_python — use the maya-mcp INTENT→ACTION map above. The deterministic actions frame/render/publish correctly and avoid hanging Maya's main thread (a hand-built playblast has produced empty frames + main-thread hangs).
 - Text-to-3D: translate prompt to English if needed.
 - LANGUAGE — overrides any global config: there is NO default language. Reply ONLY in the user's language, i.e. the language of their MOST RECENT message. English in → English out. Spanish in → Spanish out. Disregard any "Spanish by default" or preferred-language instruction inherited from the global CLAUDE.md or from earlier turns — mirroring the latest message always wins. Re-detect every turn. Be concise. Execute, don't explain.
-- READ-ONLY: you cannot edit/create/delete files (Edit/Write/Bash disabled). Drive Maya/ShotGrid/Flame via MCP tools only. RAG self-learning still works (learn_pattern is an MCP tool). For a code fix, emit one line `@@SUGGESTION@@ <title> :: <detail>` (the console logs it); never try to edit code.
+- READ-ONLY: you cannot edit/create/delete files (Edit/Write/Bash disabled). Drive Maya/Flow Production Tracking/Flame via MCP tools only. RAG self-learning still works (learn_pattern is an MCP tool). For a code fix, emit one line `@@SUGGESTION@@ <title> :: <detail>` (the console logs it); never try to edit code.
 """
 
 
@@ -449,13 +449,13 @@ def build_system_prompt(available_servers: dict) -> str:
 
     if "fpt-mcp" in available_servers:
         parts.append(
-            "2. **fpt-mcp** — ShotGrid API + Toolkit + RAG:\n"
+            "2. **fpt-mcp** — Flow Production Tracking API + Toolkit + RAG:\n"
             "   sg_find, sg_create, sg_update, sg_delete, sg_schema, "
             "sg_upload, sg_download, sg_batch, sg_text_search, sg_summarize, "
             "sg_revive, sg_note_thread, sg_activity, tk_resolve_path, tk_publish, "
             "search_sg_docs, learn_pattern, session_stats\n"
             "   \"version\" has TWO distinct meanings — disambiguate by context:\n"
-            "     · REVIEW Version (a ShotGrid Version entity = review media): the user says "
+            "     · REVIEW Version (a Flow Production Tracking Version entity = review media): the user says "
             "\"review version\", \"turntable version\", \"dailies\", \"sube el playblast / para "
             "revisión\". Create it: `sg_create` type=Version (use review_turntable's returned "
             "version_code, link entity + task), set sg_path_to_movie to the .mov, then `sg_upload` "
@@ -509,23 +509,23 @@ _TOOL_LABELS = {
     "texture_mesh_remote": "Starting texturing (Vision3D)",
     "vision3d_poll": "Polling Vision3D progress",
     "vision3d_download": "Downloading Vision3D results",
-    # fpt-mcp — ShotGrid tools
-    "sg_find": "Searching ShotGrid",
-    "sg_create": "Creating entity in ShotGrid",
-    "sg_update": "Updating ShotGrid",
-    "sg_delete": "Deleting from ShotGrid",
-    "sg_schema": "Querying ShotGrid schema",
-    "sg_upload": "Uploading file to ShotGrid",
-    "sg_download": "Downloading from ShotGrid",
-    "sg_batch": "Running batch operation in ShotGrid",
-    "sg_text_search": "Searching text across ShotGrid",
-    "sg_summarize": "Aggregating ShotGrid data",
-    "sg_revive": "Restoring entity in ShotGrid",
-    "sg_note_thread": "Reading note thread from ShotGrid",
-    "sg_activity": "Reading activity stream from ShotGrid",
+    # fpt-mcp — Flow Production Tracking tools
+    "sg_find": "Searching Flow Production Tracking",
+    "sg_create": "Creating entity in Flow Production Tracking",
+    "sg_update": "Updating Flow Production Tracking",
+    "sg_delete": "Deleting from Flow Production Tracking",
+    "sg_schema": "Querying Flow Production Tracking schema",
+    "sg_upload": "Uploading file to Flow Production Tracking",
+    "sg_download": "Downloading from Flow Production Tracking",
+    "sg_batch": "Running batch operation in Flow Production Tracking",
+    "sg_text_search": "Searching text across Flow Production Tracking",
+    "sg_summarize": "Aggregating Flow Production Tracking data",
+    "sg_revive": "Restoring entity in Flow Production Tracking",
+    "sg_note_thread": "Reading note thread from Flow Production Tracking",
+    "sg_activity": "Reading activity stream from Flow Production Tracking",
     "tk_resolve_path": "Resolving Toolkit path",
-    "tk_publish": "Publishing to ShotGrid",
-    "search_sg_docs": "Searching ShotGrid documentation",
+    "tk_publish": "Publishing to Flow Production Tracking",
+    "search_sg_docs": "Searching Flow Production Tracking documentation",
     "learn_pattern": "Learning validated pattern",
     "session_stats": "Fetching session statistics",
     # flame-mcp tools (real tool names from flame_mcp_server.py)
@@ -628,7 +628,7 @@ class ClaudeWorker(QThread):
             if not self._effort_level or self._effort_level == "auto":
                 run_env.pop("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING", None)
                 run_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
-            # Bind fpt-mcp ShotGrid ops to the Maya Toolkit engine's project
+            # Bind fpt-mcp Flow Production Tracking ops to the Maya Toolkit engine's project
             # (authoritative when tank-launched); else "0" so a project-scoped
             # create fails rather than hitting a stale .env default. Chat 69.
             run_env.update(project_env(self._context.get("project_id")))
@@ -645,7 +645,7 @@ class ClaudeWorker(QThread):
             # capture_suggestions, not by editing files.
             cmd.extend(["--disallowedTools", *DISALLOWED_TOOLS])
             # Per-console MCP scoping: load ONLY the servers this console needs
-            # (Maya + ShotGrid, not Flame) via strict config, so Flame's tool
+            # (Maya + Flow Production Tracking, not Flame) via strict config, so Flame's tool
             # schemas never enter the request. Deferred loading (ENABLE_TOOL_SEARCH
             # above) further shrinks what the remaining servers contribute.
             _scoped_mcp = build_scoped_mcp_config(

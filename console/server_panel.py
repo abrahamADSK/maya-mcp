@@ -9,7 +9,7 @@ Provides two widgets:
 
 Servers supported:
   - maya-mcp   → TCP ping to Maya Command Port
-  - fpt-mcp    → ShotGrid credential check
+  - fpt-mcp    → Flow Production Tracking credential check
   - flame-mcp  → TCP ping to Flame (if configured)
   - vision3d   → HTTP GET /api/health (GPU server)
 """
@@ -49,8 +49,8 @@ _KNOWN_SERVERS = {
     },
     "fpt-mcp": {
         "label": "fpt-mcp",
-        "desc_connected": "ShotGrid API + Toolkit",
-        "desc_offline": "ShotGrid pipeline",
+        "desc_connected": "Flow Production Tracking API + Toolkit",
+        "desc_offline": "Flow Production Tracking pipeline",
         "icon": "🎯",
     },
     "flame-mcp": {
@@ -149,7 +149,7 @@ class HealthChecker(QThread):
                         info["vision3d"] = "offline"
 
             elif name == "fpt-mcp":
-                # Check if ShotGrid credentials exist
+                # Check if Flow Production Tracking credentials exist
                 sg_url = env.get("SHOTGRID_URL", "")
                 if sg_url:
                     info["status"] = "configured"

@@ -186,7 +186,7 @@ def _inline_fmt(text: str) -> str:
 
 _QUICK_ACTIONS = [
     ("Gen3D", "Generate a 3D model using Vision3D of: "),
-    ("Publish", "Publish the current Maya scene to ShotGrid"),
+    ("Publish", "Publish the current Maya scene to Flow Production Tracking"),
     ("Docs", "Search the Maya API documentation for: "),
 ]
 
@@ -220,7 +220,7 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._history: list[dict] = []
         self._context: dict = {}
         # Bind to the Toolkit engine's project at launch (authoritative when
-        # Maya was tank-launched into a Task): fpt-mcp ShotGrid ops then target
+        # Maya was tank-launched into a Task): fpt-mcp Flow Production Tracking ops then target
         # that project. Absent (plain Maya) → claude_worker injects "0" so a
         # create fails rather than hitting a stale .env default. Chat 69.
         _engine_pid = resolve_engine_project()
@@ -328,7 +328,7 @@ class MCPChatWidget(QtWidgets.QWidget):
 
         self._input = QtWidgets.QLineEdit()
         self._input.setObjectName("input")
-        self._input.setPlaceholderText("Ask anything — Maya, ShotGrid, Vision3D, Flame...")
+        self._input.setPlaceholderText("Ask anything — Maya, Flow Production Tracking, Vision3D, Flame...")
         self._input.returnPressed.connect(self._send)
         i_lay.addWidget(self._input, 1)
 
@@ -411,7 +411,7 @@ class MCPChatWidget(QtWidgets.QWidget):
             else:
                 parts.append(sel_short)
 
-        # ShotGrid entity
+        # Flow Production Tracking entity
         etype = self._context.get("entity_type")
         eid = self._context.get("entity_id")
         if etype and eid:

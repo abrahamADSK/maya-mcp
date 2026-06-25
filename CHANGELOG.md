@@ -12,6 +12,13 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 ## [Unreleased]
 
 ### Changed
+- **Console rebrand: ShotGrid → Flow Production Tracking (user-facing).** Autodesk
+  renamed ShotGrid to Flow Production Tracking; every user-visible reference in the
+  console — the "Ask anything…" placeholder, the Publish suggestion button, the
+  MCP-server status descriptions, the per-tool progress labels (`_TOOL_LABELS`) and
+  the system prompt that drives the assistant's replies — now says "Flow Production
+  Tracking". Code identifiers stay (`sg_*`, `SHOTGRID_PROJECT_ID`, `shotgun_api3`):
+  the SDK is still ShotGrid under the hood. No test broke (689 passed).
 - **Console system prompt: explicit INTENT→ACTION map + "version" disambiguation
   (`console/claude_worker.py`).** The matcher is the LLM reading
   `--append-system-prompt`; robustness across phrasings now comes from an explicit

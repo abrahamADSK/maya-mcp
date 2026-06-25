@@ -6,7 +6,7 @@ flame-mcp, vision3d).
 
 Differences from fpt-mcp console:
   - Server panel showing all MCP servers and their status
-  - Multi-context support (ShotGrid entity + Maya scene)
+  - Multi-context support (Flow Production Tracking entity + Maya scene)
   - Maya-blue accent theme (#ffff00) instead of fpt-mcp red (#ffff00)
   - Dynamic system prompt based on available servers
 """
@@ -295,7 +295,7 @@ class ChatWindow(QMainWindow):
 
         self._input = QLineEdit()
         self._input.setObjectName("input")
-        self._input.setPlaceholderText("Ask anything — Maya, ShotGrid, Vision3D, Flame...")
+        self._input.setPlaceholderText("Ask anything — Maya, Flow Production Tracking, Vision3D, Flame...")
         self._input.returnPressed.connect(self._send)
         input_layout.addWidget(self._input, 1)
 
