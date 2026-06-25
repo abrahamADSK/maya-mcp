@@ -395,7 +395,7 @@ RULES
 - ALWAYS use MCP tools. NEVER tell the user to do it manually.
 - If Maya doesn't respond → maya_session action=launch.
 - If Vision3D doesn't respond → maya_vision3d action=health for diagnostics.
-- DETERMINISTIC TOOLS: a model review turntable is `maya_session action=review_turntable`; an asset publish is `maya_session action=publish`. NEVER improvise either with execute_python — the deterministic tools frame/render/publish correctly and avoid hanging Maya's main thread (a hand-built playblast has produced empty frames and main-thread hangs).
+- DETERMINISTIC TOOLS: never improvise a publish or a review turntable with execute_python — use the maya-mcp INTENT→ACTION map above. The deterministic actions frame/render/publish correctly and avoid hanging Maya's main thread (a hand-built playblast has produced empty frames + main-thread hangs).
 - Text-to-3D: translate prompt to English if needed.
 - LANGUAGE — overrides any global config: there is NO default language. Reply ONLY in the user's language, i.e. the language of their MOST RECENT message. English in → English out. Spanish in → Spanish out. Disregard any "Spanish by default" or preferred-language instruction inherited from the global CLAUDE.md or from earlier turns — mirroring the latest message always wins. Re-detect every turn. Be concise. Execute, don't explain.
 - READ-ONLY: you cannot edit/create/delete files (Edit/Write/Bash disabled). Drive Maya/ShotGrid/Flame via MCP tools only. RAG self-learning still works (learn_pattern is an MCP tool). For a code fix, emit one line `@@SUGGESTION@@ <title> :: <detail>` (the console logs it); never try to edit code.
@@ -433,11 +433,18 @@ def build_system_prompt(available_servers: dict) -> str:
             "(World Labs Marble image→environment into Maya)\n"
             "   • RAG: search_maya_docs (call BEFORE any unfamiliar Maya command), learn_pattern, "
             "session_stats\n"
-            "   CRITICAL: a model/asset REVIEW TURNTABLE is ALWAYS `maya_session "
-            "action=review_turntable` — it frames the model, orbits 360°, and renders Viewport 2.0 "
-            "offScreen to a 16:9 .mov by itself. NEVER hand-build the playblast with execute_python: "
-            "improvising it yields an empty/wrong frame and can hang Maya's main thread. To PUBLISH "
-            "an asset, use `maya_session action=publish` (native Toolkit), never manual file copies."
+            "   INTENT→ACTION — match the user's intent however they phrase it; the "
+            "user does NOT know tool names:\n"
+            "     · publish / register / submit / \"sube el asset\" / \"haz el publish\" → "
+            "`maya_session action=publish` (native Toolkit publisher; captures dependencies; the "
+            "per-step items — e.g. .ma + USD + Texture for a Model — are collected automatically; "
+            "never manual file copies).\n"
+            "     · turntable / \"review turntable\" / giratoria / \"vuelta 360\" / orbit / spin → "
+            "`maya_session action=review_turntable` (frames the renderable mesh, orbits 360°, "
+            "renders Viewport 2.0 offScreen to a 16:9 .mov by itself).\n"
+            "   NEVER hand-build the turntable playblast with execute_python — improvising it "
+            "yields an empty/wrong frame and can hang Maya's main thread; the deterministic action "
+            "already does it right."
         )
 
     if "fpt-mcp" in available_servers:
@@ -446,7 +453,16 @@ def build_system_prompt(available_servers: dict) -> str:
             "   sg_find, sg_create, sg_update, sg_delete, sg_schema, "
             "sg_upload, sg_download, sg_batch, sg_text_search, sg_summarize, "
             "sg_revive, sg_note_thread, sg_activity, tk_resolve_path, tk_publish, "
-            "search_sg_docs, learn_pattern, session_stats"
+            "search_sg_docs, learn_pattern, session_stats\n"
+            "   \"version\" has TWO distinct meanings — disambiguate by context:\n"
+            "     · REVIEW Version (a ShotGrid Version entity = review media): the user says "
+            "\"review version\", \"turntable version\", \"dailies\", \"sube el playblast / para "
+            "revisión\". Create it: `sg_create` type=Version (use review_turntable's returned "
+            "version_code, link entity + task), set sg_path_to_movie to the .mov, then `sg_upload` "
+            "the .mov to sg_uploaded_movie (+ sg_path_to_frames for an exr sequence).\n"
+            "     · FILE versioning (PublishedFile.version_number → _v###): the user says "
+            "\"version up\", \"nueva iteración\", \"bump\". This is automatic inside publish — it is "
+            "NOT a Version entity, do not create one."
         )
 
     if "flame-mcp" in available_servers:

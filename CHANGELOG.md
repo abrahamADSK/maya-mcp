@@ -11,6 +11,26 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- **Console system prompt: explicit INTENT→ACTION map + "version" disambiguation
+  (`console/claude_worker.py`).** The matcher is the LLM reading
+  `--append-system-prompt`; robustness across phrasings now comes from an explicit
+  intent vocabulary instead of relying on the user knowing tool names. Natural
+  language like *"publish / sube el asset"* → `maya_session action=publish` and
+  *"turntable / giratoria / review turntable"* → `maya_session action=review_turntable`.
+  The publish/turntable mapping that was triplicated (workflow step 6, RULES, and the
+  maya server block) is **consolidated** into one denser block in the maya server
+  block (net ≈ +150 prompt tokens; mostly in the session-cached prefix). The
+  "NEVER hand-build the playblast" guard is preserved.
+- **Console system prompt: disambiguate the two meanings of "version" (fpt block).**
+  A ShotGrid **Version** entity is *review media* (`sg_uploaded_movie` streaming,
+  `sg_path_to_movie`, `sg_path_to_frames`) and is now kept distinct from **file
+  versioning** (`PublishedFile.version_number` → `_v###`, automatic inside publish).
+  "Create a turntable review version" now routes to a `sg_create` type=Version +
+  `sg_upload`→`sg_uploaded_movie` recipe (using `review_turntable`'s returned
+  `version_code`) rather than depending on the tool's returned note. Guarded by
+  `tests/test_system_prompt.py` (+2 tests).
+
 ## [1.18.4] — 2026-06-24
 
 ### Fixed

@@ -76,3 +76,22 @@ def test_prompt_forbids_hand_built_playblast():
     # the behavioural rule that prevents the empty-frame / main-thread-hang bug
     assert "never" in p and "playblast" in p
     assert "review_turntable" in p
+
+
+def test_prompt_disambiguates_version_entity_vs_file_versioning():
+    p = _maya_prompt()
+    # A ShotGrid review Version (media) must be kept distinct from file _v###
+    # versioning so "create a turntable review version" uploads the .mov as a
+    # Version entity instead of bumping a PublishedFile.version_number.
+    assert "sg_uploaded_movie" in p  # review-media field (streaming)
+    assert "version_number" in p  # the file-versioning sense, named explicitly
+    assert "type=Version" in p  # the review-Version creation recipe
+
+
+def test_prompt_maps_intent_to_deterministic_actions():
+    p = _maya_prompt()
+    # NL intents must route to the deterministic actions without the user
+    # needing to know tool names.
+    assert "INTENT" in p
+    assert "action=review_turntable" in p
+    assert "action=publish" in p

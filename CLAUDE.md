@@ -345,6 +345,23 @@ The `console/` package provides a dockable panel inside Maya via `cmds.workspace
 6. `claude_worker.py` spawns Claude CLI — all MCPs discovered via `~/.claude.json` automatically. It injects `SHOTGRID_PROJECT_ID` from the `tk-maya` engine's project (`project_context.resolve_engine_project`, captured at widget init) so fpt-mcp ShotGrid ops (e.g. `tk_publish`) target the launched project; absent (plain Maya) → `"0"` so a create fails rather than hitting a stale `.env` default. Chat 69.
 7. Panel persists across Maya sessions (retain=True + uiScript auto-rebuilds on restore)
 
+**System prompt (`build_system_prompt`)** is assembled conditionally per available
+MCP server (`available_servers` from `~/.claude.json`). Two prompt conventions live
+here and are guarded by `tests/test_system_prompt.py`:
+- **INTENT→ACTION map** (maya server block): natural-language intents route to the
+  deterministic dispatcher actions without the user knowing tool names — *publish /
+  "sube el asset"* → `maya_session action=publish`; *turntable / giratoria / "review
+  turntable"* → `maya_session action=review_turntable`. The matcher is the LLM, so
+  robustness comes from this intent vocabulary, not a keyword router; the determinism
+  lives in the tools. The "NEVER hand-build the playblast with execute_python" guard
+  (Chat 72) is part of this block.
+- **"version" disambiguation** (fpt server block, only when fpt-mcp is present): a
+  ShotGrid **Version** entity = *review media* (`sg_uploaded_movie`, `sg_path_to_movie`,
+  `sg_path_to_frames`) vs **file versioning** (`PublishedFile.version_number` → `_v###`,
+  automatic inside publish). "Create a turntable review version" → `sg_create`
+  type=Version + `sg_upload`→`sg_uploaded_movie` using `review_turntable`'s returned
+  `version_code`.
+
 **Standalone consoles** (app.py, chat_window.py) are legacy — use fpt-mcp or flame-mcp consoles instead.
 
 ---
