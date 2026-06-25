@@ -52,6 +52,13 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   `version_code`) rather than depending on the tool's returned note. Guarded by
   `tests/test_system_prompt.py` (+2 tests).
 
+### Fixed
+- **Console Version naming: use `review_turntable`'s `version_code` exactly.** The
+  turntable→Version system prompt now states the new Version's `code` MUST be the
+  returned `version_code` (the `{Asset}_{Task}` convention, e.g. `DJ_Model`) and
+  NEVER the `.mov` filename (e.g. `DJ_turntable_v001`) — the console agent had been
+  naming the Version after the movie file. Guarded by `tests/test_system_prompt.py`.
+
 ## [1.18.4] — 2026-06-24
 
 ### Fixed
