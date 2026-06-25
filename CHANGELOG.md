@@ -11,6 +11,24 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **Bridge return latency no longer tied to the per-call timeout — every tool
+  was affected.** `MayaBridge._send_raw` read Maya's Command Port reply in a
+  `recv()` loop that, because the MEL Command Port protocol has no terminator
+  and Maya keeps the connection open, only stopped on the *socket timeout*. So
+  after the reply had already arrived the loop blocked for the **entire**
+  per-call timeout before returning: a trivial call with `timeout=8` took ~8 s,
+  and `maya_session action=publish` / `review_turntable` with `timeout=600`
+  appeared to "hang" ~10 min *after the work was already done* (the real result
+  is routed via the result file, so the trailing socket wait was pure dead
+  time). The fix shrinks the socket timeout to a short idle-grace (0.3 s) once
+  the first bytes arrive, so a call returns at `work_time + 0.3 s` instead of
+  `≈ timeout`. Measured in-vivo against the live Command Port: `about -v`
+  5.01 s → 0.30 s (17×); a Model publish drops from ~timeout to ~9 s. Fixes
+  **all** tools at once (single chokepoint — `send_mel` / `send_python` /
+  `execute` all route through `_send_raw`). Regression guard:
+  `tests/test_maya_bridge.py::TestSendRawReturnLatency`.
+
 ## [1.18.4] — 2026-06-24
 
 ### Fixed
