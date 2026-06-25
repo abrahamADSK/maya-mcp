@@ -767,6 +767,53 @@ class TestSilentMayaRecvTimeout:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 4.1.8b — Return latency: idle-grace after first reply (Chat 74 regression)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSendRawReturnLatency:
+    """Chat 74 root cause: the Command Port protocol has no terminator and Maya
+    does not close the connection, so after the reply arrived the old recv loop
+    blocked for the ENTIRE eff_timeout before returning. That made every call's
+    return latency ≈ its timeout — a publish/turntable with timeout=600 "hung"
+    ~10 min after the work was already done (proven: the result file lived for
+    exactly the timeout). The fix shrinks the socket timeout to a short
+    ``idle_grace`` once the first bytes arrive.
+    """
+
+    def test_shrinks_to_idle_grace_after_first_data(self):
+        """The decisive guard: settimeout() is first set to the full call timeout
+        (long ops may legitimately take that long to start replying), then dropped
+        to a sub-second idle-grace as soon as recv() returns real data — so the
+        call returns promptly instead of blocking the full timeout."""
+        bridge = MayaBridge(host="localhost", port=8100)
+        sock = unittest.mock.MagicMock()
+        sock.__enter__.return_value = sock
+        # Maya replies once, then goes idle WITHOUT closing (real Command Port).
+        sock.recv.side_effect = [b"Maya 2027\n", socket.timeout()]
+        with unittest.mock.patch("socket.socket", return_value=sock):
+            result = bridge._send_raw("about -v", timeout=600)
+        assert result == "Maya 2027"
+        waits = [c.args[0] for c in sock.settimeout.call_args_list]
+        assert waits[0] == 600, "first recv must allow the full timeout for long ops"
+        assert any(w <= 0.5 for w in waits), (
+            "must shrink to idle-grace after first data (else return latency "
+            "≈ timeout — the Chat 74 hang)"
+        )
+        assert min(waits) < 600
+
+    def test_no_data_then_timeout_still_raises(self):
+        """The silent-Maya guard is preserved: if recv() times out before ANY
+        data arrives, raise instead of returning empty (no idle-grace shortcut)."""
+        bridge = MayaBridge(host="localhost", port=8100)
+        sock = unittest.mock.MagicMock()
+        sock.__enter__.return_value = sock
+        sock.recv.side_effect = socket.timeout()
+        with unittest.mock.patch("socket.socket", return_value=sock):
+            with pytest.raises(MayaConnectionError, match="returned no data"):
+                bridge._send_raw("about -v", timeout=0.3)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 4.1.9 — Trailing null bytes stripped from _send_raw response
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -80,10 +80,15 @@ class MayaBridge:
           interpreter, long-running command in the queue) — we raise
           MayaConnectionError instead of returning an empty string, which
           the caller would otherwise misinterpret as a successful no-op.
-        - The peer sends data, then stops. We have data already, the
-          subsequent recv() times out — return what we have. This is how
-          Maya's command port behaves in normal operation since the
-          protocol has no terminator.
+        - The peer sends data, then stops (the normal case: the Command Port
+          protocol has no terminator and Maya keeps the connection open). Once
+          the first bytes arrive we shrink the socket timeout to a short
+          ``idle_grace`` and return as soon as the reply goes idle — we do NOT
+          block for the full ``eff_timeout`` after the reply. Blocking the full
+          timeout made every call's return latency ≈ its timeout: a trivial
+          call with timeout=8 took 8s, and a publish/turntable with timeout=600
+          "hung" ~10 min after the work was already done (Chat 74 root cause —
+          proven: the result file lived for exactly the timeout).
         """
         eff_timeout = timeout if timeout is not None else self.timeout
         try:
@@ -93,14 +98,20 @@ class MayaBridge:
                 sock.sendall((command + '\n').encode('utf-8'))
 
                 response = b''
-                got_any = False  # True once recv() has returned at least once
+                got_any = False  # True once recv() has returned real data
+                # The first recv() may legitimately wait the full eff_timeout:
+                # the Command Port runs synchronously on Maya's main thread, so
+                # a long op (USD export, publish, import) only replies once it
+                # finishes. But AFTER the reply starts, the protocol has no
+                # terminator and Maya does not close the socket — a blind recv()
+                # would then block for the ENTIRE remaining eff_timeout. That
+                # made every call's return latency ≈ its timeout (Chat 74 bug).
+                # So once the first bytes arrive, drop to a short idle-grace and
+                # return as soon as the reply goes quiet.
+                idle_grace = 0.3
                 while True:
                     try:
                         chunk = sock.recv(4096)
-                        got_any = True
-                        if not chunk:
-                            break  # peer closed cleanly
-                        response += chunk
                     except socket.timeout:
                         if not got_any:
                             raise MayaConnectionError(
@@ -110,7 +121,13 @@ class MayaBridge:
                                 "modal dialog, executing a long-running command, "
                                 "or the Command Port may be orphaned after a crash."
                             )
-                        break
+                        break  # reply received, then idle for idle_grace — done
+                    if not chunk:
+                        break  # peer closed cleanly
+                    response += chunk
+                    if not got_any:
+                        got_any = True
+                        sock.settimeout(idle_grace)
 
                 return response.decode('utf-8').strip('\n\r\x00 \t')
 
