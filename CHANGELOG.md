@@ -11,6 +11,20 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **Console live progress feedback, on par with the Flow Production Tracking
+  console.** The Maya console now shows (1) a rotating "thinking" bubble — 45
+  whimsical gerunds ("pondering…/musing…") cycling every 2.5 s in orange while the
+  worker is busy, accumulating the last 12 event lines (was a static "Thinking…");
+  (2) **action-aware dispatcher labels** — `maya_session`/`maya_vision3d`/
+  `maya_worldlabs` calls now show what they're actually doing ("Polling Vision3D
+  progress", "Rendering review turntable", "Publishing asset (native Toolkit)",
+  "Building World Labs environment…") instead of a generic tool name, parsed live
+  from the streamed `input_json_delta`; and (3) **job log surfacing** — a tool
+  result's `new_log_lines` (the Vision3D / World Labs poll contract) is emitted as
+  progress, so long jobs show live output instead of a silent spinner. Mirrors
+  `fpt-mcp`'s `claude_worker`/`chat_window`. Guarded by `tests/test_console_labels.py`.
+
 ### Changed
 - **Console rebrand: ShotGrid → Flow Production Tracking (user-facing).** Autodesk
   renamed ShotGrid to Flow Production Tracking; every user-visible reference in the

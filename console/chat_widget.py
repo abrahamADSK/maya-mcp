@@ -12,6 +12,7 @@ It has NO dependency on QMainWindow, QApplication, or Maya.
 from __future__ import annotations
 
 import html
+import random
 import re
 from typing import Optional
 
@@ -20,6 +21,21 @@ from .qt_compat import QtWidgets, QtCore, QtGui
 from .claude_worker import AVAILABLE_MODELS, AVAILABLE_EFFORTS, ClaudeWorker
 from .server_panel import ServerStatusBar, detect_mcp_servers
 from .project_context import resolve_engine_project
+
+
+# Whimsical "thinking" gerunds shown as a rotating orange header while the
+# worker is busy — pure flavor, AGNOSTIC: they must never hint at a real tool,
+# server or process under the hood (matches the Flow Production Tracking console).
+_THINKING_VERBS = (
+    "pondering", "musing", "vibing", "cogitating", "ruminating", "marinating",
+    "brewing", "percolating", "simmering", "noodling", "tinkering", "scheming",
+    "conjuring", "weaving", "wrangling", "churning", "crunching", "philosophizing",
+    "hypothesizing", "daydreaming", "chin-stroking", "meandering", "mulling",
+    "contemplating", "deliberating", "improvising", "jazz-handing", "wizarding",
+    "alchemizing", "finagling", "frolicking", "twiddling thumbs", "doodling",
+    "fiddling", "puttering", "whisking", "juggling", "hustling", "bustling",
+    "flourishing", "puzzling", "head-scratching", "hand-waving", "galaxy-braining",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +245,10 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._maya_context_fn = maya_context_fn
         self._worker: Optional[ClaudeWorker] = None
         self._progress_lines: list[str] = []
+        self._thinking_verb: str = ""
+        self._thinking_timer = QtCore.QTimer(self)
+        self._thinking_timer.setInterval(2500)  # ms between verb rotations
+        self._thinking_timer.timeout.connect(self._rotate_thinking_verb)
         self._servers: dict = {}
         self._selected_model_idx = 0
         self._selected_effort_idx = 0
@@ -496,7 +516,10 @@ class MCPChatWidget(QtWidgets.QWidget):
                 pass
 
         self._progress_lines = []
+        self._thinking_verb = self._pick_thinking_verb()
         self._append_bubble("<i>Thinking...</i>", "thinking")
+        self._refresh_thinking_bubble()
+        self._thinking_timer.start()
 
         model_id, backend = self._get_selected_model()
         self._worker = ClaudeWorker(
@@ -513,22 +536,52 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._worker.finished.connect(self._on_response)
         self._worker.start()
 
+    def _pick_thinking_verb(self) -> str:
+        """Return a random thinking verb different from the current one."""
+        if len(_THINKING_VERBS) <= 1:
+            return _THINKING_VERBS[0]
+        while True:
+            verb = random.choice(_THINKING_VERBS)
+            if verb != self._thinking_verb:
+                return verb
+
+    def _rotate_thinking_verb(self):
+        """QTimer callback: pick a new verb and redraw the thinking bubble."""
+        if self._worker is None:
+            return
+        self._thinking_verb = self._pick_thinking_verb()
+        self._refresh_thinking_bubble()
+
+    def _refresh_thinking_bubble(self):
+        """Render the thinking bubble: rotating orange header + recent events."""
+        header_html = (
+            f'<div style="color:#fb923c;font-style:italic;font-size:13px;'
+            f'margin-bottom:4px;">{html.escape(self._thinking_verb)}&hellip;</div>'
+        )
+        if self._progress_lines:
+            visible = self._progress_lines[-12:]
+            lines_html = "<br>".join(html.escape(line) for line in visible)
+            if len(self._progress_lines) > 12:
+                lines_html = (
+                    f"<i style='color:#4a4a4a;'>... "
+                    f"({len(self._progress_lines) - 12} previous lines)</i><br>"
+                    + lines_html
+                )
+            body_html = (
+                f'<div style="font-family:monospace;font-size:12px;'
+                f'line-height:1.5;color:#888888;">{lines_html}</div>'
+            )
+        else:
+            body_html = ""
+        self._update_last_bubble(header_html + body_html, "thinking")
+
     def _on_progress(self, status: str):
         self._progress_lines.append(status)
-        visible = self._progress_lines[-10:]
-        lines_html = "<br>".join(html.escape(l) for l in visible)
-        if len(self._progress_lines) > 10:
-            lines_html = (
-                f"<i style='color:#4a4a4a;'>... ({len(self._progress_lines) - 10} "
-                f"previous)</i><br>" + lines_html
-            )
-        self._update_last_bubble(
-            f"<div style='font-family:monospace;font-size:11px;"
-            f"line-height:1.4;'>{lines_html}</div>",
-            "thinking",
-        )
+        self._refresh_thinking_bubble()
 
     def _on_response(self, text: str, is_error: bool):
+        if self._thinking_timer.isActive():
+            self._thinking_timer.stop()
         role = "error" if is_error else "assistant"
         self._update_last_bubble(_md_to_html(text), role)
         self._send_btn.setEnabled(True)

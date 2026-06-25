@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import urllib.error
@@ -539,6 +540,42 @@ _TOOL_LABELS = {
     # The prefix stripping resolves which MCP they belong to.
 }
 
+# Dispatcher tools take an `action` param; an action-aware label keeps a visible
+# heartbeat in the progress bubble during long dispatch loops (poll, publish,
+# review_turntable, World Labs build) instead of repeating the generic tool name.
+_DISPATCHER_TOOLS = frozenset(("maya_session", "maya_vision3d", "maya_worldlabs"))
+
+_DISPATCHER_ACTION_LABELS = {
+    # maya_session actions
+    ("maya_session", "launch"): "Launching Maya",
+    ("maya_session", "ping"): "Checking Maya connection",
+    ("maya_session", "new_scene"): "Creating new Maya scene",
+    ("maya_session", "save_scene"): "Saving Maya scene",
+    ("maya_session", "list_scene"): "Querying Maya scene",
+    ("maya_session", "scene_snapshot"): "Snapshotting Maya scene state",
+    ("maya_session", "delete"): "Deleting object in Maya",
+    ("maya_session", "execute_python"): "Running Python in Maya",
+    ("maya_session", "shelf_button"): "Creating Maya shelf button",
+    ("maya_session", "operation_history"): "Reading Maya operation history",
+    ("maya_session", "publish"): "Publishing asset (native Toolkit)",
+    ("maya_session", "review_turntable"): "Rendering review turntable",
+    # maya_vision3d actions
+    ("maya_vision3d", "select_server"): "Selecting Vision3D server",
+    ("maya_vision3d", "health"): "Checking Vision3D availability",
+    ("maya_vision3d", "generate_image"): "Starting image-to-3D (Vision3D)",
+    ("maya_vision3d", "generate_text"): "Starting text-to-3D (Vision3D)",
+    ("maya_vision3d", "texture"): "Starting texturing (Vision3D)",
+    ("maya_vision3d", "poll"): "Polling Vision3D progress",
+    ("maya_vision3d", "download"): "Downloading Vision3D results",
+    # maya_worldlabs actions
+    ("maya_worldlabs", "health"): "Checking World Labs availability",
+    ("maya_worldlabs", "generate"): "Generating World Labs environment",
+    ("maya_worldlabs", "poll"): "Polling World Labs progress",
+    ("maya_worldlabs", "download"): "Downloading World Labs result",
+    ("maya_worldlabs", "convert"): "Converting World Labs assets",
+    ("maya_worldlabs", "build"): "Building World Labs environment in Maya",
+}
+
 
 class ClaudeWorker(QThread):
     """Runs ``claude -p "prompt" --output-format stream-json --verbose``
@@ -572,13 +609,28 @@ class ClaudeWorker(QThread):
         self._backend = backend
         self._effort_level = effort_level or DEFAULT_EFFORT
 
-    def _label_for_tool(self, tool_name: str) -> str:
-        """Return a human-friendly label for an MCP tool name."""
-        short = tool_name
+    def _short_tool_name(self, tool_name: str) -> str:
+        """Strip the ``mcp__<server>__`` prefix from a raw tool name."""
         for prefix in ("mcp__fpt-mcp__", "mcp__maya-mcp__", "mcp__flame-mcp__"):
             if tool_name.startswith(prefix):
-                short = tool_name[len(prefix):]
-                break
+                return tool_name[len(prefix):]
+        return tool_name
+
+    def _label_for_tool(self, tool_name: str, tool_input: dict | None = None) -> str:
+        """Return a human-friendly label for an MCP tool call.
+
+        Dispatcher tools (``maya_session`` / ``maya_vision3d`` / ``maya_worldlabs``)
+        take an ``action`` param; a refined label keyed by ``(tool, action)`` is
+        preferred so long dispatch loops (poll, publish, review_turntable) keep a
+        specific heartbeat. Falls back to the flat label until the action is known.
+        """
+        short = self._short_tool_name(tool_name)
+        if short in _DISPATCHER_TOOLS and tool_input:
+            action = tool_input.get("action")
+            if action:
+                refined = _DISPATCHER_ACTION_LABELS.get((short, action))
+                if refined:
+                    return refined
         return _TOOL_LABELS.get(short, f"Running {short}")
 
     def run(self):  # noqa: D102
@@ -683,6 +735,8 @@ class ClaudeWorker(QThread):
 
             text_parts: list[str] = []
             active_tools: dict[int, str] = {}
+            tool_input_buffers: dict[int, str] = {}   # index → partial input JSON
+            tool_refined_emitted: set[int] = set()    # indices already given a refined label
             result_text = ""
             _text_buffer = ""
 
@@ -708,12 +762,21 @@ class ClaudeWorker(QThread):
                         idx = event.get("index", 0)
                         tool_name = block.get("name", "unknown")
                         active_tools[idx] = tool_name
-                        label = self._label_for_tool(tool_name)
+                        tool_input_buffers[idx] = ""
+                        # Some CLI variants deliver the full input here — use it
+                        # for a refined dispatcher label immediately.
+                        initial_input = block.get("input") or {}
+                        if not isinstance(initial_input, dict):
+                            initial_input = {}
+                        label = self._label_for_tool(tool_name, initial_input)
                         self.progress.emit(f"{label}...")
+                        if initial_input.get("action"):
+                            tool_refined_emitted.add(idx)
 
                 elif ev_type == "content_block_delta":
                     delta = event.get("delta", {})
-                    if delta.get("type") == "text_delta":
+                    dtype = delta.get("type", "")
+                    if dtype == "text_delta":
                         chunk = delta.get("text", "")
                         text_parts.append(chunk)
                         _text_buffer += chunk
@@ -722,11 +785,33 @@ class ClaudeWorker(QThread):
                             line_text = line_text.strip()
                             if line_text:
                                 self.progress.emit(line_text)
+                    elif dtype == "input_json_delta":
+                        # Tool input arrives as JSON fragments; accumulate per
+                        # index and surface the dispatcher action as soon as it
+                        # is parseable, so a long poll/publish loop keeps a
+                        # specific heartbeat ("Polling Vision3D progress...").
+                        idx = event.get("index", 0)
+                        tool_input_buffers[idx] = (
+                            tool_input_buffers.get(idx, "") + delta.get("partial_json", "")
+                        )
+                        if idx in active_tools and idx not in tool_refined_emitted:
+                            buf = tool_input_buffers[idx]
+                            if '"action"' in buf:
+                                m = re.search(r'"action"\s*:\s*"([^"]+)"', buf)
+                                if m:
+                                    refined = _DISPATCHER_ACTION_LABELS.get(
+                                        (self._short_tool_name(active_tools[idx]), m.group(1))
+                                    )
+                                    if refined:
+                                        self.progress.emit(f"{refined}...")
+                                        tool_refined_emitted.add(idx)
 
                 elif ev_type == "content_block_stop":
                     idx = event.get("index", 0)
                     if idx in active_tools:
                         del active_tools[idx]
+                        tool_input_buffers.pop(idx, None)
+                        tool_refined_emitted.discard(idx)
                         if active_tools:
                             remaining = list(active_tools.values())
                             self.progress.emit(
@@ -751,6 +836,32 @@ class ClaudeWorker(QThread):
                     msg = event.get("message", event.get("text", ""))
                     if msg:
                         text_parts.append(msg)
+
+                # Tool results come back as user-role messages; surface any
+                # `new_log_lines` array (the Vision3D / World Labs poll contract)
+                # so long jobs show live progress instead of a silent spinner.
+                elif ev_type == "user":
+                    umsg = event.get("message", {}) or {}
+                    for block in umsg.get("content", []) or []:
+                        if not isinstance(block, dict) or block.get("type") != "tool_result":
+                            continue
+                        rcontent = block.get("content", "")
+                        if isinstance(rcontent, list):
+                            rcontent = "".join(
+                                b.get("text", "")
+                                for b in rcontent
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            )
+                        if not isinstance(rcontent, str) or "new_log_lines" not in rcontent:
+                            continue
+                        try:
+                            payload = json.loads(rcontent)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        for logline in payload.get("new_log_lines") or []:
+                            logline = str(logline).strip()
+                            if logline:
+                                self.progress.emit(logline)
 
             proc.wait(timeout=TIMEOUT_SECONDS)
 
