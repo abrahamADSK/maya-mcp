@@ -19,6 +19,7 @@ refuses to spend credits unless ``confirm=True`` — the client raises
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +35,7 @@ from .convert import (
     convert_spz_to_ply,
 )
 from .models import Operation
+from . import resume
 
 
 def _client() -> WorldLabsClient:
@@ -69,8 +71,14 @@ def generate(
     display_name: Optional[str] = None,
     text_prompt: Optional[str] = None,
     confirm: bool = False,
+    work_dir: Optional[str] = None,
 ) -> str:
-    """Submit an image→world generation. Spends credits ONLY with confirm=True."""
+    """Submit an image→world generation. Spends credits ONLY with confirm=True.
+
+    When ``work_dir`` is given (the Toolkit work area, resolved by the caller),
+    the ``operation_id`` and inputs are persisted to a resume sidecar there so an
+    interrupted run can resume the download without re-generating.
+    """
     try:
         client = _client()
     except MissingAPIKeyError:
@@ -95,10 +103,21 @@ def generate(
         # upload_image raises FileNotFoundError for missing local paths; it is
         # not a subclass of WorldLabsError, so it must be caught separately.
         return json.dumps({"error": f"image not found: {exc}"})
+    if work_dir:
+        resume.write_sidecar(
+            work_dir,
+            now_iso=datetime.now(timezone.utc).isoformat(),
+            operation_id=op_id,
+            model=model,
+            image=image,
+            text_prompt=text_prompt,
+            status="generating",
+        )
     return json.dumps({
         "status": "started",
         "operation_id": op_id,
         "output_subdir": output_subdir,
+        "work_dir": work_dir,
         "next_step": f"poll with operation_id={op_id!r} until done (~5 min).",
     })
 
@@ -155,6 +174,15 @@ def download(
         return json.dumps({"error": str(exc)})
     out = {k: str(v) for k, v in paths.items()}
     spz = out.get("splats_full_res") or out.get("splats_500k") or out.get("splats_100k")
+    world_id = op.response.world_id if op.response else None
+    resume.write_sidecar(
+        dest_dir,
+        now_iso=datetime.now(timezone.utc).isoformat(),
+        operation_id=operation_id,
+        world_id=world_id,
+        status="downloaded",
+        downloaded=out,
+    )
     return json.dumps({
         "status": "ok",
         "downloaded": out,
@@ -179,6 +207,17 @@ def convert(spz_path: str, ply_path: Optional[str] = None) -> str:
         "ply_path": str(out),
         "next_step": "build the Maya scene (load PLY + pano dome + eye camera).",
     })
+
+
+def status(work_dir: str) -> str:
+    """Report the resumable state of a World Labs work area.
+
+    Reads the resume sidecar and scans the directory for ``.spz``/``.ply``/
+    ``.png`` artifacts, returning where the pipeline left off and the next step
+    (``needs_generate`` / ``needs_download`` / ``needs_convert`` /
+    ``ready_to_build``) so an interrupted run resumes without re-generating.
+    """
+    return json.dumps(resume.scan_state(work_dir), indent=2)
 
 
 def build_maya_code(

@@ -471,6 +471,7 @@ class WorldLabsAction(str, Enum):
     DOWNLOAD = "download"
     CONVERT = "convert"
     BUILD = "build"
+    STATUS = "status"
 
 
 class WorldLabsDispatchInput(BaseModel):
@@ -2406,6 +2407,7 @@ async def _do_wl_generate(params: dict, ctx: Context) -> str:
         wl.generate, image, params.get("output_subdir", "world"),
         params.get("model", "marble-1.1"), params.get("display_name"),
         params.get("text_prompt"), bool(params.get("confirm", False)),
+        params.get("work_dir"),
     )
 
 
@@ -2433,6 +2435,14 @@ async def _do_wl_convert(params: dict, ctx: Context) -> str:
     if not spz:
         return json.dumps({"error": "convert requires params.spz_path"})
     return await asyncio.to_thread(wl.convert, spz, params.get("ply_path"))
+
+
+async def _do_wl_status(params: dict, ctx: Context) -> str:
+    from maya_mcp.worldlabs import tool as wl
+    work_dir = params.get("work_dir")
+    if not work_dir:
+        return json.dumps({"error": "status requires params.work_dir (the Toolkit work area)"})
+    return await asyncio.to_thread(wl.status, work_dir)
 
 
 async def _do_wl_build(params: dict, ctx: Context) -> str:
@@ -2465,16 +2475,18 @@ async def maya_worldlabs(params: WorldLabsDispatchInput, ctx: Context) -> str:
     and load it into Maya for Arnold.
 
     Pipeline — call the actions in order: generate → poll → download → convert →
-    build. Credits are spent ONLY by generate with confirm=true.
+    build. Credits are spent ONLY by generate with confirm=true. Call status on a
+    work area to resume an interrupted run from disk without re-generating.
 
     Actions:
 
     • health — Check the WorldLabs API key + credit balance. No params.
-    • generate — Start image→world generation. Required params: {"image": "/path.png" or "https://..."}. Optional: {"output_subdir": "world", "model": "marble-1.1"|"marble-1.1-plus", "display_name": ..., "text_prompt": ..., "confirm": true}. WITHOUT confirm=true it returns a cost-confirmation payload and spends NOTHING.
+    • generate — Start image→world generation. Required params: {"image": "/path.png" or "https://..."}. Optional: {"output_subdir": "world", "model": "marble-1.1"|"marble-1.1-plus", "display_name": ..., "text_prompt": ..., "confirm": true, "work_dir": "/work/worldlabs/<asset>"}. WITHOUT confirm=true it returns a cost-confirmation payload and spends NOTHING. Pass work_dir (the Toolkit work area, resolved via fpt-mcp tk_resolve_path) to write a resume sidecar so an interrupted run resumes without re-generating.
     • poll — Poll a generation (~5 min). Required params: {"operation_id": "..."}.
-    • download — Download a finished world's assets. Required params: {"operation_id": "...", "dest_dir": "/path"}. Optional: {"which": ["splats_full_res", "pano"]}.
+    • download — Download a finished world's assets to the work area. Required params: {"operation_id": "...", "dest_dir": "/work/worldlabs/<asset>"}. Optional: {"which": ["splats_full_res", "pano"]}. Updates the resume sidecar (world_id + downloaded paths).
     • convert — Convert the downloaded SPZ to PLY (Arnold-readable, via gsbox). Required params: {"spz_path": "/path.spz"}. Optional: {"ply_path": "/out.ply"}.
     • build — Load into Maya (RUNS IN MAYA): aiGaussianSplat + coloured point proxy + emission shader + eye-level centred camera, plus a fake-HDR panorama dome if given. Required params: {"ply_path": "/world.ply"}. Optional: {"pano_path": "/pano.png", "eye_height": 1.5, "proxy_step": 1, "relight": false, "timeout": 300}.
+    • status — Report the resumable state of a work area (sidecar + on-disk .spz/.ply/.png). Required params: {"work_dir": "/work/worldlabs/<asset>"}. Returns where the pipeline left off (needs_generate / needs_download / needs_convert / ready_to_build).
     """
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
     _track_call()
@@ -2485,6 +2497,7 @@ async def maya_worldlabs(params: WorldLabsDispatchInput, ctx: Context) -> str:
         WorldLabsAction.DOWNLOAD: _do_wl_download,
         WorldLabsAction.CONVERT: _do_wl_convert,
         WorldLabsAction.BUILD: _do_wl_build,
+        WorldLabsAction.STATUS: _do_wl_status,
     }
     handler = dispatch[params.action]
     out = await handler(params.params or {}, ctx)
