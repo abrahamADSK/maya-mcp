@@ -3,11 +3,18 @@ models.py
 =========
 Pydantic models for the World Labs **Marble** World API (``api.worldlabs.ai``).
 
-All models declare ``extra="forbid"`` so a typo in a request field or an
-unexpected key in a parsed response is rejected loudly instead of silently
-ignored. The field set mirrors ``docs.worldlabs.ai`` as of 2026-06; response
-models carry the documented fields with permissive defaults so a partial
-payload still validates, while still rejecting *unknown* top-level keys.
+Two strictness regimes:
+
+* **Request** models (``GenerateRequest``, ``WorldPrompt``, the ``ImagePrompt*``
+  variants) declare ``extra="forbid"`` so a typo in a field we send is rejected
+  loudly *before* a credit-spending call.
+* **Response** models (``Operation``, ``World``, the ``*Assets`` blocks,
+  ``OperationError``) declare ``extra="ignore"``. The Marble API is vendor-owned
+  and evolves: it has already grown a ``splats.semantics_metadata`` block and
+  turned ``Operation.cost`` from an int into a ``{total_credits, line_items}``
+  dict. A strict response model would then reject the payload of an
+  *already-paid* world and block the download (Chat 76). Unknown response keys
+  are tolerated; documented fields are still typed.
 
 Covered surfaces
 ----------------
@@ -93,23 +100,34 @@ class GenerateRequest(BaseModel):
 
 
 # ── World / asset response models ──────────────────────────────────────────
+#
+# Response models tolerate unknown keys (``extra="ignore"``): the vendor adds
+# fields without warning (Chat 76), and a paid world's download must not be
+# held hostage to a freshly-added key the model has not learned yet.
 
 
 class SplatAssets(BaseModel):
     """Gaussian-splat asset URLs (SPZ format, keyed by resolution tier)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     spz_urls: dict[str, str] = Field(
         default_factory=dict,
-        description="Maps '100k' / '500k' / 'full_res' to signed SPZ download URLs.",
+        description="Maps '100k' / '150k' / '500k' / 'full_res' to signed SPZ download URLs.",
+    )
+    semantics_metadata: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "World geometry hints added by the Marble API: "
+            "metric_scale_factor (real-world scale) and ground_plane_offset."
+        ),
     )
 
 
 class ImageryAssets(BaseModel):
     """2D imagery assets (equirectangular panorama)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     pano_url: Optional[str] = Field(
         default=None, description="Equirectangular panorama PNG (2560x1280, LDR)."
@@ -119,7 +137,7 @@ class ImageryAssets(BaseModel):
 class MeshAssets(BaseModel):
     """Mesh assets (collision proxy)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     collider_mesh_url: Optional[str] = Field(
         default=None, description="Collider mesh GLB URL."
@@ -129,7 +147,7 @@ class MeshAssets(BaseModel):
 class WorldAssets(BaseModel):
     """The ``assets`` block of a :class:`World`."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     splats: Optional[SplatAssets] = None
     imagery: Optional[ImageryAssets] = None
@@ -141,7 +159,7 @@ class WorldAssets(BaseModel):
 class World(BaseModel):
     """A generated World, returned inside ``Operation.response`` when done."""
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = ConfigDict(extra="ignore", protected_namespaces=())
 
     world_id: str
     display_name: Optional[str] = None
@@ -161,7 +179,7 @@ class World(BaseModel):
 class OperationError(BaseModel):
     """The ``error`` block of an :class:`Operation` (populated on failure)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     code: Optional[int] = None
     message: Optional[str] = None
@@ -174,7 +192,7 @@ class Operation(BaseModel):
     ``response`` then holds the :class:`World`.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     operation_id: str
     done: bool = False
@@ -184,4 +202,8 @@ class Operation(BaseModel):
     updated_at: Optional[str] = None
     expires_at: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
-    cost: Optional[int] = None
+    # Vendor-shaped, advisory only (displayed, never computed on). Legacy API
+    # returned a bare int; the current API returns a billing breakdown dict
+    # ``{total_credits, line_items}`` (Chat 76). Kept permissive so either shape
+    # — or a future one — parses.
+    cost: Optional[Any] = None

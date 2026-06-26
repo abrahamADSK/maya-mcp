@@ -208,6 +208,23 @@ _QUICK_ACTIONS = [
 
 
 # ---------------------------------------------------------------------------
+# Bubble palette
+# ---------------------------------------------------------------------------
+
+# Per-role bubble styling: (extra-CSS, background, foreground). The operator's
+# own prompts are rendered in Autodesk yellow (#ffff00) — the same accent as the
+# title, the Send button and the input focus border — so the user's input stands
+# out clearly from the assistant's console output. Shared by both render paths
+# (_append_bubble and _update_last_bubble) so they never drift apart.
+_BUBBLE_COLORS = {
+    "user":      ("text-align:right;", "#2f2f2f", "#ffff00"),
+    "assistant": ("text-align:left;",  "#252525", "#cccccc"),
+    "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
+    "thinking":  ("text-align:left;",  "#252525", "#888888"),
+}
+
+
+# ---------------------------------------------------------------------------
 # MCPChatWidget — the reusable core
 # ---------------------------------------------------------------------------
 
@@ -452,13 +469,7 @@ class MCPChatWidget(QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def _append_bubble(self, html_content: str, role: str):
-        colors = {
-            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
-            "assistant": ("text-align:left;",  "#252525", "#cccccc"),
-            "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
-            "thinking":  ("text-align:left;",  "#252525", "#888888"),
-        }
-        align, bg, fg = colors.get(role, colors["assistant"])
+        align, bg, fg = _BUBBLE_COLORS.get(role, _BUBBLE_COLORS["assistant"])
         bubble = (
             f'<div style="{align}margin:4px 3px;">'
             f'<div style="display:inline-block;background:{bg};color:{fg};'
@@ -470,13 +481,7 @@ class MCPChatWidget(QtWidgets.QWidget):
         self._chat.append(bubble)
 
     def _update_last_bubble(self, html_content: str, role: str):
-        colors = {
-            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
-            "assistant": ("text-align:left;",  "#252525", "#cccccc"),
-            "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
-            "thinking":  ("text-align:left;",  "#252525", "#888888"),
-        }
-        align, bg, fg = colors.get(role, colors["assistant"])
+        align, bg, fg = _BUBBLE_COLORS.get(role, _BUBBLE_COLORS["assistant"])
         bubble = (
             f'<div style="{align}margin:4px 3px;">'
             f'<div style="display:inline-block;background:{bg};color:{fg};'
