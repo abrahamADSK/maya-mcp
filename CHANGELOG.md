@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-06-26
+
 ### Changed
 - **World Labs build recipe aligned to the validated reference scene
   (`worldlabs/maya_build.py`).** The `build` action now reproduces the
