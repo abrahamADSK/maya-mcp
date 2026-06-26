@@ -11,6 +11,22 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **World Labs resume sidecar + `maya_worldlabs action=status`.** The World Labs
+  pipeline (generate → poll → download → convert → build) is now resumable
+  without re-generating: `generate` (given the new optional `work_dir`, the
+  Toolkit work area) and `download` persist a small `.worldlabs.json` sidecar
+  there recording the `operation_id` (the re-download token), the `world_id`, and
+  the downloaded paths. The new **`status`** action derives where a run left off
+  from the sidecar + the on-disk `.spz`/`.ply`/`.png` artifacts and returns the
+  next step — `needs_generate` / `needs_download` / `needs_convert` /
+  `ready_to_build` — so an interrupted run resumes from disk. Only the narrow
+  "generated but the SPZ never landed, and >1 h elapsed" case (the World Labs
+  operation TTL) forces a paid re-generate; every other interruption resumes
+  locally. Ranking/scan logic is a pure, unit-tested module
+  (`worldlabs/resume.py`); `maya_worldlabs` action count 6 → 7. Guarded by
+  `tests/test_worldlabs_resume.py` (12 tests).
+
 ## [1.19.0] — 2026-06-26
 
 ### Added
