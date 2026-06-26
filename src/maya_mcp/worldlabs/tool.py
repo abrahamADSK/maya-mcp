@@ -226,10 +226,14 @@ def build_maya_code(
     eye_height: float = 1.5,
     proxy_step: int = 1,
     relight: bool = False,
+    draw_mode: int = 2,
+    focal: float = 15.0,
 ) -> str:
     """Assemble the in-Maya code (maya_build.py source + a build_environment call).
 
     The dispatcher sends the returned string to Maya via the Command Port bridge.
+    ``draw_mode`` (default 2 = Gaussian Splat) and ``focal`` (mm, default 15)
+    match the validated reference scene; both are parametrizable.
     """
     src = (Path(__file__).parent / "maya_build.py").read_text()
     call = (
@@ -237,6 +241,7 @@ def build_maya_code(
         f"result = _json.dumps(build_environment("
         f"ply_path={ply_path!r}, pano_path={pano_path!r}, "
         f"eye_height={float(eye_height)!r}, proxy_step={int(proxy_step)!r}, "
-        f"relight={bool(relight)!r}))\n"
+        f"relight={bool(relight)!r}, draw_mode={int(draw_mode)!r}, "
+        f"focal={float(focal)!r}))\n"
     )
     return src + call

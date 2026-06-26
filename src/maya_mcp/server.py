@@ -2456,6 +2456,8 @@ async def _do_wl_build(params: dict, ctx: Context) -> str:
         float(params.get("eye_height", 1.5)),
         int(params.get("proxy_step", 1)),
         bool(params.get("relight", False)),
+        int(params.get("draw_mode", 2)),
+        float(params.get("focal", 15.0)),
     )
     try:
         return await asyncio.to_thread(
@@ -2485,7 +2487,7 @@ async def maya_worldlabs(params: WorldLabsDispatchInput, ctx: Context) -> str:
     • poll — Poll a generation (~5 min). Required params: {"operation_id": "..."}.
     • download — Download a finished world's assets to the work area. Required params: {"operation_id": "...", "dest_dir": "/work/worldlabs/<asset>"}. Optional: {"which": ["splats_full_res", "pano"]}. Updates the resume sidecar (world_id + downloaded paths).
     • convert — Convert the downloaded SPZ to PLY (Arnold-readable, via gsbox). Required params: {"spz_path": "/path.spz"}. Optional: {"ply_path": "/out.ply"}.
-    • build — Load into Maya (RUNS IN MAYA): aiGaussianSplat + coloured point proxy + emission shader + eye-level centred camera, plus a fake-HDR panorama dome if given. Required params: {"ply_path": "/world.ply"}. Optional: {"pano_path": "/pano.png", "eye_height": 1.5, "proxy_step": 1, "relight": false, "timeout": 300}.
+    • build — Load into Maya (RUNS IN MAYA): aiGaussianSplat + coloured point proxy + emission shader + eye-level centred camera, plus a fake-HDR panorama dome if given. Required params: {"ply_path": "/world.ply"}. Optional: {"pano_path": "/pano.png", "eye_height": 1.5, "proxy_step": 1, "relight": false, "draw_mode": 2, "focal": 15.0, "timeout": 300}. draw_mode: 2=Gaussian Splat (default, draws natively in VP2.0), 1=Point Cloud, 0=Bounding Box. focal: camera focal length in mm (default 15, wide for environments).
     • status — Report the resumable state of a work area (sidecar + on-disk .spz/.ply/.png). Required params: {"work_dir": "/work/worldlabs/<asset>"}. Returns where the pipeline left off (needs_generate / needs_download / needs_convert / ready_to_build).
     """
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
