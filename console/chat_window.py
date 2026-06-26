@@ -339,7 +339,7 @@ class ChatWindow(QMainWindow):
     def _append_bubble(self, html_content: str, role: str):
         """Add a message bubble to the chat."""
         colors = {
-            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
+            "user":      ("text-align:right;", "#2f2f2f", "#ffff00"),
             "assistant": ("text-align:left;",  "#252525", "#cccccc"),
             "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
             "thinking":  ("text-align:left;",  "#252525", "#888888"),
@@ -399,7 +399,7 @@ class ChatWindow(QMainWindow):
     def _update_last_bubble(self, html_content: str, role: str):
         """Replace the last bubble with new content."""
         colors = {
-            "user":      ("text-align:right;", "#2f2f2f", "#e0e0e0"),
+            "user":      ("text-align:right;", "#2f2f2f", "#ffff00"),
             "assistant": ("text-align:left;",  "#252525", "#cccccc"),
             "error":     ("text-align:left;",  "#7f1d1d", "#fca5a5"),
             "thinking":  ("text-align:left;",  "#252525", "#888888"),

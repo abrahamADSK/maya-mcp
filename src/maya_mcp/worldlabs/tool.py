@@ -146,7 +146,18 @@ def poll(operation_id: str) -> str:
             "mesh": bool(assets and assets.mesh and assets.mesh.collider_mesh_url),
         }
         result["next_step"] = "download (splats_full_res + pano), then convert."
-    elif not op.done:
+    elif op.done:
+        # Terminal, but no World in the response → World Labs FAILED the
+        # generation (e.g. a 500 "please retry"). Surface it as an explicit
+        # failure with retry guidance so the caller re-generates instead of
+        # trying to download an empty result (Chat 76: a paid retry hit this).
+        result["status"] = "failed"
+        result["next_step"] = (
+            "generation FAILED on World Labs — no world was produced (see 'error'). "
+            "Re-run generate with confirm=true to retry; this is a server-side "
+            "failure, not a download/parse problem."
+        )
+    else:
         result["next_step"] = "still running — poll again."
     return json.dumps(result, indent=2)
 
@@ -168,6 +179,18 @@ def download(
                 "status": "not_ready",
                 "operation_id": operation_id,
                 "next_step": "poll until done before download.",
+            })
+        if op.response is None:
+            # Done but no World → the generation failed server-side. Report it
+            # rather than raising the generic "no World response" error.
+            err = ({"code": op.error.code, "message": op.error.message}
+                   if op.error else None)
+            return json.dumps({
+                "status": "failed",
+                "operation_id": operation_id,
+                "error": err,
+                "next_step": "generation FAILED on World Labs — re-run generate "
+                             "with confirm=true to retry.",
             })
         paths = client.download_assets(op, dest_dir, which=tuple(which))
     except WorldLabsError as exc:
@@ -228,20 +251,29 @@ def build_maya_code(
     relight: bool = False,
     draw_mode: int = 2,
     focal: float = 15.0,
+    save_path: Optional[str] = None,
 ) -> str:
     """Assemble the in-Maya code (maya_build.py source + a build_environment call).
 
     The dispatcher sends the returned string to Maya via the Command Port bridge.
     ``draw_mode`` (default 2 = Gaussian Splat) and ``focal`` (mm, default 15)
     match the validated reference scene; both are parametrizable.
+
+    When ``save_path`` is given (the Toolkit work-file path the caller resolved via
+    fpt-mcp ``tk_resolve_path`` on ``maya_asset_work``), the assembled scene is
+    saved there in the same in-Maya pass, so "open in Maya" lands the work file at
+    the config-correct path without a manual Workfiles pick (Chat 76).
     """
     src = (Path(__file__).parent / "maya_build.py").read_text()
     call = (
         "\nimport json as _json\n"
-        f"result = _json.dumps(build_environment("
+        f"_out = build_environment("
         f"ply_path={ply_path!r}, pano_path={pano_path!r}, "
         f"eye_height={float(eye_height)!r}, proxy_step={int(proxy_step)!r}, "
         f"relight={bool(relight)!r}, draw_mode={int(draw_mode)!r}, "
-        f"focal={float(focal)!r}))\n"
+        f"focal={float(focal)!r})\n"
     )
+    if save_path:
+        call += f"_out['workfile'] = save_scene({str(save_path)!r})\n"
+    call += "result = _json.dumps(_out)\n"
     return src + call

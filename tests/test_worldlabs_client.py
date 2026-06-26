@@ -448,10 +448,12 @@ class TestErrorHandling:
         assert cli.api_key == "env-key-123"
 
 
-# ── 7. Model validation (extra="forbid") ───────────────────────────────────
+# ── 7. Model validation (requests forbid extras; responses tolerate them) ───
 
 
 class TestModelValidation:
+    # Request models stay strict: an unknown key is a bug we want to catch
+    # BEFORE a credit-spending call.
     def test_generate_request_rejects_extra_key(self):
         with pytest.raises(Exception):
             GenerateRequest(
@@ -468,17 +470,55 @@ class TestModelValidation:
         with pytest.raises(Exception):
             ImagePromptMediaAsset(media_asset_id="ma", extra=1)  # type: ignore[call-arg]
 
-    def test_operation_rejects_extra_key(self):
-        with pytest.raises(Exception):
-            Operation(operation_id="op", done=False, surprise="x")  # type: ignore[call-arg]
+    # Response models tolerate vendor-added keys: a strict model rejected the
+    # payload of an ALREADY-PAID world and blocked its download (Chat 76).
+    # Unknown keys are dropped, not raised.
+    def test_operation_ignores_extra_key(self):
+        op = Operation(operation_id="op", done=False, surprise="x")  # type: ignore[call-arg]
+        assert op.operation_id == "op"
+        assert not hasattr(op, "surprise")
 
-    def test_world_assets_rejects_extra_key(self):
-        with pytest.raises(Exception):
-            WorldAssets(unknown_block={})  # type: ignore[call-arg]
+    def test_world_assets_ignores_extra_key(self):
+        wa = WorldAssets(unknown_block={})  # type: ignore[call-arg]
+        assert wa.splats is None
 
-    def test_world_rejects_extra_key(self):
-        with pytest.raises(Exception):
-            World(world_id="w", mystery=1)  # type: ignore[call-arg]
+    def test_world_ignores_extra_key(self):
+        w = World(world_id="w", mystery=1)  # type: ignore[call-arg]
+        assert w.world_id == "w"
+
+    def test_live_payload_shape_validates(self):
+        # The exact shape that broke download in Chat 76: cost is a billing
+        # dict (not a bare int), splats carry a semantics_metadata block, and a
+        # new 150k tier appears. The response envelope must parse all of it.
+        op = Operation.model_validate(
+            {
+                "operation_id": "op-1",
+                "done": True,
+                "cost": {
+                    "total_credits": 1580,
+                    "line_items": [{"name": "World generation", "credits": 1500}],
+                },
+                "response": {
+                    "world_id": "w-1",
+                    "assets": {
+                        "splats": {
+                            "spz_urls": {
+                                "150k": "https://x/a.spz",
+                                "full_res": "https://x/f.spz",
+                            },
+                            "semantics_metadata": {
+                                "metric_scale_factor": 2.03,
+                                "ground_plane_offset": 1.21,
+                            },
+                        },
+                        "imagery": {"pano_url": "https://x/p.png"},
+                    },
+                },
+            }
+        )
+        assert op.cost["total_credits"] == 1580
+        assert op.response.assets.splats.spz_urls["full_res"] == "https://x/f.spz"
+        assert op.response.assets.splats.semantics_metadata["metric_scale_factor"] == 2.03
 
     def test_discriminated_union_selects_media_asset(self):
         wp = WorldPrompt.model_validate(
@@ -521,3 +561,48 @@ class TestModelValidation:
         assert op.response.assets is not None
         assert op.response.assets.splats is not None
         assert op.response.assets.splats.spz_urls["full_res"] == SPLAT_FULL_URL
+
+
+class TestDispatcherFailedOperation:
+    """A done-but-failed operation (World Labs 500, no World in the response)
+    must surface as an explicit failure with retry guidance — not as a stuck
+    poll or a download of an empty result (Chat 76: a paid retry hit a 500)."""
+
+    @staticmethod
+    def _patch_failed(monkeypatch):
+        import json
+        from maya_mcp.worldlabs import tool
+        from maya_mcp.worldlabs.models import OperationError
+
+        failed = Operation(
+            operation_id="op-fail",
+            done=True,
+            response=None,
+            error=OperationError(code=500, message="An error has happened, please retry it."),
+        )
+
+        class _FakeClient:
+            api_key = "x"
+
+            def poll(self, _op):
+                return failed
+
+        monkeypatch.setattr(tool, "_client", lambda: _FakeClient())
+        return tool, json
+
+    def test_poll_reports_failed_with_retry(self, monkeypatch):
+        tool, json = self._patch_failed(monkeypatch)
+        out = json.loads(tool.poll("op-fail"))
+        assert out["done"] is True
+        assert out["status"] == "failed"
+        assert out["error"]["code"] == 500
+        assert "generate" in out["next_step"].lower()
+        # must NOT steer the caller to download an empty result
+        assert "download (splats" not in out["next_step"].lower()
+
+    def test_download_reports_failed_with_retry(self, monkeypatch, tmp_path):
+        tool, json = self._patch_failed(monkeypatch)
+        out = json.loads(tool.download("op-fail", str(tmp_path)))
+        assert out["status"] == "failed"
+        assert out["error"]["code"] == 500
+        assert "generate" in out["next_step"].lower()

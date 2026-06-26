@@ -25,6 +25,18 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   Only a forced playblast/capture of the live splat draw over the Command Port
   saturates the main thread; navigating it live in VP2.0 is fine. Guarded by
   `tests/test_worldlabs_tool.py` (+4 tests).
+- **World Labs point proxy capped + panorama dome OFF by default
+  (`worldlabs/maya_build.py`).** A full-res Marble splat is ~1.9M gaussians; a
+  1:1 particle proxy that large bogs Viewport 2.0 and risks an OpenMaya particle
+  crash on load, so the nav proxy is auto-decimated under
+  `MAX_PROXY_POINTS=200_000` (the splat itself always loads full-res). The
+  fake-HDR panorama dome is created at **intensity 0** (wired to the pano,
+  light-linked to exclude the splat, ready to enable) so it never darkens the
+  self-emissive environment — raise `envDomeShape.intensity` when loading
+  props/characters into the world.
+- **Console user prompts render in Autodesk yellow (`#ffff00`)** to stand out
+  from the assistant/console output; the per-role bubble palette is now a single
+  shared constant across both render paths.
 
 ### Added
 - **World Labs resume sidecar + `maya_worldlabs action=status`.** The World Labs
@@ -41,6 +53,35 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   locally. Ranking/scan logic is a pure, unit-tested module
   (`worldlabs/resume.py`); `maya_worldlabs` action count 6 → 7. Guarded by
   `tests/test_worldlabs_resume.py` (12 tests).
+- **World Labs `build` saves the Toolkit work file (`save_path`).** When the
+  caller passes `save_path` (the work-file path resolved via fpt-mcp
+  `tk_resolve_path` on `maya_asset_work` — Toolkit naming/versioning), the
+  assembled scene is saved there in the same in-Maya pass, so "open in Maya"
+  lands directly in the config-correct work file with no manual Workfiles pick.
+
+### Fixed
+- **World Labs `poll`/`download` parse a completed (paid) world again.** The
+  Marble API turned `Operation.cost` from an int into a
+  `{total_credits, line_items}` dict and added a `splats.semantics_metadata`
+  block; the strict `extra="forbid"` response models then rejected the payload of
+  an **already-paid** world and blocked its download. Response models are now
+  `extra="ignore"` (the vendor can add fields without breaking parsing), `cost`
+  accepts any shape, and `semantics_metadata` (`metric_scale_factor` /
+  `ground_plane_offset`) is captured. A done-but-errored operation (e.g. a
+  server-side 500) now reports `status="failed"` + "re-run generate", instead of
+  a stuck poll or a download of an empty result.
+- **World Labs build loads the world right-side up.** Marble authors in an
+  OpenCV camera frame (+y down, +z forward); the splat and proxy are now
+  re-oriented into Maya's +y-up frame with a 180° X rotation (a PROPER rotation,
+  so the gaussian covariances stay valid — a negative scale would invert them)
+  and the eye camera is computed in that frame. Without it the world loaded
+  upside down and the eye camera framed the void (a black render).
+- **maya-mcp `.env` loads by absolute path, not the cwd.** `WORLDLABS_API_KEY`
+  (and the other `.env` config) is loaded from the repo-root `.env` resolved from
+  `__file__`. A bare `load_dotenv()` searches up from the cwd, so when the
+  fpt-mcp console spawns the maya-mcp server with the *fpt* repo as cwd it loaded
+  `fpt-mcp/.env` (no key) and the World Labs key read as "not set"; anchoring on
+  `__file__` makes it resolve from any launcher.
 
 ## [1.19.0] — 2026-06-26
 

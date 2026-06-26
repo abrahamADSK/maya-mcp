@@ -14,9 +14,10 @@ in the server process (e.g. for source extraction or syntax checks).
 Validated recipe (the WorldLabs "load environment" invariant):
 
 1. ``import_gaussian_splat`` — an ``aiGaussianSplat`` node pointing at the PLY
-   (``filename`` + ``useFile`` + ``drawMode``). Renders in Arnold; in plain
-   VP2.0 it draws only a bounding box (the splat/point draw modes need the
-   Arnold viewport renderer).
+   (``filename`` + ``useFile`` + ``drawMode``), re-oriented OpenCV->Maya with a
+   180° X rotation (World Labs authors +y-down; without it the world loads
+   upside down and the eye camera renders the void — Chat 76). Renders in
+   Arnold; modes 1/2 also draw natively in VP2.0.
 2. ``build_point_proxy`` — a native Maya ``particle`` point cloud coloured from
    the splats' SH-DC term (``rgb = 0.28209479*f_dc + 0.5``), render type Points,
    **render-excluded** (``primaryVisibility`` + Arnold visibilities off) so it is
@@ -43,6 +44,14 @@ from __future__ import annotations
 
 # SH degree-0 -> RGB constant (INRIA 3DGS convention).
 SH_C0 = 0.28209479177387814
+
+# Hard cap on the VP2.0 navigation proxy's particle count. A full-res World Labs
+# splat is ~1.9M gaussians; a 1:1 particle proxy that large bogs Maya's VP2.0 and
+# risks an OpenMaya particle crash on load (memory feedback_maya_heavy_ops_crash).
+# The proxy is only a navigation aid (render-excluded, redundant with the native
+# drawMode draw), so it is auto-decimated to stay under this bound regardless of
+# the requested ``step`` — the splat itself is always loaded at full resolution.
+MAX_PROXY_POINTS = 200_000
 
 
 def _read_ply(ply_path):
@@ -92,6 +101,14 @@ def import_gaussian_splat(ply_path, name="worldSplat", draw_mode=2):
     cmds.setAttr(shape + ".filename", str(ply_path), type="string")
     cmds.setAttr(shape + ".useFile", 1)
     cmds.setAttr(shape + ".drawMode", int(draw_mode))
+    # World Labs authors worlds in an OpenCV camera frame (+x left, +y DOWN,
+    # +z forward); Maya is +y UP. Without re-orienting, the world loads UPSIDE
+    # DOWN and the eye camera ends up in the sky looking at the void → a black
+    # render (Chat 76). Re-orient with a 180° rotation about X — a PROPER
+    # rotation (determinant +1), so the per-gaussian covariances stay valid
+    # (a negative scale would invert them). This is the convert.py
+    # ``OPENCV_TO_DCC`` reorientation, previously deferred as "Phase B".
+    cmds.setAttr(trans + ".rotateX", 180)
     bb = cmds.exactWorldBoundingBox(trans)
     return {"transform": trans, "shape": shape, "bbox": bb}
 
@@ -109,6 +126,10 @@ def build_point_proxy(ply_path, name="worldSplatPoints", step=1, point_size=2):
     import numpy as np
 
     _, props, arr = _read_ply(ply_path)
+    # Cap the proxy: never emit more than MAX_PROXY_POINTS particles, however
+    # large the splat or small the requested step. ``step`` acts as a floor.
+    nverts = int(arr.shape[0])
+    step = max(int(step), -(-nverts // MAX_PROXY_POINTS))  # ceil division
     idc = props.index("f_dc_0")
     xyz = arr[::step, 0:3]
     rgb = np.clip(SH_C0 * arr[::step, idc:idc + 3] + 0.5, 0.0, 1.0)
@@ -142,6 +163,8 @@ def build_point_proxy(ply_path, name="worldSplatPoints", step=1, point_size=2):
     fn.saveInitialState()
 
     trans = cmds.rename(cmds.listRelatives(shp, parent=True)[0], name)
+    # Match the splat's OpenCV->Maya re-orient so the nav proxy overlays it.
+    cmds.setAttr(trans + ".rotateX", 180)
     shp = cmds.listRelatives(trans, shapes=True)[0]
     cmds.setAttr(shp + ".particleRenderType", 3)  # Points
     if not cmds.attributeQuery("pointSize", node=shp, exists=True):
@@ -191,7 +214,11 @@ def place_eye_camera(ply_path, name="worldCamEye", eye_height=1.5,
     import numpy as np
 
     _, _, arr = _read_ply(ply_path)
-    X, Y, Z = arr[:, 0], arr[:, 1], arr[:, 2]
+    # The splat/proxy are re-oriented by a 180° X rotation (OpenCV +y-down ->
+    # Maya +y-up), so the camera must be computed in that SAME world frame:
+    # world = (x, -y, -z). Otherwise the "ground" percentile picks the sky and
+    # the eye camera renders the void (Chat 76).
+    X, Y, Z = arr[:, 0], -arr[:, 1], -arr[:, 2]
     ground = float(np.percentile(Y, ground_pct))
     cx, cz = float(np.median(X)), float(np.median(Z))
     eye = ground + float(eye_height)
@@ -224,7 +251,7 @@ def place_eye_camera(ply_path, name="worldCamEye", eye_height=1.5,
     }
 
 
-def setup_dome_from_pano(pano_path, name="envDome", gain=1.0,
+def setup_dome_from_pano(pano_path, name="envDome", gain=0.0,
                          fake_hdr_gamma=0.45, exclude_shapes=None):
     """Skydome IBL from the LDR panorama, with a fake-HDR highlight squeeze.
 
@@ -232,6 +259,12 @@ def setup_dome_from_pano(pano_path, name="envDome", gain=1.0,
     the bright pixels into a pseudo-HDR so the dome gives directional-ish IBL for
     CG/characters. Light-linked to EXCLUDE ``exclude_shapes`` (the splat) so it
     never washes the emission look.
+
+    OFF by default (``gain=0.0`` → intensity 0): the splat is self-emissive, so
+    the dome must NOT light or darken the bare environment (Chat 76: it darkened
+    the render). It is created, wired to the pano and splat-excluded, ready to use
+    — raise ``envDomeShape.intensity`` when you load props/characters into the
+    world so the dome lights THEM (the splat stays excluded).
     """
     import maya.cmds as cmds
 
@@ -281,3 +314,23 @@ def build_environment(ply_path, pano_path=None, eye_height=1.5, proxy_step=1,
             pano_path, exclude_shapes=[splat["shape"]]
         )
     return out
+
+
+def save_scene(path):
+    """Save the current scene to ``path`` — the Toolkit work-file path resolved by
+    the caller via fpt-mcp ``tk_resolve_path`` on ``maya_asset_work``.
+
+    Lands the assembled environment at the config-correct Toolkit location with no
+    manual Workfiles navigation (Chat 76 requirement: open Maya -> create the work
+    file in the right path with the Toolkit tools -> assemble pano+ply). Creates
+    the parent folder, renames the scene to ``path`` and saves as ``.ma``/``.mb``
+    by extension. Returns the saved path.
+    """
+    import os
+    import maya.cmds as cmds
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    cmds.file(rename=path)
+    ftype = "mayaBinary" if str(path).lower().endswith(".mb") else "mayaAscii"
+    cmds.file(save=True, type=ftype)
+    return path
