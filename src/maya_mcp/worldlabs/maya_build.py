@@ -72,11 +72,16 @@ def _read_ply(ply_path):
     return nverts, props, arr
 
 
-def import_gaussian_splat(ply_path, name="worldSplat", draw_mode=0):
+def import_gaussian_splat(ply_path, name="worldSplat", draw_mode=2):
     """Create an ``aiGaussianSplat`` reading ``ply_path``. Renders in Arnold.
 
-    ``draw_mode``: 0 Bounding Box (VP2.0-light default), 1 Point Cloud,
-    2 Gaussian Splat (1 & 2 only draw under the Arnold viewport renderer).
+    ``draw_mode``: 0 Bounding Box, 1 Point Cloud, 2 Gaussian Splat. Modes 1 and
+    2 draw NATIVELY in Viewport 2.0 (GPU) in real time — they do NOT require the
+    Arnold viewport renderer. The default is 2 so the splat is visible on load,
+    matching the validated reference scene. Only a forced playblast/capture of
+    the live splat draw over the Command Port saturates the main thread; for an
+    MCP capture use the point proxy or a low ``displayPercentage``, and render
+    Arnold one-shot to a file for the real image.
     """
     import maya.cmds as cmds
 
@@ -174,7 +179,7 @@ def assign_splat_shader(splat_shape, shader_name="worldSplatShader",
 
 
 def place_eye_camera(ply_path, name="worldCamEye", eye_height=1.5,
-                     focal=28.0, ground_pct=2.0):
+                     focal=15.0, ground_pct=2.0):
     """Camera at the splats' horizontal centroid, ``ground + eye_height`` high,
     aimed horizontally along the dominant axis (the street).
 
@@ -253,22 +258,24 @@ def setup_dome_from_pano(pano_path, name="envDome", gain=1.0,
 
 
 def build_environment(ply_path, pano_path=None, eye_height=1.5, proxy_step=1,
-                      relight=False):
+                      relight=False, draw_mode=2, focal=15.0):
     """Orchestrate the full WorldLabs environment load (the invariant recipe).
 
     splat (Arnold) + coloured point proxy (VP2.0) + emission shader + eye camera,
     and — if ``pano_path`` is given — a fake-HDR dome light-linked to exclude the
     splat. ``relight=True`` raises the splat diffuse so it also reacts to lights.
-    Returns a summary dict of everything created.
+    ``draw_mode`` (default 2 = Gaussian Splat, the native VP2.0 draw) and
+    ``focal`` (mm, default 15 = wide, for environments) match the validated
+    reference scene. Returns a summary dict of everything created.
     """
     out = {}
-    splat = import_gaussian_splat(ply_path)
+    splat = import_gaussian_splat(ply_path, draw_mode=draw_mode)
     out["splat"] = splat
     out["proxy"] = build_point_proxy(ply_path, step=proxy_step)
     out["shader"] = assign_splat_shader(
         splat["shape"], emission=1.0, diffuse=(1.0 if relight else 0.0)
     )
-    out["camera"] = place_eye_camera(ply_path, eye_height=eye_height)
+    out["camera"] = place_eye_camera(ply_path, eye_height=eye_height, focal=focal)
     if pano_path:
         out["dome"] = setup_dome_from_pano(
             pano_path, exclude_shapes=[splat["shape"]]

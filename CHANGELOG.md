@@ -11,6 +11,21 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- **World Labs build recipe aligned to the validated reference scene
+  (`worldlabs/maya_build.py`).** The `build` action now reproduces the
+  known-good `.mb` setup on a fresh PLY: the `aiGaussianSplat` `draw_mode`
+  defaults to **2 (Gaussian Splat)** instead of 0 (Bounding Box) — modes 1/2
+  draw NATIVELY in Viewport 2.0 (GPU, real time) and do NOT need the Arnold
+  viewport renderer (the prior docstring belief that they did, which justified
+  the bbox default, was wrong — a fresh build showed only a bounding box). The
+  eye camera `focal` defaults to **15 mm** (wide, for environments) instead of
+  28 mm. Both `draw_mode` and `focal` are now parametrizable end-to-end
+  (`build_environment` → `build_maya_code` → the `build` dispatcher params).
+  Only a forced playblast/capture of the live splat draw over the Command Port
+  saturates the main thread; navigating it live in VP2.0 is fine. Guarded by
+  `tests/test_worldlabs_tool.py` (+4 tests).
+
 ### Added
 - **World Labs resume sidecar + `maya_worldlabs action=status`.** The World Labs
   pipeline (generate → poll → download → convert → build) is now resumable

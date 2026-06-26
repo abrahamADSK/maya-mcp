@@ -471,6 +471,26 @@ class TestBuildMayaCode:
         code = tool_mod.build_maya_code("/tmp/scene.ply", relight=True)
         assert "relight=True" in code
 
+    def test_draw_mode_default_gaussian_splat(self):
+        """draw_mode defaults to 2 (Gaussian Splat) — the validated reference."""
+        code = tool_mod.build_maya_code("/tmp/scene.ply")
+        assert "draw_mode=2" in code
+
+    def test_draw_mode_forwarded(self):
+        """draw_mode is coerced to int and forwarded (e.g. 1 = Point Cloud)."""
+        code = tool_mod.build_maya_code("/tmp/scene.ply", draw_mode=1)
+        assert "draw_mode=1" in code
+
+    def test_focal_default_15(self):
+        """focal defaults to 15.0 mm (wide, for environments)."""
+        code = tool_mod.build_maya_code("/tmp/scene.ply")
+        assert "focal=15.0" in code
+
+    def test_focal_forwarded(self):
+        """focal is coerced to float and forwarded."""
+        code = tool_mod.build_maya_code("/tmp/scene.ply", focal=28.0)
+        assert "focal=28.0" in code
+
     def test_code_includes_json_import(self):
         """The generated snippet must import json (it wraps result in json.dumps)."""
         code = tool_mod.build_maya_code("/tmp/scene.ply")
