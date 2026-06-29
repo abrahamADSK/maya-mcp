@@ -158,7 +158,6 @@ def review_turntable(
     prev_unit = cmds.currentUnit(query=True, time=True)
     piv = None
     panel = prev_sel = win = None
-    iso_on = False
     used = {}
     mov = None
     err = None
@@ -234,9 +233,8 @@ def review_turntable(
             cmds.select(objs, replace=True)
             cmds.isolateSelect(panel, addSelected=True)
             cmds.select(clear=True)  # no selection highlight in the capture
-            iso_on = True
         except Exception:
-            iso_on = False
+            pass
         _trace(f"temp-window panel={panel} win={win} "
                f"vis_meshes={len(cmds.ls(type='mesh', visible=True, long=True) or [])}")
 
