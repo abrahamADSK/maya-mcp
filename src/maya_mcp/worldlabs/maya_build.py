@@ -300,8 +300,27 @@ def build_environment(ply_path, pano_path=None, eye_height=1.5, proxy_step=1,
     ``draw_mode`` (default 2 = Gaussian Splat, the native VP2.0 draw) and
     ``focal`` (mm, default 15 = wide, for environments) match the validated
     reference scene. Returns a summary dict of everything created.
+
+    IDEMPOTENT: any World Labs nodes a previous build left in the scene are
+    deleted first, so re-running ``build`` REPLACES the environment instead of
+    duplicating it (``aiGaussianSplat2`` / ``worldSplat1`` / a second
+    ``envDome`` …). Other scene content is untouched — the caller no longer has
+    to decide "rebuild vs keep" when a stale assembly is open (Chat 76).
     """
+    import maya.cmds as cmds
+
+    _stale = cmds.ls(
+        "worldSplat*", "aiGaussianSplat*", "worldCamEye*",
+        "envDome*", "worldSplatShader*",
+    ) or []
+    if _stale:
+        try:
+            cmds.delete(_stale)
+        except Exception:
+            pass
+
     out = {}
+    out["replaced_existing"] = bool(_stale)
     splat = import_gaussian_splat(ply_path, draw_mode=draw_mode)
     out["splat"] = splat
     out["proxy"] = build_point_proxy(ply_path, step=proxy_step)
