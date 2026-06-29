@@ -11,6 +11,28 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **Turntable review now renders a clean Viewport-2.0 capture instead of an
+  Arnold IPR frame, and is no longer stretched (`worldlabs/review_build.py`).**
+  The playblast runs in a dedicated throw-away 16:9 VP2.0 window rather than the
+  user's docked/focused viewport: an active Arnold IPR / render-override on that
+  panel was being captured (its HUD burned into the buffer) even after the code
+  set `rendererName="vp2Renderer"`, and the docked panel's on-screen size was
+  stretched to the output resolution. A brand-new modelPanel has no IPR attached
+  (guaranteed VP2.0) and a clean 16:9 source; the user's panels / renderer /
+  selection are no longer modified. Validated in-vivo (Chat 77).
+- **Turntable orbit starts/ends with the model's BACK to camera so the CENTRE
+  frame shows the FRONT.** Flow Production Tracking thumbnails the centre frame
+  of the review, so this yields a front-facing thumbnail (pivot keyed
+  180°→540° instead of 0°→360°; still a full 360° orbit).
+
+### Changed
+- **World Labs `build` is now idempotent (`worldlabs/maya_build.py`).** Re-running
+  `build` first deletes the World Labs nodes a previous build left in the scene,
+  so it REPLACES the environment instead of duplicating it
+  (`aiGaussianSplat2` / `worldSplat1` / a second `envDome` …); other scene
+  content is untouched.
+
 ## [1.20.0] — 2026-06-26
 
 ### Changed

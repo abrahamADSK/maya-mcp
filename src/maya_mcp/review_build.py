@@ -157,8 +157,7 @@ def review_turntable(
 
     prev_unit = cmds.currentUnit(query=True, time=True)
     piv = None
-    panel = prev_cam = prev_rnm = prev_lights = prev_sel = None
-    iso_on = False
+    panel = prev_sel = win = None
     used = {}
     mov = None
     err = None
@@ -187,63 +186,56 @@ def review_turntable(
         cmds.setAttr(cam_s + ".verticalFilmAperture", hfa / 1.778)  # 16:9
         cmds.setAttr(cam_s + ".lensSqueezeRatio", 1.0)              # square pixels
         cmds.setAttr(cam_s + ".filmFit", 3)                         # 3 = Overscan
+        # Orbit a full 360deg, but START/END with the model's BACK to camera so
+        # the MIDDLE frame shows the FRONT: Flow Production Tracking thumbnails the
+        # CENTRE frame of the review, and a front-facing thumbnail is wanted. With
+        # the camera at +Z (front) at rotateY=0, keying the pivot 180->540 puts the
+        # back at the ends (first/last frame) and the front at the centre
+        # (rotateY == 360 == 0). Chat 77.
         cmds.cutKey(piv + ".rotateY")
-        cmds.setKeyframe(piv + ".rotateY", time=start, value=0.0)
-        cmds.setKeyframe(piv + ".rotateY", time=end, value=360.0)
+        cmds.setKeyframe(piv + ".rotateY", time=start, value=180.0)
+        cmds.setKeyframe(piv + ".rotateY", time=end, value=540.0)
         cmds.keyTangent(piv + ".rotateY", inTangentType="linear", outTangentType="linear")
 
-        # Pin the playblast to the panel we configure: playblast captures the
-        # FOCUSED panel, so set VP2.0 + the turntable cam on THAT one and pass
-        # editorPanelName. Without this it grabs the focused panel's renderer —
-        # if that's Arnold/IPR it hangs Maya's main thread (the bug to prevent).
-        mps = cmds.getPanel(type="modelPanel") or []
-        panel = cmds.getPanel(withFocus=True)
-        if panel not in mps:
-            # Pin a VISIBLE viewport, not just the last model panel. Triggered
-            # from the dockable console, focus is on the console (not a model
-            # panel), so this fell back to mps[-1] (modelPanel4) — which may be
-            # HIDDEN in the current layout (an inactive quad cell or a background
-            # tab). An onscreen playblast of a panel that is not actually drawn
-            # captures only the grey clear-colour → an EMPTY .mov (Chat 74).
-            # Prefer a currently-visible model panel; fall back to the last only
-            # if none is visible.
-            visible = set(cmds.getPanel(visiblePanels=True) or [])
-            vis_model = [p for p in mps if p in visible]
-            panel = vis_model[0] if vis_model else (mps[-1] if mps else None)
-        if panel:
-            prev_cam = cmds.modelEditor(panel, query=True, camera=True)
-            prev_rnm = cmds.modelEditor(panel, query=True, rendererName=True)
-            cmds.modelPanel(panel, edit=True, camera=cam_s)
-            cmds.modelEditor(panel, edit=True, rendererName="vp2Renderer",
-                             displayAppearance="smoothShaded", displayTextures=True,
-                             headsUpDisplay=False, grid=False)
-            # Preview lighting INDEPENDENT of the scene: VP2's own default camera
-            # headlight — consistent as the model orbits, built expressly for the
-            # review and never added to / kept in the published scene (a Model
-            # carries no lights of its own). Restored in `finally`.
-            prev_lights = cmds.modelEditor(panel, query=True, displayLights=True)
-            try:
-                cmds.modelEditor(panel, edit=True, displayLights="default")
-            except Exception:
-                pass
-            # Isolate the framed model so unrelated scene elements (other assets,
-            # rigs, a stray light dome) never appear in the review.
-            try:
-                prev_sel = cmds.ls(selection=True, long=True)
-                cmds.select(objs, replace=True)
-                cmds.isolateSelect(panel, state=True)
-                # addSelected, NOT loadSelected: on Maya 2027 `loadSelected`
-                # leaves the isolate view set EMPTY, so the panel isolates
-                # *nothing* → a fully grey/empty .mov. Proven in-vivo (Chat 74):
-                # querying `viewObjects` after loadSelected returned "" with no
-                # members; after addSelected the set holds the model and the
-                # capture shows it.
-                cmds.isolateSelect(panel, addSelected=True)
-                cmds.select(clear=True)  # no selection highlight in the capture
-                iso_on = True
-            except Exception:
-                iso_on = False
-        _trace(f"panel={panel} mps={mps} prev_cam={prev_cam} prev_rnm={prev_rnm} "
+        # Capture from a DEDICATED temporary Viewport-2.0 window — NEVER the
+        # user's docked/focused viewport. Why (Chat 77): when an Arnold IPR /
+        # render-override is active on the focused panel, the playblast captures
+        # the Arnold render (its HUD burned into the buffer) even after the code
+        # sets rendererName="vp2Renderer", because IPR overlays the panel; and the
+        # docked panel's on-screen pixel size (e.g. 1540x1266) is what gets
+        # captured then stretched to widthHeight -> wrong aspect ratio. A brand-new
+        # modelPanel in a throw-away 16:9 window has NO IPR attached (guaranteed
+        # VP2.0) and a clean 16:9 source (no stretch). It stays visible
+        # (offScreen=False) so it keeps the valid render context the offScreen
+        # buffer lacked when Maya was occluded (Chat 74). The window is deleted in
+        # `finally`; the user's panels / renderer / selection are never modified.
+        prev_sel = cmds.ls(selection=True, long=True)
+        if cmds.window("reviewTurntableWin", exists=True):
+            cmds.deleteUI("reviewTurntableWin")
+        win = cmds.window("reviewTurntableWin", title="Review Turntable",
+                          widthHeight=(1280, 720))
+        cmds.paneLayout()
+        panel = cmds.modelPanel(menuBarVisible=False)
+        cmds.modelPanel(panel, edit=True, camera=cam_s)
+        # VP2's own default camera headlight — preview lighting independent of the
+        # scene, consistent as the model orbits; lives only in this throw-away
+        # window, never in the published scene (a Model carries no lights).
+        cmds.modelEditor(panel, edit=True, rendererName="vp2Renderer",
+                         displayAppearance="smoothShaded", displayTextures=True,
+                         headsUpDisplay=False, grid=False, displayLights="default")
+        cmds.showWindow(win)
+        # Isolate the framed model so unrelated scene elements (other assets, a
+        # stray light dome) never appear. addSelected, NOT loadSelected: on Maya
+        # 2027 loadSelected leaves the isolate set EMPTY -> a grey/empty .mov
+        # (proven in-vivo, Chat 74).
+        try:
+            cmds.isolateSelect(panel, state=True)
+            cmds.select(objs, replace=True)
+            cmds.isolateSelect(panel, addSelected=True)
+            cmds.select(clear=True)  # no selection highlight in the capture
+        except Exception:
+            pass
+        _trace(f"temp-window panel={panel} win={win} "
                f"vis_meshes={len(cmds.ls(type='mesh', visible=True, long=True) or [])}")
 
         # choose an available movie encoder, else fall back (never raise out)
@@ -268,11 +260,11 @@ def review_turntable(
             pb["filename"] = os.path.splitext(out_path)[0]
             used = {"format": "image", "compression": "png",
                     "note": "qt/avfoundation unavailable — wrote a PNG sequence, not a .mov"}
-        # ONSCREEN (visible) playblast — offScreen=False. The user SEES the
-        # turntable render, and the on-screen viewport always has a valid render
-        # context so it never comes back empty (the offScreen buffer drew nothing
-        # when Maya was occluded). The captured panel is still pinned to VP2.0
-        # above, so this never captures an Arnold/IPR panel (the Chat 71 hang).
+        # ONSCREEN (visible) playblast — offScreen=False. The temp window is
+        # visible so the viewport always has a valid render context and never
+        # comes back empty (the offScreen buffer drew nothing when Maya was
+        # occluded, Chat 74). The captured panel is the fresh VP2.0 window above,
+        # so this never captures an Arnold/IPR panel (Chat 71 hang / Chat 77).
         cmds.refresh(force=True)
         _trace(f"playblast START format={used} offScreen={pb.get('offScreen')}")
         try:
@@ -283,24 +275,9 @@ def review_turntable(
             _trace(f"playblast ERROR {exc}")
     finally:
         # leave the deliverable scene exactly as found
-        if panel and prev_cam:
+        if win and cmds.window(win, exists=True):
             try:
-                cmds.modelPanel(panel, edit=True, camera=prev_cam)
-            except Exception:
-                pass
-        if panel and prev_rnm:
-            try:
-                cmds.modelEditor(panel, edit=True, rendererName=prev_rnm)
-            except Exception:
-                pass
-        if panel and iso_on:
-            try:
-                cmds.isolateSelect(panel, state=False)
-            except Exception:
-                pass
-        if panel and prev_lights:
-            try:
-                cmds.modelEditor(panel, edit=True, displayLights=prev_lights)
+                cmds.deleteUI(win)  # removes the temp panel + its editor too
             except Exception:
                 pass
         if prev_sel is not None:

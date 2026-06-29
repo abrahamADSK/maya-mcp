@@ -60,6 +60,24 @@ def _install_fake_maya(monkeypatch, record):
     cmds.modelEditor.side_effect = _model_editor
     cmds.objExists.return_value = True
 
+    # Dedicated temporary VP2.0 window (Chat 77): create returns the name, an
+    # `exists=True` query returns False (so nothing is pre-deleted / the finally
+    # is a no-op in the fake), and the throw-away modelPanel create returns a
+    # stable name while its edit calls return nothing.
+    def _window(*a, **k):
+        if k.get("exists"):
+            return False
+        return a[0] if a else "reviewTurntableWin"
+
+    cmds.window.side_effect = _window
+
+    def _model_panel(*a, **k):
+        if k.get("edit"):
+            return None
+        return "reviewTurntablePanel"
+
+    cmds.modelPanel.side_effect = _model_panel
+
     def _playblast(*a, **k):
         if k.get("query"):
             if k.get("format"):
@@ -100,25 +118,35 @@ def test_review_turntable_passes_only_valid_playblast_flags(tmp_path, monkeypatc
     assert not bad, f"review_turntable passed non-existent playblast flags: {bad}"
 
 
-def test_review_turntable_pins_onscreen_vp2_and_resolution(tmp_path, monkeypatch):
-    """ONSCREEN (visible) playblast + the captured panel pinned to VP2.0 + 16:9.
+def test_review_turntable_uses_temp_vp2_window(tmp_path, monkeypatch):
+    """Captures from a dedicated temporary VP2.0 window, not the docked viewport.
 
-    offScreen is now False: an on-screen viewport always has a valid render
-    context (the offScreen buffer drew nothing when Maya was occluded → empty
-    .mov), and the VP2.0-pinned ``editorPanelName`` is what keeps it off an
-    Arnold/IPR panel (the Chat 71 main-thread hang), not offScreen.
+    A fresh window has no Arnold IPR / render-override attached, so the playblast
+    cannot capture an Arnold render (its HUD burned into the buffer — Chat 77),
+    and it gives a clean 16:9 source (no stretch). offScreen stays False so the
+    visible window keeps a valid render context (the offScreen buffer drew nothing
+    when Maya was occluded → empty .mov, Chat 74); editorPanelName is pinned to the
+    temp panel so the capture is exactly that VP2.0 window.
     """
     record: dict = {}
-    _install_fake_maya(monkeypatch, record)
+    cmds = _install_fake_maya(monkeypatch, record)
     out = str(tmp_path / "tt.mov")
 
     review_build.review_turntable(
         out, start=1, end=48, fps=25, width=1920, height=1080, objects=["smoke"]
     )
 
+    # a throw-away window + model panel was created and pinned to VP2.0
+    assert cmds.window.called
+    assert cmds.modelPanel.called
+    assert any(
+        kw.get("rendererName") == "vp2Renderer"
+        for _, kw in cmds.modelEditor.call_args_list
+    )
+
     pb = record["pb"]
     assert pb["offScreen"] is False
-    assert pb["editorPanelName"] == "modelPanel4"
+    assert pb["editorPanelName"] == "reviewTurntablePanel"  # the temp window panel
     assert pb["widthHeight"] == (1920, 1080)
     assert pb["filename"] == out
 
