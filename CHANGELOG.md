@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.21.0] — 2026-06-29
+
 ### Fixed
 - **Turntable review now renders a clean Viewport-2.0 capture instead of an
   Arnold IPR frame, and is no longer stretched (`worldlabs/review_build.py`).**
