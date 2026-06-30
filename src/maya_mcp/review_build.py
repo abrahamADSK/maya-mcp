@@ -26,8 +26,12 @@ What :func:`review_turntable` does, deterministically:
    offScreen buffer did when Maya was occluded). QuickTime/H.264 with an
    avfoundation→PNG-sequence fallback if the encoder is unavailable.
 5. In a ``finally`` block, restores the panel camera/renderer, deletes the
-   throwaway turntable nodes, and restores the time unit — the deliverable scene
-   is left exactly as found.
+   throwaway turntable nodes (so the orbit keyframes — which live only on that
+   pivot — exist solely during the playblast and are then removed), and restores
+   the time unit, the playback range AND the current frame. Restoring the clock
+   is load-bearing: leaving the scene on the end frame re-evaluated a model's own
+   keyframes and displaced an unkeyed manual pose (Chat 79). The deliverable
+   scene is left exactly as found.
 6. Returns the .mov path plus, if Maya was launched via the ``tk-maya`` engine,
    the asset/task context + a suggested Version code ``{Asset}_{Task}`` so the
    ShotGrid Version is named after the task it was generated in.
@@ -186,6 +190,18 @@ def review_turntable(
     _trace(f"bbox={[round(v, 2) for v in bb]} center=({cx:.2f},{cy:.2f},{cz:.2f}) size={size:.3f}")
 
     prev_unit = cmds.currentUnit(query=True, time=True)
+    # Snapshot the playback clock so the recipe restores it in `finally`. Without
+    # this the scene was left on the END frame, and advancing the time
+    # re-evaluated a model's own keyframes — an unkeyed manual pose (feet on the
+    # ground) silently reverted to its keyed value and the asset appeared
+    # DISPLACED after every turntable (Chat 79). The orbit keys themselves live
+    # only on the throw-away pivot, which is deleted below, so the recipe leaves
+    # NO keyframes behind; restoring the clock leaves the model exactly as found.
+    prev_time = cmds.currentTime(query=True)
+    prev_range = (cmds.playbackOptions(query=True, minTime=True),
+                  cmds.playbackOptions(query=True, maxTime=True),
+                  cmds.playbackOptions(query=True, animationStartTime=True),
+                  cmds.playbackOptions(query=True, animationEndTime=True))
     prev_view = None
     piv = None
     panel = prev_sel = win = None
@@ -330,6 +346,19 @@ def review_turntable(
         try:
             if cmds.currentUnit(query=True, time=True) != prev_unit:
                 cmds.currentUnit(time=prev_unit, updateAnimation=False)
+        except Exception:
+            pass
+        try:
+            cmds.playbackOptions(minTime=prev_range[0], maxTime=prev_range[1],
+                                 animationStartTime=prev_range[2],
+                                 animationEndTime=prev_range[3])
+        except Exception:
+            pass
+        try:
+            # Back to the original frame LAST — this re-evaluates the model's own
+            # keyframes to their pre-render state, so an unkeyed manual pose is no
+            # longer left reverted/displaced (Chat 79).
+            cmds.currentTime(prev_time)
         except Exception:
             pass
         if prev_view:
