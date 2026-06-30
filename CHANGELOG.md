@@ -11,6 +11,17 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **Review colour management no longer overrides a deliberately-set view
+  (`color_policy.py`, `review_build.py`).** v1.22.0 always pinned the configured
+  review view (`Un-tone-mapped (sRGB)`) before a VP2.0 capture, which silently
+  overrode a scene's own display view — e.g. a shot set to `ACES 1.0 SDR-video`
+  had its look changed (Chat 79). The policy now **respects an already-chosen
+  display view** and only pins the configured view when the preview would
+  otherwise render dark/wrong: colour management OFF, no current view, or a
+  scene-linear `Raw`/`Log` view. `cmEnabled` is still ensured so a preview is
+  never dark.
+
 ## [1.22.1] — 2026-06-30
 
 ### Fixed
