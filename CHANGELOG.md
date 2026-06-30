@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.22.1] — 2026-06-30
+
 ### Fixed
 - **`review_turntable` no longer leaves the scene displaced (`review_build.py`).**
   The recipe now snapshots and restores the **current frame** and the **playback
