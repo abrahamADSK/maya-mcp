@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.23.0] — 2026-06-30
+
 ### Added
 - **`review_turntable` always returns a `.mov` — ffmpeg PNG-sequence fallback
   (`_review_encode.py`).** When Maya's movie encoder (QuickTime / avfoundation)
