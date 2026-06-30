@@ -53,22 +53,38 @@ def view_transform_apply_code(
     view_transform: str = DEFAULT_REVIEW_VIEW,
     prev_var: str = "_mcp_cp_prev_view",
 ) -> str:
-    """Code string: enable colour management and pin ``view_transform`` (best-effort).
+    """Code string: ensure colour management is on and the preview won't be dark.
 
-    Captures the previous view transform into ``prev_var`` so it can be restored
-    with :func:`view_transform_restore_code`. ``prev_var`` stays ``None`` (a
-    clean no-op for the restore) when colour management is unavailable or the
-    view name is not offered by the active OCIO config.
+    **Respects a deliberately-set display view.** If colour management is already
+    on and the current view is a real display view (``sRGB`` / ``ACES 1.0
+    SDR-video`` / ``Un-tone-mapped`` …), that view is LEFT as the user/scene chose
+    it — the configured review view is NOT imposed (Chat 79: v1.22.0 wrongly
+    overrode a scene's ACES SDR-video view with ``Un-tone-mapped``). The
+    configured ``view_transform`` is only pinned when it would otherwise render
+    dark/wrong: colour management OFF, no current view, or a scene-linear/log
+    ``Raw``/``Log`` view.
+
+    Captures the previous view into ``prev_var`` for :func:`view_transform_restore_code`
+    ONLY when this code changed it; otherwise ``prev_var`` stays ``None`` (a clean
+    no-op restore).
     """
     return f"""
 {prev_var} = None
 try:
     import maya.cmds as _mcp_cp_cmds
+    _mcp_cp_was_on = bool(_mcp_cp_cmds.colorManagementPrefs(query=True, cmEnabled=True))
+    _mcp_cp_cur = (_mcp_cp_cmds.colorManagementPrefs(query=True, viewTransformName=True)
+                   if _mcp_cp_was_on else None)
     _mcp_cp_cmds.colorManagementPrefs(edit=True, cmEnabled=True)
     _mcp_cp_views = _mcp_cp_cmds.colorManagementPrefs(query=True, viewTransformNames=True) or []
-    if {view_transform!r} in _mcp_cp_views:
-        {prev_var} = _mcp_cp_cmds.colorManagementPrefs(query=True, viewTransformName=True)
-        if {prev_var} != {view_transform!r}:
+    # Only pin the configured review view when the preview would be dark/wrong:
+    # colour management was OFF, no current view, or a 'Raw'/'Log' scene-linear
+    # view. A real display view already chosen is respected.
+    _mcp_cp_dark = ((not _mcp_cp_was_on) or (not _mcp_cp_cur)
+                    or str(_mcp_cp_cur).split(' (')[0] in ('Raw', 'Log'))
+    if _mcp_cp_dark and {view_transform!r} in _mcp_cp_views:
+        {prev_var} = _mcp_cp_cur
+        if _mcp_cp_cur != {view_transform!r}:
             _mcp_cp_cmds.colorManagementPrefs(edit=True, viewTransformName={view_transform!r})
 except Exception:
     {prev_var} = None

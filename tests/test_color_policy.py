@@ -35,11 +35,12 @@ class _FakeCmds:
     so the fake models ``attributeQuery(exists/listEnum)`` + ``setAttr`` on it.
     """
 
-    def __init__(self, views, current="sRGB gamma (sRGB)",
+    def __init__(self, views, current="sRGB gamma (sRGB)", cm_enabled=True,
                  cm_enum="Raw:Use View Transform:Use Output Transform",
                  cm_attr_exists=True, driver_exists=True):
         self.views = list(views)
         self.current_view = current
+        self.cm_enabled = cm_enabled
         self.cm_enum = cm_enum
         self.cm_attr_exists = cm_attr_exists
         self.driver_exists = driver_exists
@@ -48,6 +49,8 @@ class _FakeCmds:
 
     def colorManagementPrefs(self, *a, **k):
         if k.get("query"):
+            if k.get("cmEnabled"):
+                return self.cm_enabled
             if k.get("viewTransformNames"):
                 return list(self.views)
             if k.get("viewTransformName"):
@@ -56,6 +59,8 @@ class _FakeCmds:
                 return list(self.views)
             return None
         if k.get("edit"):
+            if "cmEnabled" in k:
+                self.cm_enabled = k["cmEnabled"]
             if "viewTransformName" in k:
                 self.current_view = k["viewTransformName"]
             if "outputTransformEnabled" in k:
@@ -110,26 +115,43 @@ def test_emitted_blocks_compile():
         compile(code, "<gen>", "exec")  # raises SyntaxError if malformed
 
 
-def test_apply_pins_view_when_available_and_captures_previous():
+def test_apply_pins_when_current_view_is_dark_raw():
+    """A scene-linear 'Raw' view renders dark → the configured review view IS
+    pinned, capturing the previous one for restore."""
     cmds = _FakeCmds(views=["Raw (sRGB)", color_policy.DEFAULT_REVIEW_VIEW],
                      current="Raw (sRGB)")
     ns = _run(color_policy.view_transform_apply_code(), cmds)
-    # captured the previous view, then switched to the configured one
     assert ns["_mcp_cp_prev_view"] == "Raw (sRGB)"
     assert cmds.current_view == color_policy.DEFAULT_REVIEW_VIEW
 
 
-def test_apply_is_noop_when_view_absent():
-    """Unknown view (e.g. an ACES-only config) → no change, prev stays None."""
-    cmds = _FakeCmds(views=["sRGB (ACES)", "ACES 1.0 SDR-video"], current="sRGB (ACES)")
+def test_apply_respects_deliberate_display_view():
+    """A scene's deliberately-set DISPLAY view (e.g. ACES 1.0 SDR-video) is NOT
+    overridden — the recipe only ensures cmEnabled. Chat 79 fix: v1.22.0 wrongly
+    imposed 'Un-tone-mapped' over a scene's ACES SDR-video view."""
+    cmds = _FakeCmds(views=["ACES 1.0 SDR-video (sRGB)", color_policy.DEFAULT_REVIEW_VIEW],
+                     current="ACES 1.0 SDR-video (sRGB)")
     ns = _run(color_policy.view_transform_apply_code(), cmds)
-    assert ns["_mcp_cp_prev_view"] is None
-    assert cmds.current_view == "sRGB (ACES)"  # untouched
+    assert ns["_mcp_cp_prev_view"] is None                     # nothing changed/restored
+    assert cmds.current_view == "ACES 1.0 SDR-video (sRGB)"    # respected, untouched
+    assert cmds.cm_enabled is True                             # CM still ensured on
+
+
+def test_apply_pins_when_cm_off():
+    """Colour management OFF → preview would be dark, so the configured review
+    view IS pinned and colour management is turned on."""
+    cmds = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW],
+                     current="anything", cm_enabled=False)
+    ns = _run(color_policy.view_transform_apply_code(), cmds)
+    assert cmds.cm_enabled is True
+    assert cmds.current_view == color_policy.DEFAULT_REVIEW_VIEW
+    assert ns["_mcp_cp_prev_view"] is None     # cur was None (CM off) → nothing to restore
 
 
 def test_restore_puts_back_the_previous_view():
-    cmds = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW], current="X")
-    # apply then restore round-trips the view back to its original value
+    # a dark 'Raw' view IS pinned, so apply changes it → restore must undo that
+    cmds = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW, "Raw (sRGB)"],
+                     current="Raw (sRGB)")
     apply_ns = _run(color_policy.view_transform_apply_code(), cmds)
     assert cmds.current_view == color_policy.DEFAULT_REVIEW_VIEW
     restore = color_policy.view_transform_restore_code()
@@ -142,7 +164,7 @@ def test_restore_puts_back_the_previous_view():
     finally:
         sys.modules.pop("maya", None)
         sys.modules.pop("maya.cmds", None)
-    assert cmds.current_view == "X"
+    assert cmds.current_view == "Raw (sRGB)"
 
 
 def test_injection_skeleton_compiles():

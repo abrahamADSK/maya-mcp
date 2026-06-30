@@ -94,26 +94,29 @@ def _engine_context():
 
 
 def _apply_review_color_management(cmds, view_transform):
-    """Best-effort: enable colour management and pin the review view transform.
+    """Best-effort: ensure colour management is on and the preview won't be dark.
 
-    The captured VP2.0 playblast bakes whatever view transform colour management
-    is displaying; pinning it makes the .mov deterministic instead of riding
-    session state, so a version preview is never dark/mismatched (Chat 79).
-    Returns the previous view transform name to restore later (or ``None`` when
-    nothing was changed). No-op — degrades to the pre-Chat-79 behaviour, never
-    raises — when colour management or the view name is unavailable in the active
-    OCIO config. Flags mirror ``maya_mcp.color_policy`` (this module ships
-    standalone over the Command Port and cannot import it inside Maya; the two
-    are kept in sync by ``tests/test_color_policy.py``).
+    RESPECTS a deliberately-set display view: if colour management is already on
+    and the current view is a real display view (sRGB / ACES 1.0 SDR-video /
+    Un-tone-mapped …) it is LEFT as chosen — the configured review view is only
+    pinned when the preview would otherwise render dark/wrong (colour management
+    OFF, no current view, or a scene-linear 'Raw'/'Log' view). This stops the
+    recipe imposing 'Un-tone-mapped' over a scene's deliberate ACES view (Chat 79).
+    Returns the previous view to restore ONLY when this changed it (else ``None``).
+    No-op / never raises when colour management is unavailable. Logic mirrors
+    ``maya_mcp.color_policy`` (this module ships standalone over the Command Port
+    and cannot import it inside Maya; kept in sync by ``tests/test_color_policy.py``).
     """
     try:
+        was_on = bool(cmds.colorManagementPrefs(query=True, cmEnabled=True))
+        cur = cmds.colorManagementPrefs(query=True, viewTransformName=True) if was_on else None
         cmds.colorManagementPrefs(edit=True, cmEnabled=True)
         views = cmds.colorManagementPrefs(query=True, viewTransformNames=True) or []
-        if view_transform in views:
-            prev = cmds.colorManagementPrefs(query=True, viewTransformName=True)
-            if prev != view_transform:
+        dark = (not was_on) or (not cur) or str(cur).split(" (")[0] in ("Raw", "Log")
+        if dark and view_transform in views:
+            if cur != view_transform:
                 cmds.colorManagementPrefs(edit=True, viewTransformName=view_transform)
-            return prev
+            return cur
     except Exception:
         pass
     return None
