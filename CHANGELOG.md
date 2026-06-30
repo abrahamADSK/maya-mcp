@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.22.0] — 2026-06-30
+
 ### Added
 - **Deterministic review colour management (`color_policy.py`).** New single
   source of truth for the preview/review view transform. The VP2.0 capture
