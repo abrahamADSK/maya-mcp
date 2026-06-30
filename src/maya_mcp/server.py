@@ -52,6 +52,7 @@ from maya_mcp._session_stats import (
 from maya_mcp._ast_validate import validate_python, format_issues
 from maya_mcp import _audit
 from maya_mcp import color_policy
+from maya_mcp import _review_encode
 from maya_mcp.error_scrub import safe_error_message
 from maya_mcp.publish import (
     PUBLISH_EXECUTE_CODE as _PUBLISH_EXECUTE_CODE,
@@ -1596,7 +1597,7 @@ async def _do_review_turntable(params: dict, ctx: Context | None = None) -> str:
         f"view_transform={view!r}))\n"
     )
     try:
-        return await _execute_with_heartbeat(
+        result_str = await _execute_with_heartbeat(
             code, ctx, "review_turntable", bridge_timeout=int(params.get("timeout", 600))
         )
     except MayaBridgeError as exc:
@@ -1604,6 +1605,30 @@ async def _do_review_turntable(params: dict, ctx: Context | None = None) -> str:
             "error": f"Maya bridge error: {exc}",
             "hint": "review_turntable runs in Maya — ensure the Command Port is up.",
         })
+    # PNG-sequence fallback (Maya's movie encoder was unavailable) → assemble the
+    # .mov server-side with ffmpeg so review_turntable always returns a .mov
+    # (Chat 79). Best-effort: on any failure, keep the PNG-sequence result.
+    try:
+        _rt = json.loads(result_str)
+    except (ValueError, TypeError):
+        return result_str
+    if _review_encode.is_png_fallback(_rt):
+        _frames = _rt.get("frames") or [1, 100]
+        if ctx:
+            await ctx.info("Maya movie encoder unavailable — assembling the .mov "
+                           "from the PNG sequence with ffmpeg…")
+        if await asyncio.to_thread(
+            _review_encode.assemble_mov_from_pngs,
+            out_path, int(_frames[0]), int(_frames[1]), int(_rt.get("fps", 25)),
+        ):
+            _rt["mov"] = out_path
+            _rt["format"] = {
+                "format": "ffmpeg",
+                "note": "Maya movie encoder unavailable; .mov assembled from the "
+                        "PNG sequence via ffmpeg",
+            }
+            return json.dumps(_rt)
+    return result_str
 
 
 @mcp.tool(name="maya_session")
