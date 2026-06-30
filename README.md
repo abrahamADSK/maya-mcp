@@ -32,6 +32,9 @@ A dockable Qt panel that lives inside Maya as a `workspaceControl` tab (next to 
 ### Cross-MCP Orchestration
 Works alongside [fpt-mcp](https://github.com/abrahamADSK/fpt-mcp) (ShotGrid/Flow Production Tracking) and [flame-mcp](https://github.com/abrahamADSK/flame-mcp) (Autodesk Flame). Each DCC has its own embedded console, and all consoles access all MCP servers via Claude Code CLI. When multiple servers are configured, Claude can orchestrate end-to-end VFX workflows across applications. Consistent architecture across all three servers.
 
+### Review & Colour Management
+Review previews are **colour-correct and deterministic**. The Viewport 2.0 capture paths (`review_turntable`, `maya_viewport_capture`) pin the colour-management **view transform** before the playblast and restore it after, so a version preview matches the viewport instead of riding the session's current view. The view is configurable (`config.json → review_view_transform`, default `Un-tone-mapped (sRGB)` — the view of Maya's built-in default OCIO config). For Arnold **file** renders, `color_policy.py` (and `docs/ARNOLD_API.md`) provide a preview-vs-EXR policy: bake the output transform for an 8-bit preview, but force the driver to **Raw** for scene-linear EXRs — the guardrail that keeps a display transform out of the EXRs the comp/Flame stage consumes.
+
 ---
 
 ## Architecture
@@ -103,7 +106,7 @@ FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
 | `shelf_button` | Create reusable shelf buttons with custom Python commands |
 | `operation_history` | Read recent durable-audit records (read-only; requires MAYA_AUDIT_LOG=1). Optional filters: limit, tool, action, status |
 | `publish` | Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya launched via tank. mode preview/publish, include/exclude intent tokens, comment, timeout. Captures dependencies automatically. |
-| `review_turntable` | Deterministic Viewport 2.0 turntable playblast to a .mov (long op, runs in Maya). Frames the model, orbits 360° over start–end at the given fps, 16:9 / square pixels / overscan, offscreen (never Arnold). Needs out_path (resolve via fpt tk_resolve_path, template movie_asset_publish); returns the mov plus a Version code Asset_Task to name the review Version after its task. |
+| `review_turntable` | Deterministic Viewport 2.0 turntable playblast to a .mov (long op, runs in Maya). Frames the model, orbits 360° over start–end at the given fps, 16:9 / square pixels / overscan, offscreen (never Arnold), colour-managed (the review view transform is pinned and restored so the preview matches the viewport). Needs out_path (resolve via fpt tk_resolve_path, template movie_asset_publish); returns the mov plus a Version code Asset_Task to name the review Version after its task. |
 <!-- concept:maya_session_actions end -->
 
 ### Vision3D Dispatcher (`maya_vision3d` — 7 actions, optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
@@ -408,6 +411,14 @@ All operations go through the safety scanner before reaching Maya. Dangerous pat
 | `SHAPE_TIMEOUT` | Shape generation timeout (seconds) | `900` |
 | `TEXTURE_TIMEOUT` | Texture generation timeout (seconds) | `600` |
 | `MAYA_AUDIT_LOG` | Opt-in durable audit log of tool executions. Set to `1`/`true`/`yes`/`on` to enable. Unset/empty = no-op (no file, no perf/disk/privacy impact). | _off_ |
+
+**`config.json` (not env vars)** also accepts, besides `backend`/`model`/Ollama settings:
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `review_view_transform` | Colour-management view pinned for review/preview captures (`review_turntable`, `maya_viewport_capture`) so they match the viewport. Default is the view of Maya's built-in default OCIO config; override per project if it moves to ACES (e.g. `sRGB (ACES)`). | `Un-tone-mapped (sRGB)` |
+| `ast_dry_run` | Static AST validation of `execute_python` command existence before the Command Port round-trip. Set `false` to bypass (e.g. on a newer Maya than the committed `api_graph.json`). | `true` |
+| `write_allowed_models` | Models allowed to write learned patterns to the RAG corpus; others stage candidates for review. | `["claude-opus", "claude-fable"]` |
 
 ---
 
