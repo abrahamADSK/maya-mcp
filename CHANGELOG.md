@@ -22,16 +22,18 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   view of Maya's built-in default OCIO config these projects inherit); override
   it per project if a project ever moves to ACES. Best-effort and guarded: on a
   Maya version / OCIO config where a flag is absent it degrades to the previous
-  behaviour, never raising.
+  behaviour, never raising. Flags (`cmEnabled`, `viewTransformName(s)`) confirmed
+  in-vivo on Maya 2027.
 - **Arnold preview-vs-EXR output-transform policy.** `color_policy.py` also
   emits a guarded Arnold recipe (and `docs/ARNOLD_API.md` documents it for the
-  console) that enables the output transform for a display-referred **preview**
-  (PNG/JPG match the viewport) and force-**disables** it for a scene-linear
-  **EXR** — the guardrail against baking a display transform into the EXR the
-  comp/Flame stage consumes, which matters because a single shared
-  `defaultArnoldDriver` feeds both. The driver's output-transform attribute is
-  **discovered at runtime** (`listAttr`) rather than hardcoded, so nothing
-  depends on an unverified attribute name.
+  console): for a display-referred **preview** it enables Maya's global output
+  transform and sets the driver to *Use Output Transform* (PNG/JPG match the
+  viewport); for a scene-linear **EXR** it forces the driver to *Raw* — the
+  guardrail against baking a display transform into the EXR the comp/Flame stage
+  consumes, which matters because a single shared `defaultArnoldDriver` feeds
+  both. The driver is steered via its `colorManagement` enum
+  (`Raw:Use View Transform:Use Output Transform`, confirmed in-vivo on Maya 2027)
+  mapped **by name**, so it never hardcodes a version-specific enum index.
 
 ## [1.21.0] — 2026-06-29
 

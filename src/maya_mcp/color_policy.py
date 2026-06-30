@@ -102,42 +102,47 @@ def arnold_output_transform_code(
     transform set to ``view_transform`` and, if the driver exposes an
     output-transform toggle, switch it on so the file matches the viewport.
 
-    ``mode="exr"`` / ``"linear"`` (scene-linear EXR): force the output transform
-    OFF — the guardrail that stops a display transform being baked into the EXR
-    the comp/Flame stage consumes. EVERY non-preview mode disables it.
+    ``mode="exr"`` / ``"linear"`` (scene-linear EXR): force the driver to
+    ``"Raw"`` — the guardrail that stops a display transform being baked into the
+    EXR the comp/Flame stage consumes. EVERY non-preview mode forces Raw.
 
-    The driver's output-transform attribute name is DISCOVERED at runtime
-    (``listAttr`` for ``*ransform*``, then the boolean one is the toggle) instead
-    of hardcoded, so this never depends on an unverified attribute name.
-    Best-effort; never raises. Assigns a small report dict to ``result``.
+    The driver is steered via its ``colorManagement`` ENUM
+    (``Raw:Use View Transform:Use Output Transform`` on mtoa / Maya 2027,
+    confirmed in-vivo Chat 79), mapped **by name** — the enum index varies by
+    mtoa version, so this never hardcodes a magic number nor an unverified
+    attribute. Best-effort; never raises. Assigns a report dict to ``result``.
     """
-    enable = "True" if mode == "preview" else "False"
+    preview = mode == "preview"
     return f"""
-_mcp_cp_report = {{"mode": {mode!r}, "global_output_transform": None, "driver_attr": None}}
+_mcp_cp_report = {{"mode": {mode!r}, "global_output_transform": None, "driver_color_management": None}}
 try:
     import maya.cmds as _mcp_cp_cmds
-    # 1) Maya GLOBAL output transform (the "Apply Output Transform" knob).
-    try:
-        _mcp_cp_cmds.colorManagementPrefs(edit=True, outputTransformEnabled={enable})
-        if {enable} and {view_transform!r} in (
-                _mcp_cp_cmds.colorManagementPrefs(query=True, outputTransformNames=True) or []):
-            _mcp_cp_cmds.colorManagementPrefs(edit=True, outputTransformName={view_transform!r})
-        _mcp_cp_report["global_output_transform"] = {enable}
-    except Exception:
-        pass
-    # 2) Point the Arnold driver at the output transform. DISCOVER the attribute
-    #    name (never hardcode it): a boolean *transform* attr on the driver is the
-    #    "use output transform" toggle. Setting it False on EXR is the guardrail.
-    if _mcp_cp_cmds.objExists({driver!r}):
-        for _mcp_cp_a in (_mcp_cp_cmds.listAttr({driver!r}, string='*ransform*') or []):
-            try:
-                _mcp_cp_full = {driver!r} + '.' + _mcp_cp_a
-                if _mcp_cp_cmds.getAttr(_mcp_cp_full, type=True) == 'bool':
-                    _mcp_cp_cmds.setAttr(_mcp_cp_full, {enable})
-                    _mcp_cp_report["driver_attr"] = _mcp_cp_a
-                    break
-            except Exception:
-                pass
+    _mcp_cp_preview = {preview!r}
+    # 1) PREVIEW only: enable Maya's GLOBAL output transform, set to the review
+    #    view. (For EXR we leave the global alone and force the driver to Raw —
+    #    the driver=Raw is the definitive, side-effect-free guardrail.)
+    if _mcp_cp_preview:
+        try:
+            _mcp_cp_cmds.colorManagementPrefs(edit=True, cmEnabled=True)
+            _mcp_cp_cmds.colorManagementPrefs(edit=True, outputTransformEnabled=True)
+            if {view_transform!r} in (_mcp_cp_cmds.colorManagementPrefs(
+                    query=True, outputTransformNames=True) or []):
+                _mcp_cp_cmds.colorManagementPrefs(edit=True, outputTransformName={view_transform!r})
+            _mcp_cp_report["global_output_transform"] = True
+        except Exception:
+            pass
+    # 2) Steer the Arnold driver via its colorManagement ENUM, mapped BY NAME
+    #    (indices vary by mtoa version). preview -> "Use Output Transform";
+    #    EXR -> "Raw" (the guardrail: a Raw driver writes scene-linear, never bakes).
+    if (_mcp_cp_cmds.objExists({driver!r})
+            and _mcp_cp_cmds.attributeQuery('colorManagement', node={driver!r}, exists=True)):
+        _mcp_cp_enum = (_mcp_cp_cmds.attributeQuery(
+            'colorManagement', node={driver!r}, listEnum=True) or [''])[0]
+        _mcp_cp_opts = _mcp_cp_enum.split(':')
+        _mcp_cp_target = 'Use Output Transform' if _mcp_cp_preview else 'Raw'
+        if _mcp_cp_target in _mcp_cp_opts:
+            _mcp_cp_cmds.setAttr({driver!r} + '.colorManagement', _mcp_cp_opts.index(_mcp_cp_target))
+            _mcp_cp_report["driver_color_management"] = _mcp_cp_target
 except Exception:
     pass
 result = _mcp_cp_report

@@ -28,14 +28,20 @@ from maya_mcp import color_policy
 # ── fake maya.cmds ───────────────────────────────────────────────────────────
 
 class _FakeCmds:
-    """Minimal ``maya.cmds`` stand-in for colour-management + Arnold driver."""
+    """Minimal ``maya.cmds`` stand-in for colour-management + Arnold driver.
+
+    The Arnold driver's colour is steered via a ``colorManagement`` enum
+    (``Raw:Use View Transform:Use Output Transform`` on live Maya 2027, Chat 79),
+    so the fake models ``attributeQuery(exists/listEnum)`` + ``setAttr`` on it.
+    """
 
     def __init__(self, views, current="sRGB gamma (sRGB)",
-                 driver_attrs=None, attr_types=None, driver_exists=True):
+                 cm_enum="Raw:Use View Transform:Use Output Transform",
+                 cm_attr_exists=True, driver_exists=True):
         self.views = list(views)
         self.current_view = current
-        self.driver_attrs = list(driver_attrs or [])
-        self.attr_types = dict(attr_types or {})
+        self.cm_enum = cm_enum
+        self.cm_attr_exists = cm_attr_exists
         self.driver_exists = driver_exists
         self.set_values: dict = {}
         self.output_enabled = None
@@ -59,12 +65,13 @@ class _FakeCmds:
     def objExists(self, _name):
         return self.driver_exists
 
-    def listAttr(self, _node, **_k):
-        return list(self.driver_attrs)
-
-    def getAttr(self, attr, **k):
-        if k.get("type"):
-            return self.attr_types.get(attr.split(".")[-1], "long")
+    def attributeQuery(self, attr, **k):
+        if attr != "colorManagement":
+            return False if k.get("exists") else []
+        if k.get("exists"):
+            return self.cm_attr_exists
+        if k.get("listEnum"):
+            return [self.cm_enum]
         return None
 
     def setAttr(self, attr, value):
@@ -161,49 +168,47 @@ finally:
 
 # ── Arnold output transform (A2: file renders, EXR guardrail) ────────────────
 
-def test_arnold_preview_enables_discovered_driver_toggle():
-    """preview mode: discover the boolean *transform* attr and switch it ON."""
-    cmds = _FakeCmds(
-        views=[color_policy.DEFAULT_REVIEW_VIEW],
-        driver_attrs=["outputTransformEnabled", "outputTransformName"],
-        attr_types={"outputTransformEnabled": "bool", "outputTransformName": "enum"},
-    )
+def test_arnold_preview_sets_use_output_transform():
+    """preview mode: driver enum → "Use Output Transform" (by name) + global on.
+
+    Enum index 2 in ``Raw:Use View Transform:Use Output Transform`` — mapped by
+    name, so the value is the discovered index, not a hardcoded number.
+    """
+    cmds = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW])
     ns = _run(color_policy.arnold_output_transform_code("preview"), cmds)
-    assert cmds.set_values["defaultArnoldDriver.outputTransformEnabled"] is True
-    assert cmds.output_enabled is True                 # global knob on too
-    assert ns["result"]["driver_attr"] == "outputTransformEnabled"
+    assert cmds.set_values["defaultArnoldDriver.colorManagement"] == 2
+    assert cmds.output_enabled is True                 # global output transform on
+    assert ns["result"]["driver_color_management"] == "Use Output Transform"
 
 
-def test_arnold_exr_forces_output_transform_off():
-    """EXR guardrail: the output transform is force-DISABLED so a display
-    transform is never baked into a scene-linear EXR (single shared driver)."""
-    cmds = _FakeCmds(
-        views=[color_policy.DEFAULT_REVIEW_VIEW],
-        driver_attrs=["outputTransformEnabled"],
-        attr_types={"outputTransformEnabled": "bool"},
-    )
-    _run(color_policy.arnold_output_transform_code("exr"), cmds)
-    assert cmds.set_values["defaultArnoldDriver.outputTransformEnabled"] is False
-    assert cmds.output_enabled is False
+def test_arnold_exr_forces_driver_raw():
+    """EXR guardrail: driver enum → "Raw" (index 0) so a display transform is
+    never baked into a scene-linear EXR; the global is left untouched."""
+    cmds = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW])
+    ns = _run(color_policy.arnold_output_transform_code("exr"), cmds)
+    assert cmds.set_values["defaultArnoldDriver.colorManagement"] == 0
+    assert cmds.output_enabled is None                 # global NOT touched for EXR
+    assert ns["result"]["driver_color_management"] == "Raw"
 
 
-def test_arnold_skips_non_bool_attrs():
-    """Only a boolean *transform* attr is the toggle; a string/enum is skipped."""
-    cmds = _FakeCmds(
-        views=[color_policy.DEFAULT_REVIEW_VIEW],
-        driver_attrs=["outputTransformName"],          # only the (enum) name attr
-        attr_types={"outputTransformName": "enum"},
-    )
+def test_arnold_skips_when_enum_lacks_target():
+    """An mtoa whose enum has no "Use Output Transform" → no setAttr, clean None."""
+    cmds = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW], cm_enum="Raw:sRGB")
     ns = _run(color_policy.arnold_output_transform_code("preview"), cmds)
-    assert "defaultArnoldDriver.outputTransformName" not in cmds.set_values
-    assert ns["result"]["driver_attr"] is None         # nothing toggled
+    assert "defaultArnoldDriver.colorManagement" not in cmds.set_values
+    assert ns["result"]["driver_color_management"] is None
 
 
-def test_arnold_handles_missing_driver():
-    """No defaultArnoldDriver (e.g. mtoa not loaded) → no crash, no driver attr."""
-    cmds = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW], driver_exists=False)
-    ns = _run(color_policy.arnold_output_transform_code("preview"), cmds)
-    assert ns["result"]["driver_attr"] is None
+def test_arnold_handles_missing_attr_and_driver():
+    """No colorManagement attr, or no driver at all → no crash, no driver change."""
+    no_attr = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW], cm_attr_exists=False)
+    ns1 = _run(color_policy.arnold_output_transform_code("preview"), no_attr)
+    assert ns1["result"]["driver_color_management"] is None
+    assert "defaultArnoldDriver.colorManagement" not in no_attr.set_values
+
+    no_driver = _FakeCmds(views=[color_policy.DEFAULT_REVIEW_VIEW], driver_exists=False)
+    ns2 = _run(color_policy.arnold_output_transform_code("preview"), no_driver)
+    assert ns2["result"]["driver_color_management"] is None
 
 
 # ── sync guard: review_build.py must not drift from color_policy ─────────────

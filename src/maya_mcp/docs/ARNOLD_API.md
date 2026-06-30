@@ -125,9 +125,9 @@ stage needs (it applies the view transform downstream). So the rule is:
 
 There is a **single shared `defaultArnoldDriver`**, so the same driver feeds both
 — always set the mode explicitly per render; never leave the preview transform on
-when writing EXRs. The driver's output-transform attribute name varies by mtoa
-version, so **discover it** (`listAttr`) rather than guessing; confirm the exact
-name once with `cmds.listAttr('defaultArnoldDriver', string='*ransform*')`.
+when writing EXRs. The driver's colour is steered by its `colorManagement` **enum**
+(`Raw:Use View Transform:Use Output Transform` on Maya 2027 / mtoa, confirmed
+in-vivo Chat 79). Map it **by name** — the enum index varies by mtoa version.
 
 ```python
 import maya.cmds as cmds
@@ -135,24 +135,26 @@ import maya.cmds as cmds
 def set_arnold_output_colour(mode, view="Un-tone-mapped (sRGB)",
                              driver="defaultArnoldDriver"):
     """mode="preview": bake the view transform (PNG/JPG match the viewport).
-       mode="exr": force the output transform OFF (keep EXRs scene-linear)."""
-    enable = (mode == "preview")
-    # Maya's global "Apply Output Transform" knob.
-    try:
-        cmds.colorManagementPrefs(edit=True, cmEnabled=True)
-        cmds.colorManagementPrefs(edit=True, outputTransformEnabled=enable)
-        if enable and view in (cmds.colorManagementPrefs(
-                query=True, outputTransformNames=True) or []):
-            cmds.colorManagementPrefs(edit=True, outputTransformName=view)
-    except Exception:
-        pass
-    # Point the Arnold driver at it — discover the boolean toggle, never hardcode.
-    if cmds.objExists(driver):
-        for a in (cmds.listAttr(driver, string='*ransform*') or []):
-            full = driver + '.' + a
-            if cmds.getAttr(full, type=True) == 'bool':
-                cmds.setAttr(full, enable)
-                break
+       mode="exr": force the driver to Raw (keep EXRs scene-linear)."""
+    preview = (mode == "preview")
+    # Preview only: enable Maya's global output transform set to the review view.
+    if preview:
+        try:
+            cmds.colorManagementPrefs(edit=True, cmEnabled=True)
+            cmds.colorManagementPrefs(edit=True, outputTransformEnabled=True)
+            if view in (cmds.colorManagementPrefs(
+                    query=True, outputTransformNames=True) or []):
+                cmds.colorManagementPrefs(edit=True, outputTransformName=view)
+        except Exception:
+            pass
+    # Steer the driver's colorManagement enum BY NAME (never hardcode the index).
+    if cmds.objExists(driver) and cmds.attributeQuery(
+            'colorManagement', node=driver, exists=True):
+        opts = (cmds.attributeQuery(
+            'colorManagement', node=driver, listEnum=True) or [''])[0].split(':')
+        target = 'Use Output Transform' if preview else 'Raw'
+        if target in opts:
+            cmds.setAttr(driver + '.colorManagement', opts.index(target))
 
 set_arnold_output_colour("preview")   # before a PNG/JPG review render
 set_arnold_output_colour("exr")       # before an EXR production render
