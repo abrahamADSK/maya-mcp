@@ -11,6 +11,16 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **`review_turntable` always returns a `.mov` — ffmpeg PNG-sequence fallback
+  (`_review_encode.py`).** When Maya's movie encoder (QuickTime / avfoundation)
+  is unavailable, the recipe falls back to writing a PNG sequence; the server
+  now assembles the `.mov` from those PNGs with **ffmpeg** (H.264 / yuv420p,
+  bounded to the rendered frame range) so the tool delivers a `.mov` either way
+  (Chat 79). Best-effort: if ffmpeg is absent, no frames were written, or the
+  encode fails, the original PNG-sequence result is kept (never raises). Pure
+  helpers (fallback detection + ffmpeg arg construction) are unit-tested.
+
 ### Fixed
 - **Review colour management no longer overrides a deliberately-set view
   (`color_policy.py`, `review_build.py`).** v1.22.0 always pinned the configured
