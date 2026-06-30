@@ -89,6 +89,32 @@ def _engine_context():
         return None, None, None
 
 
+def _apply_review_color_management(cmds, view_transform):
+    """Best-effort: enable colour management and pin the review view transform.
+
+    The captured VP2.0 playblast bakes whatever view transform colour management
+    is displaying; pinning it makes the .mov deterministic instead of riding
+    session state, so a version preview is never dark/mismatched (Chat 79).
+    Returns the previous view transform name to restore later (or ``None`` when
+    nothing was changed). No-op — degrades to the pre-Chat-79 behaviour, never
+    raises — when colour management or the view name is unavailable in the active
+    OCIO config. Flags mirror ``maya_mcp.color_policy`` (this module ships
+    standalone over the Command Port and cannot import it inside Maya; the two
+    are kept in sync by ``tests/test_color_policy.py``).
+    """
+    try:
+        cmds.colorManagementPrefs(edit=True, cmEnabled=True)
+        views = cmds.colorManagementPrefs(query=True, viewTransformNames=True) or []
+        if view_transform in views:
+            prev = cmds.colorManagementPrefs(query=True, viewTransformName=True)
+            if prev != view_transform:
+                cmds.colorManagementPrefs(edit=True, viewTransformName=view_transform)
+            return prev
+    except Exception:
+        pass
+    return None
+
+
 def review_turntable(
     out_path,
     start=1,
@@ -98,12 +124,16 @@ def review_turntable(
     height=1080,
     objects=None,
     focal=50.0,
+    view_transform="Un-tone-mapped (sRGB)",
 ):
     """Deterministic turntable playblast → ``out_path`` (.mov). See module docstring.
 
     ``out_path`` is REQUIRED (resolve it via fpt ``tk_resolve_path`` upstream).
     ``objects`` frames a specific selection; otherwise the current selection, else
     every top-level assembly (excluding the default cameras).
+    ``view_transform`` is the colour-management view pinned for the capture so the
+    .mov matches the viewport (default = the Maya-default-config review view;
+    the server passes ``config.json -> review_view_transform``). Chat 79.
     """
     import os
 
@@ -156,6 +186,7 @@ def review_turntable(
     _trace(f"bbox={[round(v, 2) for v in bb]} center=({cx:.2f},{cy:.2f},{cz:.2f}) size={size:.3f}")
 
     prev_unit = cmds.currentUnit(query=True, time=True)
+    prev_view = None
     piv = None
     panel = prev_sel = win = None
     used = {}
@@ -238,6 +269,12 @@ def review_turntable(
         _trace(f"temp-window panel={panel} win={win} "
                f"vis_meshes={len(cmds.ls(type='mesh', visible=True, long=True) or [])}")
 
+        # Pin the review view transform so the VP2.0 capture is colour-correct
+        # and deterministic (not dark / riding session state). Restored in
+        # `finally`. Chat 79 — see maya_mcp.color_policy.
+        prev_view = _apply_review_color_management(cmds, view_transform)
+        _trace(f"colour-mgmt view={view_transform!r} prev={prev_view!r}")
+
         # choose an available movie encoder, else fall back (never raise out)
         fmts = cmds.playblast(query=True, format=True) or []
         pb = dict(filename=out_path, widthHeight=(int(width), int(height)),
@@ -295,6 +332,11 @@ def review_turntable(
                 cmds.currentUnit(time=prev_unit, updateAnimation=False)
         except Exception:
             pass
+        if prev_view:
+            try:
+                cmds.colorManagementPrefs(edit=True, viewTransformName=prev_view)
+            except Exception:
+                pass
 
     if err:
         return {"error": err, "format_attempted": used}
@@ -305,6 +347,7 @@ def review_turntable(
         "frames": [start, end],
         "fps": int(fps),
         "resolution": [int(width), int(height)],
+        "view_transform": view_transform,
         "format": used,
         "asset": asset,
         "task": task,

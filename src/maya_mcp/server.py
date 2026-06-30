@@ -51,6 +51,7 @@ from maya_mcp._session_stats import (
 )
 from maya_mcp._ast_validate import validate_python, format_issues
 from maya_mcp import _audit
+from maya_mcp import color_policy
 from maya_mcp.error_scrub import safe_error_message
 from maya_mcp.publish import (
     PUBLISH_EXECUTE_CODE as _PUBLISH_EXECUTE_CODE,
@@ -1333,11 +1334,23 @@ if cmds.getPanel(typeOf=_mcp_panel) == 'modelPanel':
         fmt = "png" if params.output_path.endswith(".png") else "jpg"
         out_path = _py_str(params.output_path)
 
+        # Pin the colour-management view transform so the grab matches the
+        # viewport (not dark / riding session state); restored in `finally`.
+        # Chat 79 — see maya_mcp.color_policy.
+        view = _get_config().get("review_view_transform", color_policy.DEFAULT_REVIEW_VIEW)
+        cm_apply = color_policy.view_transform_apply_code(view)
+        cm_restore = color_policy.view_transform_restore_code()
+        cm_restore_indented = "\n".join(
+            ("    " + ln) if ln.strip() else ln
+            for ln in cm_restore.strip("\n").splitlines()
+        )
+
         code = f"""
 import maya.cmds as cmds
 import os, base64
 {camera_opt}
 cmds.undoInfo(stateWithoutFlush=False)
+{cm_apply}
 try:
     _mcp_img = cmds.playblast(
         completeFilename={out_path},
@@ -1354,6 +1367,7 @@ try:
               'image_b64': _mcp_b64}}
 finally:
     cmds.undoInfo(stateWithoutFlush=True)
+{cm_restore_indented}
 """
         raw = await asyncio.to_thread(bridge.execute, code)
         # Parse the result to extract the base64 image
@@ -1568,13 +1582,18 @@ async def _do_review_turntable(params: dict, ctx: Context | None = None) -> str:
         })
     from pathlib import Path as _Path
     src = (_Path(__file__).parent / "review_build.py").read_text()
+    # Colour-management view pinned for the VP2.0 capture so the .mov matches the
+    # viewport (Chat 79). params override > config.json > Maya-default review view.
+    view = (params.get("view_transform")
+            or _get_config().get("review_view_transform", color_policy.DEFAULT_REVIEW_VIEW))
     code = src + (
         "\nimport json as _json\n"
         "result = _json.dumps(review_turntable("
         f"out_path={out_path!r}, start={int(params.get('start', 1))!r}, "
         f"end={int(params.get('end', 100))!r}, fps={int(params.get('fps', 25))!r}, "
         f"width={int(params.get('width', 1920))!r}, height={int(params.get('height', 1080))!r}, "
-        f"objects={params.get('objects')!r}, focal={float(params.get('focal', 50.0))!r}))\n"
+        f"objects={params.get('objects')!r}, focal={float(params.get('focal', 50.0))!r}, "
+        f"view_transform={view!r}))\n"
     )
     try:
         return await _execute_with_heartbeat(

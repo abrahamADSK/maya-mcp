@@ -4,5 +4,6 @@
   "ollama_url": "http://glorfindel:11434",
   "ollama_mac_url": "http://localhost:11434",
   "ollama_keep_alive": "30m",
-  "write_allowed_models": ["claude-opus", "claude-fable"]
+  "write_allowed_models": ["claude-opus", "claude-fable"],
+  "review_view_transform": "Un-tone-mapped (sRGB)"
 }
