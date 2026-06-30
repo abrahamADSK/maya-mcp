@@ -90,6 +90,21 @@ GPU_VERIFY_TLS=true          # Verify TLS for https Vision3D targets (default tr
 
 **Vision3D URL is NOT stored anywhere.** There is no `vision3d_servers` config field, no pool, no whitelist. On the first Vision3D call of the session, the dispatch returns `vision3d_url_required`; Claude asks the user for the URL in the chat, the user types it, Claude calls `select_server` with that URL, and it is cached in the MCP process memory until restart. If `GPU_API_URL` is set in the environment, Claude surfaces it as a *suggested default* in the prompt — the user still has to confirm it explicitly. `config.json` only holds backend/model/Ollama settings; it does NOT hold Vision3D endpoints.
 
+### Review colour management (`color_policy.py`)
+The Maya projects in this pipeline inherit Maya's **built-in default OCIO config**
+(nothing sets an `OCIO` env var, `colorManagementPrefs`, or an ACES config — Chat
+79). `src/maya_mcp/color_policy.py` is the single source of truth for the
+preview/review **view transform**: the VP2.0 capture paths (`review_turntable`,
+`maya_viewport_capture`) pin it before the playblast and restore it after, so a
+version preview is colour-correct and deterministic rather than riding the
+session's current view. The view is read from `config.json -> review_view_transform`
+(default `"Un-tone-mapped (sRGB)"`); set it per project if a project moves to ACES
+(e.g. `"sRGB (ACES)"`). All blocks are best-effort/guarded — degrade to a no-op
+when a flag is absent. `color_policy.py` also emits the Arnold **output transform**
+recipe (preview = bake it, EXR = force OFF) documented in `docs/ARNOLD_API.md`;
+note that VP2.0 playblasts do NOT pass through an Arnold driver, so the view
+transform (not the Arnold output transform) is what governs them.
+
 ---
 
 ## 4. Available Tools (<!-- concept:mcp_tool_count start -->16<!-- concept:mcp_tool_count end --> MCP tools)

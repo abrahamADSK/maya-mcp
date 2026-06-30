@@ -109,6 +109,60 @@ cmds.setAttr('defaultArnoldDriver.aiTranslator', 'exr', type='string')
 cmds.setAttr('defaultArnoldDriver.mergeAOVs', 1)  # Multi-layer EXR
 ```
 
+## Colour Management — Preview vs EXR Output
+
+Arnold renders in **scene-linear** space. A **preview** written to a
+display-referred 8-bit format (PNG/JPG) comes out **dark** unless the **output
+transform** bakes in the display encoding — that is what makes a preview match
+the Maya viewport. A **production EXR**, by contrast, must stay scene-linear:
+baking a display transform into an EXR destroys the linear data the comp / Flame
+stage needs (it applies the view transform downstream). So the rule is:
+
+- **Preview (PNG/JPG)** → output transform **ON**, set to the project's review
+  view (these projects inherit Maya's default OCIO config; the review view is
+  `"Un-tone-mapped (sRGB)"`).
+- **Production EXR** → output transform **OFF** (scene-linear / "Raw").
+
+There is a **single shared `defaultArnoldDriver`**, so the same driver feeds both
+— always set the mode explicitly per render; never leave the preview transform on
+when writing EXRs. The driver's output-transform attribute name varies by mtoa
+version, so **discover it** (`listAttr`) rather than guessing; confirm the exact
+name once with `cmds.listAttr('defaultArnoldDriver', string='*ransform*')`.
+
+```python
+import maya.cmds as cmds
+
+def set_arnold_output_colour(mode, view="Un-tone-mapped (sRGB)",
+                             driver="defaultArnoldDriver"):
+    """mode="preview": bake the view transform (PNG/JPG match the viewport).
+       mode="exr": force the output transform OFF (keep EXRs scene-linear)."""
+    enable = (mode == "preview")
+    # Maya's global "Apply Output Transform" knob.
+    try:
+        cmds.colorManagementPrefs(edit=True, cmEnabled=True)
+        cmds.colorManagementPrefs(edit=True, outputTransformEnabled=enable)
+        if enable and view in (cmds.colorManagementPrefs(
+                query=True, outputTransformNames=True) or []):
+            cmds.colorManagementPrefs(edit=True, outputTransformName=view)
+    except Exception:
+        pass
+    # Point the Arnold driver at it — discover the boolean toggle, never hardcode.
+    if cmds.objExists(driver):
+        for a in (cmds.listAttr(driver, string='*ransform*') or []):
+            full = driver + '.' + a
+            if cmds.getAttr(full, type=True) == 'bool':
+                cmds.setAttr(full, enable)
+                break
+
+set_arnold_output_colour("preview")   # before a PNG/JPG review render
+set_arnold_output_colour("exr")       # before an EXR production render
+```
+
+> The VP2.0 turntable (`maya_session action=review_turntable`) and
+> `maya_viewport_capture` are **not** Arnold renders — they are VP2.0 playblasts
+> and pin the **view transform** automatically (`maya_mcp.color_policy`); the
+> Arnold output transform above does not apply to them.
+
 ## AOVs (Arbitrary Output Variables)
 
 ```python
