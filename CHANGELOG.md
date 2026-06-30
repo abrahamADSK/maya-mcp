@@ -11,6 +11,17 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **`review_turntable` no longer leaves the scene displaced (`review_build.py`).**
+  The recipe now snapshots and restores the **current frame** and the **playback
+  range** in its `finally` block (it already restored the time unit, selection
+  and view). Previously it left the scene on the END frame; advancing the time
+  re-evaluated a model's own keyframes, so an unkeyed manual pose (e.g. feet
+  parked on the ground at `y=0`) silently reverted to its keyed value and the
+  asset appeared DISPLACED after every turntable (Chat 79). The orbit keyframes
+  live only on the throw-away pivot, which is deleted, so the recipe leaves no
+  keyframes behind; restoring the clock leaves the model exactly as found.
+
 ## [1.22.0] — 2026-06-30
 
 ### Added

@@ -240,3 +240,31 @@ def test_review_turntable_refuses_degenerate_bbox(tmp_path, monkeypatch):
     assert "error" in res
     assert "degenerate" in res["error"].lower()
     assert "pb" not in record                    # never reached the playblast
+
+
+def test_review_turntable_restores_playback_clock(tmp_path, monkeypatch):
+    """The recipe must restore the current frame AND the playback range so it
+    never leaves the scene on the end frame. Leaving it there re-evaluated a
+    model's own keyframes and displaced an unkeyed manual pose (feet on the
+    ground reverted to its keyed value) → the asset appeared moved after every
+    turntable (Chat 79). The orbit keys live only on the throw-away pivot, so the
+    recipe leaves NO keyframes behind; restoring the clock leaves the model as
+    found.
+    """
+    record: dict = {}
+    cmds = _install_fake_maya(monkeypatch, record)
+    cmds.currentTime.side_effect = lambda *a, **k: 7.0 if k.get("query") else None
+    cmds.playbackOptions.side_effect = lambda *a, **k: 5.0 if k.get("query") else None
+
+    review_build.review_turntable(
+        str(tmp_path / "tt.mov"), start=1, end=48, fps=25, objects=["smoke"]
+    )
+
+    # the original frame (7.0) was restored after the playblast
+    assert any(c.args and c.args[0] == 7.0 for c in cmds.currentTime.call_args_list), \
+        "currentTime was not restored to the original frame"
+    # the original playback range (5.0) was restored — a non-query set call
+    assert any(
+        not kw.get("query") and kw.get("minTime") == 5.0
+        for _, kw in cmds.playbackOptions.call_args_list
+    ), "playback range was not restored"
