@@ -120,7 +120,7 @@ transform (not the Arnold output transform) is what governs them.
 | `maya_create_camera` | Creates camera with focal length and look-at target |
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control |
-| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale (streams progress; 120s bridge budget) |
+| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB, BVH mocap with namespace and scale (streams progress; 120s bridge budget, 240s for BVH via `bvh_import`) |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
 ### Maya Session Actions (12 actions behind `maya_session` dispatch tool)

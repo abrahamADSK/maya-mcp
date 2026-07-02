@@ -1041,7 +1041,7 @@ class ImportFileInput(BaseModel):
     """Parameters for importing 3D files."""
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    file_path: str = Field(..., description="Absolute path to file to import (.obj, .fbx, .glb, .abc, .ma, .mb)")
+    file_path: str = Field(..., description="Absolute path to file to import (.obj, .fbx, .glb, .abc, .ma, .mb, .bvh)")
     namespace: Optional[str] = Field(default=None, description="Namespace to avoid name collisions")
     group_under: Optional[str] = Field(default=None, description="Parent group name (created if it doesn't exist)")
     scale_factor: Optional[float] = Field(default=None, description="Scale factor on import (e.g., 0.01 for cm to m)")
@@ -1190,18 +1190,59 @@ finally:
 @mcp.tool(name="maya_import_file")
 @_audited("maya_import_file")
 async def maya_import_file(params: ImportFileInput, ctx: Context | None = None) -> str:
-    """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB. With namespace, parent group, and scale options.
+    """Import 3D files into Maya: OBJ, FBX, GLB/GLTF, Alembic ABC, Maya MA/MB, BVH mocap. With namespace, parent group, and scale options.
 
     GLB/GLTF: uses Maya's native glTF scene parser (``type='glTF Import'``);
     if the parser is not registered or import fails, falls back to the
     Vision3D sibling pattern — ``mesh_uv.obj`` + ``texture_baked.png`` next
     to the GLB — building an ``aiStandardSurface`` with the texture in
     ``baseColor`` and assigning it to the imported meshes.
+
+    BVH: Maya has no native BVH import, so ``.bvh`` motion-capture files are
+    parsed and rebuilt by the pure-Python ``maya_mcp.bvh_import`` module
+    (hierarchy → joints, motion → keyframes, with the per-joint
+    BVH→Maya rotate-order mapping handled internally). ``namespace`` and
+    ``scale_factor`` are forwarded to the builder; the skeleton lands under a
+    ``<namespace>:bvh_grp`` group. The result feeds a HumanIK retarget onto a
+    rigged character (mocap → generic animation library).
     """
     from maya_mcp.suggestions import maybe_annotate_with_suggestions
     try:
         ext = params.file_path.rsplit(".", 1)[-1].lower() if "." in params.file_path else ""
         fp = _py_str(params.file_path)  # safe literal for the import path
+
+        if ext == "bvh":
+            # BVH has no native Maya importer — parse + rebuild via the
+            # pure-Python maya_mcp.bvh_import module inside Maya. The package
+            # is not guaranteed to be on Maya's sys.path, so the server
+            # injects its own src dir (absolute, no traversal) as a literal.
+            import os as _os
+            _src_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+            _bvh_ns = params.namespace or "bvh"
+            _bvh_scale = params.scale_factor if params.scale_factor else 1.0
+            bvh_code = f"""
+import sys as _sys
+_bvh_src = {_py_str(_src_dir)}
+if _bvh_src not in _sys.path:
+    _sys.path.insert(0, _bvh_src)
+from maya_mcp import bvh_import as _bvh
+_skel, _motion = _bvh.parse_bvh({fp})
+result = _bvh.build_in_maya(
+    _skel, _motion, namespace={_py_str(_bvh_ns)}, scale={_bvh_scale}
+)
+"""
+            if ctx:
+                await ctx.info(
+                    f"Importing {params.file_path.rsplit('/', 1)[-1]} "
+                    f"(BVH mocap) into Maya..."
+                )
+            # A dense mocap clip keys every joint per frame — well beyond the
+            # 10s Command Port default; 240s + heartbeats.
+            out = await _execute_with_heartbeat(
+                bvh_code, ctx, "import bvh", bridge_timeout=240.0
+            )
+            return maybe_annotate_with_suggestions("maya_import_file", out)
+
         ns_opt = f", namespace={_py_str(params.namespace)}" if params.namespace else ""
         group_code = ""
         if params.group_under:
