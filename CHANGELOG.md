@@ -11,6 +11,19 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **BVH mocap import (`src/maya_mcp/bvh_import.py`) wired into `maya_import_file`.**
+  Maya has no native BVH importer, so `.bvh` motion-capture clips (e.g. the free
+  CMU database) are parsed and rebuilt by a pure-Python module: HIERARCHY →
+  joint tree, MOTION → per-frame keyframes, with the subtle per-joint BVH→Maya
+  rotate-order mapping (`rotateOrder` = reverse of the BVH rotation-channel
+  order) isolated in one unit-tested function. Exposed as a new extension branch
+  of the existing `maya_import_file` tool (no new MCP tool → tool count and
+  `install.sh` unchanged); `namespace`/`scale_factor` forward to the builder and
+  the skeleton lands under `<namespace>:bvh_grp`. This is the source side of the
+  mocap → HumanIK-retarget → generic animation-library pipeline. 26 offline
+  parser tests; the in-Maya build was validated in-vivo (CMU run, 149 frames).
+
 ## [1.23.0] — 2026-06-30
 
 ### Added

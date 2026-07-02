@@ -72,7 +72,7 @@ FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
 | `maya_create_camera` | Create cameras with focal length and look-at target |
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control (auto/linear/flat/spline/step) |
-| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB with namespace and scale (streams progress; 120s budget for heavy assets) |
+| `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB, BVH mocap with namespace and scale (streams progress; 120s budget for heavy assets, 240s for BVH) |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
 ### Dispatcher Tools (3 tools)
