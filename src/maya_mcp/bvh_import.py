@@ -620,6 +620,21 @@ def build_in_maya(
     if not cmds.namespace(exists=namespace):
         cmds.namespace(add=namespace)
 
+    # Set the scene FPS BEFORE keying. currentUnit rescales existing keyframes
+    # by the fps ratio (updateAnimation defaults True), so setting it AFTER the
+    # keying loop stretched the whole clip by default->native (e.g. x5 for a
+    # 24fps scene importing 120fps mocap): every key moved from frame N to 5N,
+    # pushing most of the motion past the playback range and leaving only a
+    # slow, damped first fraction inside frames 1..N. Setting it first — while
+    # no keys exist yet to rescale — lands every key at its integer frame at
+    # the native rate.
+    fps = motion.fps
+    if fps > 0:
+        try:
+            cmds.currentUnit(time=f"{int(round(fps))}fps")
+        except Exception:
+            pass  # non-standard rate: leave the scene unit untouched
+
     columns = skeleton.channel_columns()
     created: List[str] = []
     name_map: Dict[str, str] = {}  # bvh joint.name -> actual Maya node name
@@ -679,12 +694,8 @@ def build_in_maya(
 
     end_frame = start_frame + max(motion.num_frames - 1, 0)
 
-    # Set the scene FPS + playback range so the clip plays at its native rate.
-    fps = motion.fps
-    try:
-        cmds.currentUnit(time=f"{int(round(fps))}fps")
-    except Exception:
-        pass  # non-standard rate: leave the scene unit untouched
+    # FPS was already set before the keying loop (see above), so the keys are at
+    # their integer frames at native rate; just frame the playback range.
     cmds.playbackOptions(minTime=start_frame, maxTime=end_frame,
                         animationStartTime=start_frame, animationEndTime=end_frame)
 
