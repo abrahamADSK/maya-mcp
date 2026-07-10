@@ -124,3 +124,27 @@ def test_do_render_still_requires_out_path():
     out = asyncio.run(_do_render_still({}))
     data = json.loads(out)
     assert "error" in data and "out_path" in data["error"]
+
+
+def test_render_still_returns_version_code_when_engined(tmp_path, monkeypatch):
+    """When Maya is tk-maya engine'd, the report carries version_code {Asset}_{Task}
+    so the caller can name the review Version after the task (same as turntable)."""
+    calls = {"arnoldRender": [], "renderWindowEditor": [], "setAttr": []}
+    _install_fake_maya(monkeypatch, calls)
+    import os
+    out = str(tmp_path / "still.png")
+    monkeypatch.setattr(os.path, "exists", lambda p: True)
+    monkeypatch.setattr(os.path, "getsize", lambda p: 2048)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+
+    # Fake a tk-maya engine context: entity DJ, task Model.
+    fake_ctx = types.SimpleNamespace(
+        entity={"name": "DJ"}, task={"name": "Model"}, step={"name": "Model"})
+    fake_eng = types.SimpleNamespace(context=fake_ctx)
+    sgtk_mod = types.ModuleType("sgtk")
+    sgtk_mod.platform = types.SimpleNamespace(current_engine=lambda: fake_eng)
+    monkeypatch.setitem(sys.modules, "sgtk", sgtk_mod)
+
+    report = render_still.render_still(out, camera="persp")
+    assert report["version_code"] == "DJ_Model"
+    assert report["asset"] == "DJ" and report["task"] == "Model"

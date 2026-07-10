@@ -43,6 +43,31 @@ import os
 MTOA_PLUGIN = "mtoa"
 
 
+def _engine_context():
+    """Best-effort tk-maya context → (asset, task, version_code) or (None, …).
+
+    ``version_code`` = ``{Asset}_{Task}`` so the review Version created from this
+    still is named after the task it was generated in — same contract as
+    review_build._engine_context (kept in sync). Silent/None when Maya is not
+    engine'd (a plain, non-Toolkit Maya).
+    """
+    try:
+        import sgtk
+
+        eng = sgtk.platform.current_engine()
+        ctx = eng.context if eng else None
+        if not ctx:
+            return None, None, None
+        asset = (ctx.entity or {}).get("name")
+        task = (ctx.task or {}).get("name")
+        if not task and ctx.step:
+            task = (ctx.step or {}).get("name")
+        code = f"{asset}_{task}" if (asset and task) else None
+        return asset, task, code
+    except Exception:
+        return None, None, None
+
+
 def _resolve_camera(cmds, camera):
     """Explicit camera → focused modelPanel's camera → 'persp'."""
     if camera and cmds.objExists(camera):
@@ -68,9 +93,13 @@ def render_still(out_path, camera=None, frame=None, width=1920, height=1080,
     """
     import maya.cmds as cmds  # type: ignore[import-not-found]
 
+    # tk-maya context so the caller can name the review Version after the task
+    # ({Asset}_{Task}); None when Maya is not engine'd.
+    _asset, _task, _version_code = _engine_context()
     report = {"rendered": None, "error": None, "camera": None, "frame": None,
               "resolution": "%dx%d" % (int(width), int(height)),
-              "renderer_before": None, "view_transform": view_transform}
+              "renderer_before": None, "view_transform": view_transform,
+              "asset": _asset, "task": _task, "version_code": _version_code}
 
     cam = _resolve_camera(cmds, camera)
     report["camera"] = cam
