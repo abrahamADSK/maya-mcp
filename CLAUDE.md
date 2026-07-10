@@ -121,9 +121,9 @@ transform (not the Arnold output transform) is what governs them.
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control |
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB, BVH mocap with namespace and scale (streams progress; 120s bridge budget, 240s for BVH via `bvh_import`) |
-| `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
+| `maya_viewport_capture` | Fast Viewport-2.0 screenshot to PNG/JPG at any resolution (NOT an Arnold render). Playblasts a throw-away VP2.0 window (never the user's focused panel), so it can never capture a live Arnold IPR / render-override and hang Maya. For a ray-traced still use `maya_session action=render_still`. |
 
-### Maya Session Actions (12 actions behind `maya_session` dispatch tool)
+### Maya Session Actions (13 actions behind `maya_session` dispatch tool)
 
 <!-- concept:maya_session_actions start -->
 | Action | Description |
@@ -140,6 +140,7 @@ transform (not the Arnold output transform) is what governs them.
 | `operation_history` | Read recent durable-audit records (read-only; requires MAYA_AUDIT_LOG=1). Optional filters: limit, tool, action, status |
 | `publish` | Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya launched via tank. params: mode (preview/publish), include/exclude intent tokens, comment, timeout. Preview reads the collected publish tree; publish activates matching tasks then validate→publish→finalize. Dependencies captured automatically by the plugins. |
 | `review_turntable` | Deterministic Viewport 2.0 turntable playblast to a .mov (long op, runs in Maya). Frames the model, orbits 360° over start–end at the given fps, 16:9 / square pixels / overscan, offscreen (never Arnold). Needs out_path (resolve via fpt tk_resolve_path, template movie_asset_publish); returns the mov plus a Version code Asset_Task to name the review Version after its task. |
+| `render_still` | Single-frame **Arnold** ray-traced still → PNG at out_path (long op, runs in Maya). This is what "a still" means — a real render, not the VP2.0 grab of `maya_viewport_capture`. Renders one frame to the Render View and writes it to the exact out_path; never playblasts a viewport, so it can't hang the main thread. Params: out_path (required), camera, frame, width, height, aa_samples, view_transform, timeout. |
 <!-- concept:maya_session_actions end -->
 
 ### Vision3D Actions (7 actions behind `maya_vision3d` dispatch — optional addon, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
