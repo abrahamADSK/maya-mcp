@@ -402,6 +402,7 @@ class SessionAction(str, Enum):
     OPERATION_HISTORY = "operation_history"
     PUBLISH = "publish"
     REVIEW_TURNTABLE = "review_turntable"
+    RENDER_STILL = "render_still"
 
 
 class SessionDispatchInput(BaseModel):
@@ -1360,19 +1361,17 @@ finally:
 
 @mcp.tool(name="maya_viewport_capture")
 async def maya_viewport_capture(params: ViewportCaptureInput) -> list:
-    """Capture the Maya viewport as PNG/JPG image and return it for visual analysis. Does not do Arnold render — it is an instant viewport grab (<1s). Useful for visually verifying scene state, checking lighting, framing, and detecting issues."""
+    """Capture the Maya viewport as PNG/JPG image and return it for visual analysis. Does not do Arnold render — it is an instant Viewport 2.0 grab (<1s); for a ray-traced still use maya_session(action='render_still'). Useful for visually verifying scene state, checking lighting, framing, and detecting issues.
+
+    NEVER captures the user's focused viewport: it playblasts a throw-away
+    Viewport-2.0 window (its own modelPanel forced to rendererName='vp2Renderer'),
+    so an Arnold IPR / render-override active on the user's panel can never be
+    captured — which would saturate Maya's main thread and hang it (memory
+    feedback_maya_gs_arnold_ipr_hang; same technique as review_turntable)."""
     import base64
     try:
-        camera_opt = ""
-        if params.camera:
-            cam = _py_str(params.camera)
-            camera_opt = f"""
-# Set camera for the active panel
-_mcp_panel = cmds.getPanel(withFocus=True)
-if cmds.getPanel(typeOf=_mcp_panel) == 'modelPanel':
-    cmds.modelPanel(_mcp_panel, edit=True, camera={cam})
-"""
-        frame_opt = f", frame=[{params.frame}]" if params.frame is not None else ""
+        cam = _py_str(params.camera) if params.camera else "None"
+        frame_expr = str(params.frame) if params.frame is not None else "cmds.currentTime(query=True)"
         fmt = "png" if params.output_path.endswith(".png") else "jpg"
         out_path = _py_str(params.output_path)
 
@@ -1387,19 +1386,50 @@ if cmds.getPanel(typeOf=_mcp_panel) == 'modelPanel':
             for ln in cm_restore.strip("\n").splitlines()
         )
 
+        # Capture from a DEDICATED throw-away Viewport-2.0 window, NEVER the
+        # user's docked/focused panel. If an Arnold IPR / render-override is
+        # active on that panel, playblasting it burns the Arnold render into the
+        # buffer AND saturates the main thread -> hang (Chat 71/77,
+        # feedback_maya_gs_arnold_ipr_hang). A fresh modelPanel forced to
+        # rendererName='vp2Renderer' has no IPR attached (guaranteed VP2.0) and a
+        # clean source. Onscreen (offScreen=False) so the context is valid even if
+        # Maya is occluded (Chat 74). The window + the user's state are restored in
+        # `finally`. Mirrors review_build.py's turntable capture.
         code = f"""
 import maya.cmds as cmds
 import os, base64
-{camera_opt}
+_mcp_cam = {cam}
+if _mcp_cam is None:
+    _mcp_fp = cmds.getPanel(withFocus=True)
+    if _mcp_fp and cmds.getPanel(typeOf=_mcp_fp) == 'modelPanel':
+        _mcp_cam = cmds.modelPanel(_mcp_fp, query=True, camera=True)
+    if not _mcp_cam:
+        _mcp_cam = 'persp'
+_mcp_win = None
 cmds.undoInfo(stateWithoutFlush=False)
 {cm_apply}
 try:
+    if cmds.window("mcpViewportCaptureWin", exists=True):
+        cmds.deleteUI("mcpViewportCaptureWin")
+    _mcp_win = cmds.window("mcpViewportCaptureWin", title="MCP Capture",
+                           widthHeight=({params.width}, {params.height}))
+    cmds.paneLayout()
+    _mcp_panel = cmds.modelPanel(menuBarVisible=False)
+    cmds.modelPanel(_mcp_panel, edit=True, camera=_mcp_cam)
+    cmds.modelEditor(_mcp_panel, edit=True, rendererName="vp2Renderer",
+                     displayAppearance="smoothShaded", displayTextures=True,
+                     headsUpDisplay=False, grid=False)
+    cmds.showWindow(_mcp_win)
+    cmds.refresh(force=True)
+    _mcp_frame = {frame_expr}
     _mcp_img = cmds.playblast(
         completeFilename={out_path},
         format='image', compression='{fmt}',
         width={params.width}, height={params.height},
         showOrnaments=False, viewer=False,
-        offScreen=True, percent=100{frame_opt}
+        editorPanelName=_mcp_panel,
+        offScreen=False, percent=100,
+        startTime=_mcp_frame, endTime=_mcp_frame
     )
     _mcp_size = os.path.getsize({out_path}) // 1024
     with open({out_path}, 'rb') as _f:
@@ -1408,6 +1438,11 @@ try:
               'resolution': '{params.width}x{params.height}',
               'image_b64': _mcp_b64}}
 finally:
+    if _mcp_win and cmds.window(_mcp_win, exists=True):
+        try:
+            cmds.deleteUI(_mcp_win)
+        except Exception:
+            pass
     cmds.undoInfo(stateWithoutFlush=True)
 {cm_restore_indented}
 """
@@ -1672,6 +1707,47 @@ async def _do_review_turntable(params: dict, ctx: Context | None = None) -> str:
     return result_str
 
 
+async def _do_render_still(params: dict, ctx: Context | None = None) -> str:
+    """Single-frame **Arnold** still → out_path PNG (ships render_still.py to Maya).
+
+    The render recipe is fixed code (not LLM-supplied), renders ONE frame to the
+    Render View and writes it to the exact out_path — it never playblasts a
+    viewport, so it cannot hang the main thread the way an IPR-over-playblast does
+    (Chat 82). Use this for a ray-traced still; use maya_viewport_capture for a
+    fast VP2.0 grab.
+    """
+    out_path = params.get("out_path")
+    if not out_path:
+        return json.dumps({
+            "error": "render_still requires params.out_path",
+            "hint": "A PNG in the review area — resolve it via fpt tk_resolve_path "
+                    "(e.g. an asset/shot review path) so the still lands with the "
+                    "pipeline-correct name.",
+        })
+    from pathlib import Path as _Path
+    src = (_Path(__file__).parent / "render_still.py").read_text()
+    view = (params.get("view_transform")
+            or _get_config().get("review_view_transform", color_policy.DEFAULT_REVIEW_VIEW))
+    cam = params.get("camera")
+    frame = params.get("frame")
+    code = src + (
+        "\nimport json as _json\n"
+        "result = _json.dumps(render_still("
+        f"out_path={out_path!r}, camera={cam!r}, frame={frame!r}, "
+        f"width={int(params.get('width', 1920))!r}, height={int(params.get('height', 1080))!r}, "
+        f"aa_samples={int(params.get('aa_samples', 3))!r}, view_transform={view!r}))\n"
+    )
+    try:
+        return await _execute_with_heartbeat(
+            code, ctx, "render_still", bridge_timeout=int(params.get("timeout", 600))
+        )
+    except MayaBridgeError as exc:
+        return json.dumps({
+            "error": f"Maya bridge error: {exc}",
+            "hint": "render_still runs in Maya — ensure the Command Port is up and mtoa is available.",
+        })
+
+
 @mcp.tool(name="maya_session")
 async def maya_session(params: SessionDispatchInput, ctx: Context | None = None) -> str:
     """Manage Maya session, query scene state, and run utility commands.
@@ -1690,6 +1766,7 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     • operation_history — Read recent durable-audit records (read-only; needs MAYA_AUDIT_LOG=1). Optional params: {"limit": 50, "tool": "maya_transform", "action": "execute_python", "status": "error"}
     • publish — Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya (launched via 'tank'). params: {"mode": "preview"|"publish", "include": ["rig"], "exclude": ["render"], "comment": "...", "timeout": 600}. 'preview' returns the collected publish tree; 'publish' activates matching tasks then validate→publish→finalize. Dependencies are captured automatically by the publish plugins.
     • review_turntable — Deterministic Viewport-2.0 turntable playblast → .mov (RUNS IN MAYA, long op). Frames the model, orbits 360° over [start,end] at fps, 16:9 / square pixels / overscan, offScreen (never Arnold). Required params: {"out_path": "/path.mov"} (resolve via fpt tk_resolve_path template 'movie_asset_publish' with name=<the task name> so the file is {Asset}_{Task}_v###.mov, e.g. DJ_Model_v001.mov — NOT 'turntable'). Optional: {"start":1,"end":100,"fps":25,"width":1920,"height":1080,"objects":[...],"focal":50,"timeout":600}. Returns the .mov plus the engine asset/task and a Version code {Asset}_{Task} so the review Version is named after the task it was generated in.
+    • render_still — Single-frame **Arnold** ray-traced still → a PNG at out_path (RUNS IN MAYA, long op). This is what "a still / render a still" means — a real Arnold render, NOT the VP2.0 grab of maya_viewport_capture (use that for a fast screenshot). Renders ONE frame to the Render View and writes it to the exact out_path; never playblasts a viewport, so it cannot hang the main thread the way an IPR-over-playblast does. Required params: {"out_path": "/review/….png"} (resolve via fpt tk_resolve_path so it lands in the review area with the pipeline name). Optional: {"camera":"persp","frame":42,"width":1920,"height":1080,"aa_samples":3,"view_transform":"…","timeout":600}. Returns JSON {rendered, size_kb, camera, frame, resolution, asset, task, version_code} or {error}. For a still "for review" the version_code ({Asset}_{Task}) is what names the ShotGrid review Version — rendering alone does not put it in review; create the Version (fpt sg_create type=Version) + sg_upload the PNG afterwards.
     """
     _track_call()
     # The two long-running handlers stream progress and take (params, ctx);
@@ -1713,6 +1790,11 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     if params.action == SessionAction.REVIEW_TURNTABLE:
         result = await _do_review_turntable(params.params or {}, ctx)
         _audit_record("maya_session", "review_turntable", params.params,
+                      _audit.status_from_output(result))
+        return result
+    if params.action == SessionAction.RENDER_STILL:
+        result = await _do_render_still(params.params or {}, ctx)
+        _audit_record("maya_session", "render_still", params.params,
                       _audit.status_from_output(result))
         return result
     dispatch = {

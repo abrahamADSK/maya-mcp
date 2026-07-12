@@ -57,9 +57,18 @@ def test_prompt_lists_current_maya_dispatcher_hierarchy():
     # the dispatcher + the actions that were missing and caused improvisation
     assert "maya_session" in p
     assert "review_turntable" in p
+    assert "render_still" in p
     assert "action=publish" in p
     assert "maya_worldlabs" in p
     assert "search_maya_docs" in p
+
+
+def test_prompt_routes_still_to_arnold_render_not_viewport_grab():
+    # A "still" must map to the Arnold render_still action, NOT the VP2.0
+    # viewport grab — the grab hangs Maya over a live Arnold IPR panel (Chat 82).
+    p = _maya_prompt()
+    assert "render_still" in p
+    assert "still" in p.lower()
 
 
 def test_prompt_drops_stale_flat_tool_names():

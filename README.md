@@ -107,6 +107,7 @@ FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
 | `operation_history` | Read recent durable-audit records (read-only; requires MAYA_AUDIT_LOG=1). Optional filters: limit, tool, action, status |
 | `publish` | Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya launched via tank. mode preview/publish, include/exclude intent tokens, comment, timeout. Captures dependencies automatically. |
 | `review_turntable` | Deterministic Viewport 2.0 turntable playblast to a .mov (long op, runs in Maya). Frames the model, orbits 360° over start–end at the given fps, 16:9 / square pixels / overscan, offscreen (never Arnold), colour-managed (the review view transform is pinned and restored so the preview matches the viewport). Needs out_path (resolve via fpt tk_resolve_path, template movie_asset_publish); returns the mov plus a Version code Asset_Task to name the review Version after its task. |
+| `render_still` | Single-frame **Arnold** ray-traced still to a PNG at out_path (long op, runs in Maya). This is what "a still" means — a real render, not the Viewport 2.0 grab that maya_viewport_capture does. Renders one frame to the Render View and writes it to the exact out_path; never playblasts a viewport, so it cannot hang the main thread over a live Arnold IPR panel. Params: out_path (required), camera, frame, width, height, aa_samples, view_transform, timeout. |
 <!-- concept:maya_session_actions end -->
 
 ### Vision3D Dispatcher (`maya_vision3d` — 7 actions, optional, requires [Vision3D](https://github.com/abrahamADSK/vision3d))
