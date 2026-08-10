@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.24.0] — 2026-08-10
+
 ### Added
 - **`maya_session` action `render_still` — a real single-frame Arnold still.**
   "A still" meant an Arnold render, but the only still-ish tool was
