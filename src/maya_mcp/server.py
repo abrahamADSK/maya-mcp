@@ -69,7 +69,11 @@ _PROJECT_ROOT = _SERVER_DIR.parent.parent    # maya-mcp/
 
 MAYA_HOST = os.environ.get("MAYA_HOST", "localhost")
 MAYA_PORT = int(os.environ.get("MAYA_PORT", "8100"))
-MAYA_APP  = os.environ.get("MAYA_APP", "Maya")  # macOS app name for `open -a`
+# Which Maya to launch. NEVER a bare app name — see _resolve_maya_app().
+# Accepts an absolute .app bundle path, or a selector matching exactly one
+# installed bundle (e.g. "2027"). Empty → discovered from MAYA_APP_GLOB.
+MAYA_APP = os.environ.get("MAYA_APP", "").strip()
+MAYA_APP_GLOB = os.environ.get("MAYA_APP_GLOB", "/Applications/Autodesk/maya*/Maya.app")
 
 # ---------------------------------------------------------------------------
 # Token tracking (mirrors fpt-mcp / flame-mcp architecture)
@@ -504,6 +508,71 @@ async def _run_cmd(cmd: List[str], timeout: int = 60) -> tuple:
     return proc.returncode, stdout.decode(), stderr.decode()
 
 
+def _discover_maya_apps() -> List[str]:
+    """Installed Maya ``.app`` bundles, sorted (so "…maya2027" sorts last)."""
+    import glob as _glob
+
+    return sorted(_glob.glob(MAYA_APP_GLOB))
+
+
+def _resolve_maya_app() -> tuple:
+    """Resolve WHICH Maya to open — deterministically, never by bare app name.
+
+    ``open -a Maya`` hands the choice to LaunchServices, and with 2026 + 2027
+    installed it opens an arbitrary one (Chat 94). That is the same class of bug
+    as launching Flame by app name via AppleScript
+    (``feedback_osascript_flame_version_trap``): a launcher that cannot name the
+    version it started is worse than one that refuses, because everything
+    downstream — the Command Port, the panel, the api_graph, the publish
+    templates — is version-specific.
+
+    So this follows the contract the rest of the ecosystem already uses for
+    ambiguous state (Vision3D URL, console project context, the native Flame
+    link): exactly one candidate → use it; several → ``choice_required``, never
+    a guess; none → an actionable error. ``MAYA_APP`` is the explicit override.
+
+    :returns: ``(bundle, candidates, error)`` — exactly one of bundle/error set.
+    """
+    candidates = _discover_maya_apps()
+
+    if MAYA_APP:
+        if os.path.isabs(MAYA_APP):
+            if os.path.exists(MAYA_APP):
+                return MAYA_APP, candidates, None
+            return None, candidates, {
+                "error": f"MAYA_APP points at a bundle that does not exist: {MAYA_APP}",
+                "candidates": candidates,
+                "hint": "Fix MAYA_APP in .env, or unset it to auto-discover.",
+            }
+        # A selector such as "2027" / "maya2027": it must identify exactly one.
+        matched = [c for c in candidates if MAYA_APP in c]
+        if len(matched) == 1:
+            return matched[0], candidates, None
+        return None, candidates, {
+            "error": (f"MAYA_APP={MAYA_APP!r} matches {len(matched)} installed Maya "
+                      f"bundles — it must identify exactly one."),
+            "candidates": candidates,
+            "hint": "Set MAYA_APP to the absolute path of the Maya.app to launch.",
+        }
+
+    if len(candidates) == 1:
+        return candidates[0], candidates, None
+    if not candidates:
+        return None, candidates, {
+            "error": "No Maya installation found.",
+            "searched": MAYA_APP_GLOB,
+            "hint": "Set MAYA_APP in .env to the absolute path of your Maya.app "
+                    "(or MAYA_APP_GLOB if Maya lives outside /Applications/Autodesk).",
+        }
+    return None, candidates, {
+        "error": "choice_required: several Maya versions are installed and none is selected.",
+        "candidates": candidates,
+        "hint": ("Launching by app name lets macOS pick an arbitrary version, so this "
+                 "refuses to guess. Set MAYA_APP in .env — e.g. "
+                 f"MAYA_APP={candidates[-1]}"),
+    }
+
+
 def _handle_error(e: Exception) -> str:
     """Consistent error formatting.
 
@@ -571,12 +640,17 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
     except Exception:
         pass  # Not running or not responding — open it
 
-    # 2. Launch Maya
-    rc, _, err = await _run_cmd(["open", "-a", MAYA_APP], timeout=10)
+    # 2. Launch Maya — by resolved bundle PATH, never by app name.
+    bundle, _candidates, resolve_error = _resolve_maya_app()
+    if resolve_error:
+        return json.dumps(resolve_error, ensure_ascii=False)
+
+    rc, _, err = await _run_cmd(["open", "-a", bundle], timeout=10)
     if rc != 0:
         return json.dumps({
-            "error": f"Could not open Maya ({MAYA_APP}): {err.strip()}",
-            "hint": "Verify that Maya is installed. Configure MAYA_APP in .env if the name is different."
+            "error": f"Could not open Maya ({bundle}): {err.strip()}",
+            "hint": "Verify that the bundle is a working Maya install; MAYA_APP in "
+                    ".env overrides which one is used.",
         }, ensure_ascii=False)
 
     # 3. Wait for Command Port to be ready (max 90s)
@@ -586,7 +660,7 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
 
     if ctx:
         await ctx.info(
-            f"Maya launching ({MAYA_APP}) — waiting for Command Port "
+            f"Maya launching ({bundle}) — waiting for Command Port "
             f"{MAYA_HOST}:{MAYA_PORT} (up to {max_wait}s)..."
         )
 
@@ -612,6 +686,9 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
                     "status": "launched",
                     "waited_seconds": waited,
                     "version": info.get("version", "unknown"),
+                    # Which bundle was actually started — the whole point of
+                    # resolving a path instead of an app name.
+                    "app": bundle,
                     "message": f"Maya open and Command Port ready ({waited}s)."
                 }, ensure_ascii=False)
             except Exception:

@@ -11,6 +11,26 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **`maya_session action=launch` opened an arbitrary Maya version.** It ran
+  `open -a "Maya"`, which hands the choice to LaunchServices; with 2026 and 2027
+  both installed macOS picks one and the tool never knew which — while the
+  Command Port, the panel bootstrap, `api_graph.json` and the publish templates
+  are all version-specific. Same class of trap as launching Flame by app name via
+  AppleScript. `launch` now resolves an absolute `.app` **path**: exactly one
+  install → use it; several with no selector → `choice_required` listing the
+  candidates and the literal `MAYA_APP=` line to set, never a guess; none → an
+  actionable error. `MAYA_APP` accepts an absolute bundle path or a selector that
+  must match exactly one install (e.g. `2027`), and `MAYA_APP_GLOB` overrides
+  where installs are discovered. The success payload now reports the `app` that
+  was actually started.
+- **CI pinned `ruff==0.15.11`.** maya-mcp still installed ruff unpinned, so the
+  first run after an idle stretch failed on new rules across ~20 pre-existing
+  test files rather than on any change — the drift the other two repos were
+  pinned against in Chat 92. maya-mcp missed that propagation wave for the same
+  reason it missed the `invariant_types.py` tolerance: the release-cadence
+  invariant was blocking every commit.
+
 ## [1.24.0] — 2026-08-10
 
 ### Added

@@ -83,6 +83,11 @@ see [`docs/DEPLOY.md`](docs/DEPLOY.md).
 ```bash
 MAYA_HOST=localhost          # Host where Maya is running
 MAYA_PORT=8100              # Command Port (historically 7001; moved to avoid Flame S+W port collision)
+MAYA_APP=                    # WHICH Maya `launch` opens: absolute .app path, or a selector
+                             # matching exactly one install (e.g. "2027"). Empty = auto-discover;
+                             # with several versions installed `launch` returns choice_required
+                             # rather than guessing (`open -a Maya` lets macOS pick — Chat 94).
+MAYA_APP_GLOB=               # Where to look for installs (default /Applications/Autodesk/maya*/Maya.app)
 GPU_API_URL=                 # Optional: suggested default for Vision3D URL prompt (never auto-selected)
 GPU_API_KEY=                 # Optional: API key for Vision3D server, leave empty for open LAN
 GPU_VERIFY_TLS=true          # Verify TLS for https Vision3D targets (default true; ignored for http; set false to opt out for self-signed https)
