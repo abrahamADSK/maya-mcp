@@ -1708,13 +1708,22 @@ async def _do_review_turntable(params: dict, ctx: Context | None = None) -> str:
 
 
 async def _do_render_still(params: dict, ctx: Context | None = None) -> str:
-    """Single-frame **Arnold** still → out_path PNG (ships render_still.py to Maya).
+    """Single-frame **Arnold** still → out_path: Maya exports a .ass, ``kick`` renders it.
 
-    The render recipe is fixed code (not LLM-supplied), renders ONE frame to the
-    Render View and writes it to the exact out_path — it never playblasts a
-    viewport, so it cannot hang the main thread the way an IPR-over-playblast does
-    (Chat 82). Use this for a ray-traced still; use maya_viewport_capture for a
-    fast VP2.0 grab.
+    Maya only exports the scene; the render happens OUT OF PROCESS. That split is
+    not an optimisation — it is the only way the colour is right. Dumping Maya's
+    Render View (``renderWindowEditor(writeImage=…)``) writes a **scene-linear**
+    file and ignores every colour setting; Arnold writing the file itself applies
+    the output transform. Both were measured in-vivo on a flat 0.5 patch (127 vs
+    188 — Chat 94; see ``render_still.py``). Side benefits: no Render View window
+    is opened, and a long render can never hang Maya's main thread.
+
+    The recipe is fixed code (not LLM-supplied). Use this for a ray-traced still;
+    use maya_viewport_capture for a fast VP2.0 grab.
+
+    NB: kick runs on the MCP server host, so this assumes Maya is local
+    (``MAYA_HOST=localhost``, the supported setup) — out_path is written by the
+    render process, not by Maya.
     """
     out_path = params.get("out_path")
     if not out_path:
@@ -1724,28 +1733,76 @@ async def _do_render_still(params: dict, ctx: Context | None = None) -> str:
                     "(e.g. an asset/shot review path) so the still lands with the "
                     "pipeline-correct name.",
         })
+    import tempfile
     from pathlib import Path as _Path
     src = (_Path(__file__).parent / "render_still.py").read_text()
     view = (params.get("view_transform")
             or _get_config().get("review_view_transform", color_policy.DEFAULT_REVIEW_VIEW))
     cam = params.get("camera")
     frame = params.get("frame")
+    width = int(params.get("width", 1920))
+    height = int(params.get("height", 1080))
+    aa_samples = int(params.get("aa_samples", 3))
+    timeout = int(params.get("timeout", 600))
+    ass_path = str(_Path(tempfile.gettempdir()) / f"mcp_render_still_{os.getpid()}.ass")
+
     code = src + (
         "\nimport json as _json\n"
-        "result = _json.dumps(render_still("
-        f"out_path={out_path!r}, camera={cam!r}, frame={frame!r}, "
-        f"width={int(params.get('width', 1920))!r}, height={int(params.get('height', 1080))!r}, "
-        f"aa_samples={int(params.get('aa_samples', 3))!r}, view_transform={view!r}))\n"
+        "result = _json.dumps(export_still_ass("
+        f"out_path={out_path!r}, ass_path={ass_path!r}, camera={cam!r}, "
+        f"frame={frame!r}, view_transform={view!r}))\n"
     )
     try:
-        return await _execute_with_heartbeat(
-            code, ctx, "render_still", bridge_timeout=int(params.get("timeout", 600))
+        raw = await _execute_with_heartbeat(
+            code, ctx, "render_still (scene export)", bridge_timeout=timeout
         )
     except MayaBridgeError as exc:
         return json.dumps({
             "error": f"Maya bridge error: {exc}",
-            "hint": "render_still runs in Maya — ensure the Command Port is up and mtoa is available.",
+            "hint": "render_still exports the scene from Maya — ensure the Command "
+                    "Port is up and mtoa is available.",
         })
+
+    try:
+        report = json.loads(raw)
+    except (TypeError, ValueError):
+        return json.dumps({
+            "error": "render_still: unreadable report from Maya",
+            "raw": str(raw)[:500],
+        })
+    if report.get("error") or not report.get("ass"):
+        return json.dumps(report, ensure_ascii=False)
+
+    kick = report.get("kick")
+    if not kick:
+        report["error"] = "kick was not found next to the loaded mtoa plugin"
+        report["hint"] = ("kick ships with mtoa (…/mtoa/<version>/bin/kick). "
+                          "Check the Arnold install for this Maya version.")
+        return json.dumps(report, ensure_ascii=False)
+
+    # -dw -dp: no render window, no progressive passes — the invocation the
+    # catcher-passes skill settled on. imageFilePrefix is baked into the .ass,
+    # so NEVER pass -o (that is what made kick loop, Chat 94).
+    argv = [kick, "-i", report["ass"], "-as", str(aa_samples),
+            "-r", str(width), str(height), "-dw", "-dp", "-nostdin"]
+    report["resolution"] = f"{width}x{height}"
+    report["aa_samples"] = aa_samples
+    if ctx:
+        await ctx.info(f"render_still: kick rendering {width}x{height} (AA {aa_samples})...")
+    rc, _stdout, stderr = await _run_cmd(argv, timeout=timeout)
+
+    if os.path.exists(out_path):
+        report["rendered"] = out_path
+        report["size_kb"] = os.path.getsize(out_path) // 1024
+    else:
+        report["error"] = (f"kick finished (rc={rc}) but wrote no file at out_path — "
+                           f"check the Arnold licence and the output path.")
+        report["kick_stderr"] = (stderr or "")[-800:]
+    try:
+        os.remove(report["ass"])
+    except OSError:
+        pass
+    return json.dumps(report, ensure_ascii=False)
 
 
 @mcp.tool(name="maya_session")
@@ -1766,7 +1823,7 @@ async def maya_session(params: SessionDispatchInput, ctx: Context | None = None)
     • operation_history — Read recent durable-audit records (read-only; needs MAYA_AUDIT_LOG=1). Optional params: {"limit": 50, "tool": "maya_transform", "action": "execute_python", "status": "error"}
     • publish — Drive the native Toolkit publisher (tk-multi-publish2) inside an engine'd Maya (launched via 'tank'). params: {"mode": "preview"|"publish", "include": ["rig"], "exclude": ["render"], "comment": "...", "timeout": 600}. 'preview' returns the collected publish tree; 'publish' activates matching tasks then validate→publish→finalize. Dependencies are captured automatically by the publish plugins.
     • review_turntable — Deterministic Viewport-2.0 turntable playblast → .mov (RUNS IN MAYA, long op). Frames the model, orbits 360° over [start,end] at fps, 16:9 / square pixels / overscan, offScreen (never Arnold). Required params: {"out_path": "/path.mov"} (resolve via fpt tk_resolve_path template 'movie_asset_publish' with name=<the task name> so the file is {Asset}_{Task}_v###.mov, e.g. DJ_Model_v001.mov — NOT 'turntable'). Optional: {"start":1,"end":100,"fps":25,"width":1920,"height":1080,"objects":[...],"focal":50,"timeout":600}. Returns the .mov plus the engine asset/task and a Version code {Asset}_{Task} so the review Version is named after the task it was generated in.
-    • render_still — Single-frame **Arnold** ray-traced still → a PNG at out_path (RUNS IN MAYA, long op). This is what "a still / render a still" means — a real Arnold render, NOT the VP2.0 grab of maya_viewport_capture (use that for a fast screenshot). Renders ONE frame to the Render View and writes it to the exact out_path; never playblasts a viewport, so it cannot hang the main thread the way an IPR-over-playblast does. Required params: {"out_path": "/review/….png"} (resolve via fpt tk_resolve_path so it lands in the review area with the pipeline name). Optional: {"camera":"persp","frame":42,"width":1920,"height":1080,"aa_samples":3,"view_transform":"…","timeout":600}. Returns JSON {rendered, size_kb, camera, frame, resolution, asset, task, version_code} or {error}. For a still "for review" the version_code ({Asset}_{Task}) is what names the ShotGrid review Version — rendering alone does not put it in review; create the Version (fpt sg_create type=Version) + sg_upload the PNG afterwards.
+    • render_still — Single-frame **Arnold** ray-traced still → a PNG at the exact out_path (long op). This is what "a still / render a still" means — a real Arnold render, NOT the VP2.0 grab of maya_viewport_capture (use that for a fast screenshot). Maya only EXPORTS the scene to a .ass; kick renders it out of process, so the review view transform actually applies (a Render View dump writes scene-linear and ignores colour management), no Render View window is opened, and the render can never hang Maya's main thread. Required params: {"out_path": "/review/….png"} (resolve via fpt tk_resolve_path so it lands in the review area with the pipeline name). Optional: {"camera":"persp","frame":42,"width":1920,"height":1080,"aa_samples":3,"view_transform":"…","timeout":600}. Returns JSON {rendered, size_kb, camera, frame, resolution, asset, task, version_code} or {error}. For a still "for review" the version_code ({Asset}_{Task}) is what names the ShotGrid review Version — rendering alone does not put it in review; create the Version (fpt sg_create type=Version) + sg_upload the PNG afterwards.
     """
     _track_call()
     # The two long-running handlers stream progress and take (params, ctx);

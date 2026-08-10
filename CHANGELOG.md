@@ -12,6 +12,56 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 ## [Unreleased]
 
 ### Added
+- **`maya_session` action `render_still` — a real single-frame Arnold still.**
+  "A still" meant an Arnold render, but the only still-ish tool was
+  `maya_viewport_capture`, a Viewport-2.0 grab — so the LLM playblasted, and a
+  playblast over a live Arnold IPR panel hangs Maya. `render_still` renders ONE
+  frame to the exact `out_path` (PNG/JPG) and returns
+  `{rendered, size_kb, camera, frame, resolution, view_transform_applied, asset,
+  task, version_code}`. The `version_code` (`{Asset}_{Task}`) is resolved from the
+  tk-maya engine context so a review Version is named after the task that
+  produced it — same contract as `review_turntable`; rendering alone does not put
+  it in review, the caller still creates + uploads the Version. A dispatcher
+  action, so the tool count stays 16 and `install.sh` is unchanged.
+
+### Changed
+- **`render_still` renders through `kick`, out of process, instead of dumping
+  Maya's Render View.** This is a correctness fix disguised as an architecture
+  change: Maya now only exports a `.ass` with the colour policy and output path
+  baked in, and Arnold renders it. Measured in-vivo on a flat `surfaceShader`
+  patch of exactly 0.5 — a Render View dump wrote **127** (raw linear) and
+  Arnold's own write path wrote **188** (sRGB-encoded). Same benefit shape as the
+  `catcher-passes` skill, whose invocation (`-dw -dp`, `imageFilePrefix` baked in,
+  never `-o`) is reused. Side effects: no Render View window is ever opened, and
+  a long render can no longer hang Maya's main thread.
+- **`maya_viewport_capture` can no longer hang Maya.** It playblasted the user's
+  FOCUSED panel; with an Arnold IPR / render-override live on it, the playblast
+  burned the Arnold render into the buffer and saturated the main thread. It now
+  captures a throw-away Viewport-2.0 window (its own modelPanel forced to
+  `vp2Renderer`, deleted in `finally`), exactly like `review_turntable`, so it can
+  never capture an Arnold/IPR panel. Still a fast VP2.0 grab; the user's
+  panels/renderer/selection are untouched.
+
+### Fixed
+- **`render_still`'s review view transform was a silent no-op.** It passed
+  `outputTarget="renderView"` to `colorManagementPrefs`, a value Maya rejects
+  (`outputTarget` accepts only `"renderer"` / `"playblast"`), and the resulting
+  exception was swallowed by a bare `except`. The mock suite stayed green because
+  it pinned the flags of `arnoldRender`/`renderWindowEditor` but never those of
+  `colorManagementPrefs`; the accepted flags *and values* are pinned now, and the
+  report carries `view_transform_applied` so a silent failure is visible instead
+  of assumed.
+- **`render_still` left the scene mutated.** The docstring promised the scene was
+  restored, but AA samples, the Arnold driver's `colorManagement` enum and the
+  global output transform were never put back. Every attribute it touches is now
+  snapshotted and restored in `finally` — verified in-vivo by seeding a distinct
+  pre-state and diffing all nine fields back.
+- **`render_still` failed in a Maya where Arnold's defaults had never been
+  created.** `defaultArnoldDriver` and friends are created lazily, so loading the
+  plugin was not enough and every driver attribute raised "No object matches
+  name". The recipe now calls mtoa's own idempotent `createOptions()`.
+
+### Added
 - **BVH mocap import (`src/maya_mcp/bvh_import.py`) wired into `maya_import_file`.**
   Maya has no native BVH importer, so `.bvh` motion-capture clips (e.g. the free
   CMU database) are parsed and rebuilt by a pure-Python module: HIERARCHY →
