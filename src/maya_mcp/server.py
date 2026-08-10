@@ -33,6 +33,7 @@ import datetime
 import functools
 import json
 import os
+import re
 import time
 from typing import Optional, List
 from enum import Enum
@@ -508,69 +509,87 @@ async def _run_cmd(cmd: List[str], timeout: int = 60) -> tuple:
     return proc.returncode, stdout.decode(), stderr.decode()
 
 
+_MAYA_VERSION_RE = re.compile(r"maya(\d{4})")
+
+
 def _discover_maya_apps() -> List[str]:
-    """Installed Maya ``.app`` bundles, sorted (so "…maya2027" sorts last)."""
+    """Installed Maya ``.app`` bundles, **newest first**.
+
+    Deliberately mirrors fpt-mcp's ``software_resolver._os_scan_maya`` ordering
+    (parse the year out of the path, sort descending, unparseable entries last)
+    so both launchers agree on what "the default Maya" means.
+    """
     import glob as _glob
 
-    return sorted(_glob.glob(MAYA_APP_GLOB))
+    def _key(path: str) -> tuple:
+        match = _MAYA_VERSION_RE.search(path)
+        return (1, int(match.group(1))) if match else (0, 0)
+
+    return sorted(_glob.glob(MAYA_APP_GLOB), key=_key, reverse=True)
 
 
 def _resolve_maya_app() -> tuple:
-    """Resolve WHICH Maya to open — deterministically, never by bare app name.
+    """Resolve WHICH Maya to open — the newest install, and SAY which one.
 
-    ``open -a Maya`` hands the choice to LaunchServices, and with 2026 + 2027
-    installed it opens an arbitrary one (Chat 94). That is the same class of bug
-    as launching Flame by app name via AppleScript
-    (``feedback_osascript_flame_version_trap``): a launcher that cannot name the
-    version it started is worse than one that refuses, because everything
-    downstream — the Command Port, the panel, the api_graph, the publish
-    templates — is version-specific.
+    Version authority (Chat 65/68 user rule): the version that should open for
+    pipeline work is the one **ShotGrid Desktop marks as default**, which
+    fpt-mcp's ``resolve_app`` reads off the SG ``Software`` entity —
+    ``fpt_launch_app`` is the pipeline entry point and consults it. maya-mcp has
+    no ShotGrid access, so ``launch`` mirrors that resolver's *fallback* layer:
+    newest install, chosen deterministically, with a warning naming the others
+    and pointing at the authoritative launcher. Never "newest" silently.
 
-    So this follows the contract the rest of the ecosystem already uses for
-    ambiguous state (Vision3D URL, console project context, the native Flame
-    link): exactly one candidate → use it; several → ``choice_required``, never
-    a guess; none → an actionable error. ``MAYA_APP`` is the explicit override.
+    What it must never do is ``open -a "Maya"``: that hands the choice to
+    LaunchServices, which picks an arbitrary version and reports nothing
+    (Chat 94) — the same trap as launching Flame by app name via AppleScript
+    (``feedback_osascript_flame_version_trap``). Everything downstream is
+    version-specific: the Command Port, the panel bootstrap, ``api_graph.json``,
+    the publish templates.
 
-    :returns: ``(bundle, candidates, error)`` — exactly one of bundle/error set.
+    ``MAYA_APP`` stays available as an OPTIONAL pin (absolute bundle path, or a
+    selector matching exactly one install) for a box that must not follow
+    "newest" — it is not required for normal operation.
+
+    :returns: ``(bundle, warnings, error)`` — exactly one of bundle/error set.
     """
     candidates = _discover_maya_apps()
+    warnings: List[str] = []
 
     if MAYA_APP:
         if os.path.isabs(MAYA_APP):
             if os.path.exists(MAYA_APP):
-                return MAYA_APP, candidates, None
-            return None, candidates, {
+                return MAYA_APP, warnings, None
+            return None, warnings, {
                 "error": f"MAYA_APP points at a bundle that does not exist: {MAYA_APP}",
                 "candidates": candidates,
-                "hint": "Fix MAYA_APP in .env, or unset it to auto-discover.",
+                "hint": "Fix MAYA_APP, or unset it to fall back to the newest install.",
             }
-        # A selector such as "2027" / "maya2027": it must identify exactly one.
         matched = [c for c in candidates if MAYA_APP in c]
         if len(matched) == 1:
-            return matched[0], candidates, None
-        return None, candidates, {
+            return matched[0], warnings, None
+        return None, warnings, {
             "error": (f"MAYA_APP={MAYA_APP!r} matches {len(matched)} installed Maya "
                       f"bundles — it must identify exactly one."),
             "candidates": candidates,
-            "hint": "Set MAYA_APP to the absolute path of the Maya.app to launch.",
+            "hint": "Use the absolute path of the Maya.app, or unset MAYA_APP.",
         }
 
-    if len(candidates) == 1:
-        return candidates[0], candidates, None
     if not candidates:
-        return None, candidates, {
+        return None, warnings, {
             "error": "No Maya installation found.",
             "searched": MAYA_APP_GLOB,
-            "hint": "Set MAYA_APP in .env to the absolute path of your Maya.app "
-                    "(or MAYA_APP_GLOB if Maya lives outside /Applications/Autodesk).",
+            "hint": "Set MAYA_APP_GLOB if Maya lives outside /Applications/Autodesk.",
         }
-    return None, candidates, {
-        "error": "choice_required: several Maya versions are installed and none is selected.",
-        "candidates": candidates,
-        "hint": ("Launching by app name lets macOS pick an arbitrary version, so this "
-                 "refuses to guess. Set MAYA_APP in .env — e.g. "
-                 f"MAYA_APP={candidates[-1]}"),
-    }
+
+    bundle = candidates[0]
+    if len(candidates) > 1:
+        warnings.append(
+            f"{len(candidates)} Maya installs found; opened the newest ({bundle}). "
+            f"Others: {', '.join(candidates[1:])}. For pipeline work the version to "
+            f"open is the one ShotGrid Desktop marks as default — launch via "
+            f"fpt_launch_app, which resolves it from the SG Software entity."
+        )
+    return bundle, warnings, None
 
 
 def _handle_error(e: Exception) -> str:
@@ -641,9 +660,12 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
         pass  # Not running or not responding — open it
 
     # 2. Launch Maya — by resolved bundle PATH, never by app name.
-    bundle, _candidates, resolve_error = _resolve_maya_app()
+    bundle, app_warnings, resolve_error = _resolve_maya_app()
     if resolve_error:
         return json.dumps(resolve_error, ensure_ascii=False)
+    if ctx and app_warnings:
+        for _w in app_warnings:
+            await ctx.info(_w)
 
     rc, _, err = await _run_cmd(["open", "-a", bundle], timeout=10)
     if rc != 0:
@@ -689,6 +711,7 @@ async def _do_launch(params: dict, ctx: Context | None = None) -> str:
                     # Which bundle was actually started — the whole point of
                     # resolving a path instead of an app name.
                     "app": bundle,
+                    "warnings": app_warnings,
                     "message": f"Maya open and Command Port ready ({waited}s)."
                 }, ensure_ascii=False)
             except Exception:

@@ -17,13 +17,16 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   both installed macOS picks one and the tool never knew which — while the
   Command Port, the panel bootstrap, `api_graph.json` and the publish templates
   are all version-specific. Same class of trap as launching Flame by app name via
-  AppleScript. `launch` now resolves an absolute `.app` **path**: exactly one
-  install → use it; several with no selector → `choice_required` listing the
-  candidates and the literal `MAYA_APP=` line to set, never a guess; none → an
-  actionable error. `MAYA_APP` accepts an absolute bundle path or a selector that
-  must match exactly one install (e.g. `2027`), and `MAYA_APP_GLOB` overrides
-  where installs are discovered. The success payload now reports the `app` that
-  was actually started.
+  AppleScript. `launch` now resolves a concrete `.app` **path**, mirroring
+  fpt-mcp's `software_resolver` fallback layer: discovery parses the version out
+  of each install and sorts newest-first, the newest is opened, and when others
+  exist the result carries a warning naming them **and** pointing at the real
+  authority — for pipeline work the version to open is the one ShotGrid Desktop
+  marks as default, which `fpt_launch_app` resolves from the SG `Software`
+  entity. The success payload now reports the `app` actually started. `MAYA_APP`
+  remains an optional pin (absolute bundle path, or a selector matching exactly
+  one install) for a box that must not follow "newest"; `MAYA_APP_GLOB` overrides
+  where installs are discovered. No environment variable is required.
 - **CI pinned `ruff==0.15.11`.** maya-mcp still installed ruff unpinned, so the
   first run after an idle stretch failed on new rules across ~20 pre-existing
   test files rather than on any change — the drift the other two repos were
