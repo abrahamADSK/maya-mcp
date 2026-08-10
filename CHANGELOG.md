@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.24.1] — 2026-08-10
+
 ### Fixed
 - **`maya_session action=launch` opened an arbitrary Maya version.** It ran
   `open -a "Maya"`, which hands the choice to LaunchServices; with 2026 and 2027
