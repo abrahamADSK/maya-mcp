@@ -10,6 +10,13 @@ in this file. Only v1.4.0 onward is documented here; consult `git log v1.3.0`
 and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
+- **The release-tag invariant only counts release tags** (Chat 99):
+  `git describe --tags` picks up ANY tag, so a non-release marker — a
+  snapshot created before a risky migration in a sibling repo — became "the
+  latest version" and blocked every commit with a nonsense mismatch.
+  `--match 'v[0-9]*'` restricts it to releases. Applied identically to
+  flame-mcp and fpt-mcp.
+
 
 ## [1.24.1] — 2026-08-10
 
