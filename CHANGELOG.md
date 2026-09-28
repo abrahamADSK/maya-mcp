@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.25.0] — 2026-09-28
+
 ### Added
 - **`maya_reference` — the server could import but not reference** (Chat 107).
   A skills audit turned up a capability gap, not a documentation one:
