@@ -35,7 +35,7 @@
 └────────┬─────────┘
          │ (MCP Protocol — stdio)
 ┌────────▼──────────────────────────────────────────┐
-│   maya-mcp FastMCP Server (16 tools)              │
+│   maya-mcp FastMCP Server (17 tools)              │
 │                                                    │
 │  ┌─────────┐ ┌─────────┐ ┌──────────────────────┐│
 │  │ RAG     │ │ Safety  │ │ Token Tracking       ││
@@ -178,7 +178,7 @@ transform (not the Arnold output transform) is what governs them.
 ## 5. RAG System Architecture
 
 ### Documentation Corpora (src/maya_mcp/docs/)
-- `CMDS_API.md` — maya.cmds reference: 15+ sections covering scene management, primitives, transforms, selection, hierarchy, attributes, modeling, UVs, materials, lights, cameras, animation, rendering, plugins, deformers, constraints, joints, namespaces, undo, viewport
+- `CMDS_API.md` — maya.cmds reference: 20+ sections covering scene management, primitives, transforms, selection, hierarchy, attributes, modeling, UVs and UV sets/snapshot, materials, lights, cameras, animation, rendering, render layers/Render Setup, plugins, deformers, constraints, joints, HumanIK and character setup, Time Editor, FBX import/export, nCloth/nParticles, namespaces, undo, viewport
 - `PYMEL_API.md` — PyMEL object-oriented API: nodes, attributes, connections, transforms, data types, mesh components, key differences from cmds
 - `ARNOLD_API.md` — Arnold/mtoa: shaders (aiStandardSurface attributes), lights, render settings, AOVs, textures, PBR setup pattern
 - `USD_API.md` — Maya-USD: import/export commands, proxy shapes, pxr Python API, layers, composition, workflow patterns

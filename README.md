@@ -14,7 +14,7 @@ Interactive, auto-published map of this codebase — modules, functions, call/im
 
 **[abrahamadsk.github.io/maya-mcp](https://abrahamadsk.github.io/maya-mcp/)** · part of the [MCP ecosystem graph hub](https://abrahamadsk.github.io/mcp-graphs/).
 
-> MCP server for Autodesk Maya — 16 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
+> MCP server for Autodesk Maya — 17 MCP tools with RAG-powered documentation search, anti-hallucination safety, self-learning patterns, and optional AI-driven 3D generation via the [Vision3D](https://github.com/abrahamADSK/vision3d) addon.
 
 ---
 
@@ -42,7 +42,7 @@ Review previews are **colour-correct and deterministic**. The Viewport 2.0 captu
 ```
 Claude / LLM
     ↕  MCP protocol (stdio)
-FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
+FastMCP server (src/maya_mcp/server.py) — 17 MCP tools
     ├── RAG engine (src/maya_mcp/rag/)
     │     ├── ChromaDB + BM25 hybrid search
     │     ├── HyDE adaptive query expansion
@@ -126,6 +126,30 @@ FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
 
 ---
 
+## Skills (3)
+
+Tools are what the server can *do*. Skills are the **recipe** — which tools, in
+what order, and what fails silently. They live in [`docs/skills/`](docs/skills/),
+version controlled with the code they describe, and load only when the request
+matches their trigger, so they cost almost nothing until they are relevant.
+
+| Skill | Fires on |
+|---|---|
+| `maya-headless-batch` | Heavy or crash-prone work that should leave the Command Port: batch renders, cache export/import, multi-file sweeps |
+| `maya-scene-assembly` | References — create/replace/version-swap, namespaces, deferred refs, and the save-after-scripted-open trap |
+| `maya-anim-transfer` | Retarget and character animation: HumanIK, mocap/BVH, cycles and loops, reach semantics |
+
+Activate them on a fresh clone by symlinking into your user skills directory:
+
+```bash
+for s in maya-headless-batch maya-scene-assembly maya-anim-transfer; do
+  ln -s "$PWD/docs/skills/$s" ~/.claude/skills/"$s"
+done
+```
+
+See [`docs/skills/README.md`](docs/skills/README.md) for the four-layer split
+(tool / skill / RAG / memory) and why they are not under `.claude/`.
+
 ## RAG — Knowledge Engine
 
 ### Architecture
@@ -162,7 +186,7 @@ maya-mcp/
 │   └── maya_mcp/
 │       ├── __init__.py
 │       ├── __main__.py
-│       ├── server.py              # FastMCP server — 16 MCP tools
+│       ├── server.py              # FastMCP server — 17 MCP tools
 │       ├── maya_bridge.py         # TCP bridge → Maya Command Port :8100
 │       ├── safety.py              # Dangerous pattern detection (14+ patterns)
 │       ├── config.example.json
@@ -178,6 +202,11 @@ maya-mcp/
 │           ├── ARNOLD_API.md      # Arnold/mtoa shaders, AOVs, render settings
 │           ├── USD_API.md         # Maya-USD import/export, proxy shapes, pxr API
 │           └── ANTI_PATTERNS.md   # Common LLM hallucinations + wrong flag names
+├── docs/
+│   └── skills/                    # Claude Code skills (symlinked into ~/.claude/skills/)
+│       ├── maya-headless-batch/   # mayapy/kick out-of-process work + runner template
+│       ├── maya-scene-assembly/   # references, namespaces, version swaps
+│       └── maya-anim-transfer/    # HumanIK retarget, cycles, reach semantics
 │
 ├── console/                    # Qt console — Maya panel + legacy standalone
 │   ├── qt_compat.py            # PySide2 (Maya 2023-2024) / PySide6 (2025+) shim
