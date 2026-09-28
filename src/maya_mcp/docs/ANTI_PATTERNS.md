@@ -17,6 +17,22 @@ This document helps the RAG system correct common mistakes before they reach May
 - `cmds.importFile()` — WRONG. Correct: `cmds.file('path', i=True)`
 - `cmds.exportSelected()` — WRONG. Correct: `cmds.file('path', exportSelected=True)`
 - `cmds.polyObject()` — WRONG. Use specific primitives: `cmds.polyCube()`, `cmds.polySphere()`, etc.
+- `cmds.hikBakeToControlRig()` — WRONG, not a `cmds` command. Baking to the control
+  rig is a MEL procedure: `mel.eval('hikBakeToControlRig 0')`.
+- `cmds.hikCreateCharacter()` / `cmds.hikSetCharacterInput()` — WRONG. HumanIK's
+  *rig-construction* surface is not in `cmds`. What IS registered is `hikGlobals`
+  plus twelve UPPERCASE `HIK*` runtime commands (`HIKPinTranslate`,
+  `HIKSetFullBodyKey`, `HIKCharacterControlsTool`, `HIKFullBodyMode`, …) — the
+  interactive pinning, body-part-mode and keying surface, NOT characterisation.
+  For characterising a skeleton the real command is `cmds.characterize()`.
+- `cmds.MASHCreateNetwork()` or any `cmds.MASH*` — WRONG. MASH registers NO `cmds`
+  command at all; it is scripted through its own Python package.
+- `cmds.xgenCreateDescription()` or any `cmds.xgen*` — WRONG. XGen registers NO
+  `cmds` command at all; it is scripted through its own Python module.
+- `cmds.renderLayer()` — WRONG. No such command. Use `cmds.createRenderLayer()` for
+  legacy layers, or the Render Setup Python module for the modern system.
+- `cmds.fbxExport()` / `cmds.fbxImport()` — WRONG (case). Correct: `cmds.FBXExport()`
+  / `cmds.FBXImport()`, and only after `cmds.loadPlugin('fbxmaya')`.
 
 ## Wrong Flag Names
 
@@ -92,12 +108,29 @@ This document helps the RAG system correct common mistakes before they reach May
    environment. `mayapy -m pip install package` works but may conflict with Maya's
    bundled packages.
 
-5. **"Arnold's aiStandardSurface has a 'roughness' attribute"** — WRONG.
+5. **"HumanIK is fully scriptable from `cmds`"** — WRONG, but not where it looks.
+   `cmds` DOES carry `hikGlobals` plus twelve uppercase `HIK*` runtime commands
+   (pinning, body-part modes, keying, the Character Controls tool). What is absent
+   is the *rig-construction* half: characterisation, source assignment and the
+   control-rig bake, which are `cmds.characterize()` or MEL via `mel.eval(...)`.
+   Plan for that before scripting a retarget. **Case matters when you check**:
+   grepping `hik` lowercase finds one command and hides the other twelve.
+
+6. **"Time Editor clips are addressed by name"** — WRONG in edit/query mode.
+   `cmds.timeEditorClip` takes the clip's integer `clipId`; the name argument is
+   only for creation. `cmds.timeEditorClip(1, q=True, startTime=True)`.
+
+7. **"Plugin commands are always available"** — WRONG. `FBXExport*`, `AbcExport`,
+   `mayaUSDExport` and `arnoldExportAss` exist only once their plugin is loaded. A
+   headless `maya.standalone` session loads none of them, so the symptom is an
+   `AttributeError` on a command that is perfectly real.
+
+8. **"Arnold's aiStandardSurface has a 'roughness' attribute"** — WRONG.
    The correct attribute is `specularRoughness`. There is also `diffuseRoughness`,
    `coatRoughness`, and `transmissionExtraRoughness` but NOT just `roughness`.
 
-6. **"You can query node type with cmds.nodeType()"** — Correct, but it returns the
+9. **"You can query node type with cmds.nodeType()"** — Correct, but it returns the
    SHAPE type, not the transform type. For a polyCube, it returns `'mesh'`, not `'polyCube'`.
 
-7. **"cmds.ls(type='light') finds all lights"** — WRONG. Use `cmds.ls(lights=True)`.
+10. **"cmds.ls(type='light') finds all lights"** — WRONG. Use `cmds.ls(lights=True)`.
    `type='light'` only finds legacy directional lights.

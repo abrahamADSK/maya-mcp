@@ -7,9 +7,9 @@
 
 ## 1. Architecture
 
-**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **16 MCP tools** organized in three layers (plus the optional WorldLabs environment addon):
+**maya-mcp** is a production-grade **MCP (Model Context Protocol)** server based on **FastMCP** with **17 MCP tools** organized in three layers (plus the optional WorldLabs environment addon):
 
-1. **Maya Control** (9 direct tools + 1 dispatch tool with 12 actions) — Scene manipulation, modeling, animation, I/O, rendering
+1. **Maya Control** (10 direct tools + 1 dispatch tool with 13 actions) — Scene manipulation, modeling, animation, I/O, rendering
    - Communicates with Maya via **TCP Command Port** (default port 8100; moved from the historical 7001 because that port is held by Flame's S+W services on hosts with Autodesk Flame installed)
    - Uses `maya_bridge.py` (socket bridge) to execute MEL/Python commands
    - All operations use undo chunks for safe rollback
@@ -113,9 +113,9 @@ transform (not the Arnold output transform) is what governs them.
 
 ---
 
-## 4. Available Tools (<!-- concept:mcp_tool_count start -->16<!-- concept:mcp_tool_count end --> MCP tools)
+## 4. Available Tools (<!-- concept:mcp_tool_count start -->17<!-- concept:mcp_tool_count end --> MCP tools)
 
-### Maya Direct Tools (9 MCP tools)
+### Maya Direct Tools (10 MCP tools)
 
 | Tool | Description |
 |------|-------------|
@@ -127,6 +127,7 @@ transform (not the Arnold output transform) is what governs them.
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control |
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB, BVH mocap with namespace and scale (streams progress; 120s bridge budget, 240s for BVH via `bvh_import`) |
+| `maya_reference` | Reference files into the scene and manage the lifecycle: `create`, `list`, `replace` (version swap), `load`, `unload`. A reference keeps the live link to the source file that `maya_import_file` breaks, so this is the tool for content that has its own publish and may be re-versioned. `list` returns the `reference_node` the other operations need, plus each file, namespace and loaded state. `replace` repoints a node at a new file without disturbing the namespace or anything built on top of it. Reference **removal** is deliberately NOT exposed: it is destructive and `safety.py` requires explicit user confirmation for it. |
 | `maya_viewport_capture` | Fast Viewport-2.0 screenshot to PNG/JPG at any resolution (NOT an Arnold render). Playblasts a throw-away VP2.0 window (never the user's focused panel), so it can never capture a live Arnold IPR / render-override and hang Maya. For a ray-traced still use `maya_session action=render_still`. |
 
 ### Maya Session Actions (13 actions behind `maya_session` dispatch tool)
@@ -469,3 +470,18 @@ Whenever a tool is added, removed, or renamed in `src/maya_mcp/server.py`:
 4. Commit install.sh together with the server.py change — never separately
 
 Forgetting this step means users get permission prompts on first use of the new tool.
+
+---
+
+## Skills owned by this repo
+
+Procedural knowledge for driving Maya through this server — `maya-headless-batch`,
+`maya-scene-assembly`, `maya-anim-transfer` — lives in
+`docs/skills/`, version controlled here and symlinked into
+`~/.claude/skills/` so it fires from any directory. **A skill ships in the same
+commit as the code it describes.** Setup, rationale and the fresh-clone activation
+command: [`docs/skills/README.md`](docs/skills/README.md).
+
+Put a *recipe* (which tools, in what order, what fails silently) in a skill; put
+*reference* (flags, fields, signatures) in the RAG corpus; put an *invariant that
+must be enforced* in code. Never duplicate across two of the three.

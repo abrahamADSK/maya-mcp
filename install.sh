@@ -828,6 +828,7 @@ TOOLS = [
     "maya_mesh_operation",
     "maya_set_keyframe",
     "maya_import_file",
+    "maya_reference",
     "maya_viewport_capture",
     # Dispatch tools (cover multiple actions each — see comment above)
     "maya_session",

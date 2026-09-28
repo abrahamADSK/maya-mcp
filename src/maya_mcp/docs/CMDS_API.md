@@ -131,6 +131,38 @@ Common mistake: `cmds.setAttr('obj.translate', [1,2,3])` — WRONG. Must unpack.
 - `cmds.u3dLayout('obj')` — Layout UVs in 0-1 space
 - `cmds.polyLayoutUV('obj', sc=1, se=2, rbf=0, fr=True)` — Layout UVs
 
+### UV Sets
+
+- `cmds.polyUVSet(create=True, uvSet='map2')` — Create a new empty UV set
+- `cmds.polyUVSet(create=True)` — Create with an auto-generated name (returned)
+- `cmds.polyUVSet(copy=True, uvSet='map1')` — Copy a set to a new auto-named set
+- `cmds.polyUVSet(copy=True, nuv='map2', uvSet='map1')` — Copy values into a named set
+- `cmds.polyUVSet(currentUVSet=True, uvSet='map2')` — Set the current UV set
+- `cmds.polyUVSet(currentLastUVSet=True)` — Make the last-added set current
+- `cmds.polyUVSet(q=True, currentUVSet=True)` — Query the current set
+- `cmds.polyUVSet(rename=True, newUVSet='map3', uvSet='map2')` — Rename a set
+- `cmds.polyUVSet(delete=True, uvSet='map4')` — Delete a set (omit `uvSet` for current)
+- `cmds.polyUVSet(q=True, allUVSets=True)` — List all UV sets
+- `cmds.polyUVSet('mesh', q=True, allUVSetsIndices=True)` — Logical indices; read the
+  name of each with `cmds.getAttr(node + '.uvSet[' + str(i) + '].uvSetName')`
+- `cmds.polyUVSet(create=True, perInstance=True, uvSet='myMap')` — Per-instance set
+
+`polyUVSet` flags (short/long): `auv/allUVSets`, `uvn/allUVSetsIndices`,
+`awc/allUVSetsWithCount`, `cp/copy`, `cr/create`, `luv/currentLastUVSet`,
+`cpi/currentPerInstanceUVSet`, `cuv/currentUVSet`, `d/delete`, `gen/genNewUVSet`,
+`nuv/newUVSet`, `pi/perInstance`, `pr/projections`, `rn/rename`, `ro/reorder`,
+`si/shareInstances`, `us/unshared`, `uvs/uvSet`.
+
+### UV Snapshot
+
+- `cmds.uvSnapshot(o=True, n='/tmp/uvImage2.iff', xr=256, yr=256)` — Write the UV
+  layout to an image file (`overwrite`, `name`, `xResolution`, `yResolution`)
+
+`uvSnapshot` flags (short/long): `aa/antiAliased`, `b/blueColor`,
+`euv/entireUVRange`, `ff/fileFormat`, `g/greenColor`, `n/name`, `o/overwrite`,
+`r/redColor`, `umx/uMax`, `umn/uMin`, `uvs/uvSetName`, `vmx/vMax`, `vmn/vMin`,
+`xr/xResolution`, `yr/yResolution`.
+
 ## Materials and Shading
 
 - `cmds.shadingNode('lambert', asShader=True, name='mat')` — Create shader node
@@ -230,6 +262,173 @@ Common plugins: `mtoa` (Arnold), `fbxmaya` (FBX), `AbcImport`/`AbcExport` (Alemb
 - `cmds.mirrorJoint('joint', mirrorYZ=True, mb='_L', rb='_R')` — Mirror joints
 
 IK solvers: `ikRPsolver` (Rotate Plane), `ikSCsolver` (Single Chain), `ikSplineSolver`.
+
+## HumanIK and Character Setup
+
+HumanIK's `cmds` surface is **split**, and the split is what matters: the
+interactive/keying half is there, the rig-construction half is not.
+
+**Present in `maya.cmds`** — thirteen commands in the Maya 2027 set. One lowercase:
+
+- `cmds.hikGlobals(rap=1)` — Release all pinning (`releaseAllPinning`, boolean,
+  query/edit). This is the command's **only** flag.
+
+…and twelve UPPERCASE runtime commands, the Character Controls surface:
+`HIKPinTranslate`, `HIKPinRotate`, `HIKToggleReleasePinning`, `HIKFullBodyMode`,
+`HIKBodyPartMode`, `HIKSelectedMode`, `HIKCycleMode`, `HIKSetFullBodyKey`,
+`HIKSetBodyPartKey`, `HIKSetSelectionKey`, `HIKCharacterControlsTool`,
+`HIKLiveConnectionTool`.
+
+> **Check with case-insensitive matching.** Grepping `hik` lowercase against the
+> command set returns one hit and hides the other twelve.
+
+**Absent from `maya.cmds`** — characterisation, source assignment and baking to
+the control rig are **MEL procedures** driven through `mel.eval(...)` (e.g.
+`mel.eval('hikBakeToControlRig 0')`). There is no `cmds.hikBakeToControlRig`.
+
+Characterisation of a joint hierarchy for full-body IK does have a real command:
+
+- `cmds.characterize(pinHandFeet=True)` — Scan the selected hierarchy for known
+  joint names/labels and create HIK effectors for full-body IK control
+- `cmds.characterize(sk='pelvis Hips,hipL LeftUpLeg,kneeL LeftLeg,...')` — Map
+  joints explicitly when they do NOT follow the FBIK naming convention
+  (`sourceSkeleton`, space-separated `yourJoint HIKRole` pairs, comma-delimited)
+- `cmds.characterize(e=True, addFloorContactPlane=True)` — Add a floor contact
+  plane to the selected effector
+- `cmds.characterize(e=True, placeNewPivot=True)` — Add a full-body pivot to the
+  selected effector; then `cmds.characterize(e=True, activatePivot=True)` once it
+  is positioned, and `changePivotPlacement=True` to move it again
+
+`characterize` flags (short/long): `apv/activatePivot`, `aae/addAuxEffector`,
+`afp/addFloorContactPlane`, `ame/addMissingEffectors`, `ahk/attributeFromHIKProperty`,
+`mhk/attributeFromHIKPropertyMode`, `aab/autoActivateBodyPart`,
+`cpp/changePivotPlacement`, `ef/effectors`, `fk/fkSkeleton`, `nm/name`,
+`phf/pinHandFeet`, `pnp/placeNewPivot`, `pos/posture`, `sk/sourceSkeleton`,
+`sp/stancePose`, `typ/type`.
+
+Baking retargeted motion down to curves uses the standard bake command:
+
+- `cmds.bakeResults('ctrl.translateX', t=(5,44), sb=2)` — Replace the driving
+  network with a single animCurve over a time range, sampled every `sb` units
+- `cmds.bakeResults('joint*', t=(1,40), simulation=True)` — Bake a skeleton
+
+`bakeResults` flags (short/long): `t/time`, `sb/sampleBy`, `sm/simulation`,
+`pok/preserveOutsideKeys`, `sac/sparseAnimCurveBake`, `dic/disableImplicitControl`,
+`mr/minimizeRotation`, `at/attribute`.
+
+## Time Editor
+
+Non-destructive clip-based animation. Nine commands exist: `timeEditor`,
+`timeEditorAnimSource`, `timeEditorBakeClips`, `timeEditorClip`,
+`timeEditorClipLayer`, `timeEditorClipOffset`, `timeEditorComposition`,
+`timeEditorPanel`, `timeEditorTracks`.
+
+- `cmds.timeEditorClip('ClipName', track='Composition1:1')` — Create a clip on a
+  track (`tracksNode:trackNumber`, or a path like `'composition1|track1'`)
+- `cmds.timeEditorClip('teClip1', addSelectedObjects=True, track='Composition1:1')` —
+  Populate a clip from the current selection
+- `cmds.timeEditorClip('teClip1', aso=True, addRelatedKG=True, track='Composition1:1')` —
+  Populate including associated keying groups; this is the **HIK rig** case
+- `cmds.timeEditorClip('Container_B', track='composition1|track2', animSource='srcName', startTime=30)` —
+  Create a clip from an existing anim source at a frame
+- `cmds.timeEditorClip(1, q=True, startTime=True, absolute=True)` — Query start
+  time in global/absolute time
+- `cmds.timeEditorClip(1, q=True, duration=True, absolute=True)` — Query duration
+- `cmds.timeEditorClip(e=True, moveClip=20, clipId=[1,2])` — Move clips by id
+- `cmds.timeEditorClip(e=True, track='New_Track:2', clipId=[1,2,3])` — Move clips
+  to a different track
+- `cmds.timeEditorClip('GroupName', track='New_Track:1', group=True, clipId=[1,2,3])` —
+  Group containers
+- `cmds.timeEditorClip(e=True, removeClip=True, clipId=[1,2])` — Remove clips
+
+`timeEditorClip` flags (short/long): `n/name`, `trk/track`, `s/startTime`,
+`d/duration`, `asr/animSource`, `id/clipId`, `ccl/copyClip`, `pcl/pasteClip`,
+`dcl/duplicateClip`, `rmc/removeClip`, `et/endTime`, `abs/absolute`,
+`aso/addSelectedObjects`, `ao/addObjects`, `at/attribute`.
+
+Returns the created clip's name; in query mode returns the queried flag value.
+Clips are addressed by **integer id**, not by name, in edit/query mode.
+
+## Render Layers and Render Setup
+
+Two separate systems. **Render Setup** (Maya 2016.5+) is the modern one and has
+**no `cmds` command** — it is a Python module:
+`import maya.app.renderSetup.model.renderSetup as renderSetup`.
+
+The **legacy** render-layer commands do exist in `cmds`:
+
+- `cmds.createRenderLayer()` — New layer containing the current selection
+- `cmds.createRenderLayer('bolt', noRecurse=True)` — Add only the named node, not
+  its descendants
+- `cmds.createRenderLayer('washer', noRecurse=True, name='assembly')` — Named layer
+- `cmds.createRenderLayer(g=True)` — Global layer that always contains everything
+- `cmds.editRenderLayerMembers(...)` — Add/remove layer members
+- `cmds.editRenderLayerGlobals(...)` — Switch the current render layer
+- `cmds.editRenderLayerAdjustment(...)` — Create a per-layer attribute override
+- `cmds.renderLayerMembers(...)` — Query layer membership
+
+`createRenderLayer` flags (short/long): `e/empty`, `g/g`, `mc/makeCurrent`,
+`n/name`, `nr/noRecurse`, `num/number`. Returns the new layer's name.
+
+Do not mix the two systems in one scene.
+
+## FBX Import and Export
+
+Two routes. The **file-translator** route needs no plugin-specific command:
+
+- `cmds.file('path.fbx', i=True, type='FBX')` — Import
+- `cmds.file('path.fbx', exportSelected=True, type='FBX export')` — Export selected
+
+The **plugin-command** route (requires `cmds.loadPlugin('fbxmaya')`) exposes
+`cmds.FBXExport`, `cmds.FBXImport`, `cmds.FBXResetExport`, `cmds.FBXResetImport`,
+`cmds.FBXLoadExportPresetFile`, `cmds.FBXLoadImportPresetFile`, `cmds.FBXClose`,
+plus ~100 `FBXExport*` / `FBXImport*` **property setters** that configure the next
+export/import — e.g. `FBXExportBakeComplexAnimation`,
+`FBXExportBakeComplexStart`, `FBXExportBakeComplexEnd`, `FBXExportBakeComplexStep`,
+`FBXExportBakeResampleAnimation`, `FBXExportAnimationOnly`, `FBXExportCameras`,
+`FBXExportLights`, `FBXExportConstraints`, `FBXExportSkins`, `FBXExportShapes`,
+`FBXExportInputConnections`, `FBXExportIncludeChildren`, `FBXExportScaleFactor`,
+`FBXExportUpAxis`, `FBXExportFileVersion`, `FBXExportInAscii`,
+`FBXExportSmoothingGroups`, `FBXExportHardEdges`, `FBXExportInstances`,
+`FBXExportEmbeddedTextures`, `FBXExportTriangulate`, `FBXExportGenerateLog`.
+
+These commands are registered by the plugin, so they are **absent until `fbxmaya`
+is loaded** — which a headless `maya.standalone` session does not do for you.
+
+Note: the argument syntax of the `FBXExport*` property setters is not documented
+here — verify it against the FBX plugin reference before use rather than guessing.
+
+## MASH and XGen
+
+**Neither exposes any `maya.cmds` command.** In the Maya 2027 command set there is
+no command containing `MASH` and none beginning with `xgen`/`xg`. Any
+`cmds.MASH*` or `cmds.xgen*` call is a hallucination.
+
+Both are driven from their own Python packages, imported directly rather than
+through `cmds`. The exact module API is **not verified here** — consult the
+product documentation before scripting either.
+
+## nCloth and nParticles (Nucleus)
+
+- `cmds.nParticle(p=[(0,0,0),(3,5,6),(5,6,7)])` — Create an nParticle object with
+  particles at the given positions. Returns the new particle shape and its
+  associated particle object node
+- `cmds.nParticle('particle1', q=True, attribute='age', id=2)` — Query a
+  per-particle attribute by particle id
+- `cmds.nParticle(attribute='velocity', q=True, order=3)` — Query by index within
+  the selected object
+- `cmds.nParticle(e=True, attribute='velocity', order=3, vectorValue=(0.0,1.0,0.0))` —
+  Edit a per-particle vector attribute
+- `cmds.nParticle('nParticle1', e=True, attribute='mass', id=3, fv=0.7)` — Edit a
+  per-particle float attribute
+
+`nParticle` flags (short/long): `at/attribute`, `ch/cache`, `c/conserve`,
+`ct/count`, `grs/gridSpacing`, `i/inherit`, `n/name`, `p/position`,
+`sn/shapeName`, `vv/vectorValue`, `fv/floatValue`, `id/particleId`.
+
+Related commands that exist in `cmds`: `nClothCreate`, `nClothMakeCollide`,
+`nClothCache`, `nClothRemove`, `nClothRestToInput`, `nSoft`, and the
+`nConstraint*` family. Their flag surfaces are not documented here.
 
 ## Namespaces and References
 

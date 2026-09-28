@@ -11,6 +11,39 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Added
+- **`maya_reference` — the server could import but not reference** (Chat 107).
+  A skills audit turned up a capability gap, not a documentation one:
+  `createReference` / `referenceQuery` / `loadReference` appeared nowhere in
+  `src/`, only as a warning string in `safety.py`. Referencing is the backbone
+  of every production scene, and the demo had sidestepped it entirely with
+  imports. The new tool covers the lifecycle — `create`, `list`, `replace`
+  (the version swap), `load`, `unload` — and returns the `reference_node` plus
+  each file, namespace and loaded state. **Removal is deliberately not
+  exposed**: it is destructive and `safety.py` requires explicit user
+  confirmation for it. Tool count 16 → 17.
+- **Skills layer** (`docs/skills/`): `maya-headless-batch`,
+  `maya-scene-assembly`, `maya-anim-transfer`. Procedural knowledge that was
+  previously reachable only from handoffs and memory files, now loaded on
+  demand by intent match. Version controlled here and symlinked into
+  `~/.claude/skills/`; `.claude/` is gitignored, which is why they do not live
+  there. See `docs/skills/README.md`.
+- **RAG corpus**: HumanIK, Time Editor, Render Setup, FBX, nCloth/nParticles
+  and UV sets/snapshot sections in `CMDS_API.md`; seven wrong-command entries
+  and three misconceptions in `ANTI_PATTERNS.md`.
+
+### Fixed
+- **The corpus claimed HumanIK has no Python API. It does.** The claim rested
+  on a case-sensitive grep for `hik`, which returns one command and hides
+  twelve. `cmds` carries `hikGlobals` **plus twelve uppercase `HIK*` runtime
+  commands** (pinning, body-part modes, keying, the Character Controls tool);
+  what is genuinely absent is the rig-construction half — characterisation and
+  the control-rig bake, which are `cmds.characterize()` or MEL. Corrected in
+  `CMDS_API.md`, `ANTI_PATTERNS.md` and the `maya-anim-transfer` skill, with
+  the grep trap recorded so it is not repeated. RAG serves what it holds *with
+  authority*, so a fabricated fact is worse than a gap.
+- Duplicate list numbering in `ANTI_PATTERNS.md` (two 6s and two 7s → 1–10).
+
 ## [1.24.2] — 2026-08-16
 - **The release-tag invariant only counts release tags** (Chat 99):
   `git describe --tags` picks up ANY tag, so a non-release marker — a

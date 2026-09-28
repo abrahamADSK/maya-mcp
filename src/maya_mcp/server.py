@@ -1148,6 +1148,25 @@ class ImportFileInput(BaseModel):
     scale_factor: Optional[float] = Field(default=None, description="Scale factor on import (e.g., 0.01 for cm to m)")
 
 
+class ReferenceOperation(str, Enum):
+    """Lifecycle operations for Maya file references."""
+    CREATE = "create"
+    LIST = "list"
+    REPLACE = "replace"
+    LOAD = "load"
+    UNLOAD = "unload"
+
+
+class ReferenceInput(BaseModel):
+    """Parameters for referencing files into the Maya scene."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    operation: ReferenceOperation = Field(..., description="create | list | replace | load | unload")
+    file_path: Optional[str] = Field(default=None, description="Absolute path to reference (create) or the new path to point at (replace)")
+    namespace: Optional[str] = Field(default=None, description="Namespace for the referenced content (create; defaults to the file basename)")
+    reference_node: Optional[str] = Field(default=None, description="Reference node to act on (replace/load/unload). Obtain it from operation='list'.")
+
+
 class ViewportCaptureInput(BaseModel):
     """Parameters for capturing the Maya viewport."""
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -1455,6 +1474,115 @@ finally:
             code, ctx, f"import {ext or 'file'}", bridge_timeout=120.0
         )
         return maybe_annotate_with_suggestions("maya_import_file", out)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(name="maya_reference")
+@_audited("maya_reference")
+async def maya_reference(params: ReferenceInput, ctx: Context | None = None) -> str:
+    """Reference a file into the Maya scene and manage the reference lifecycle: create, list, replace (version swap), load, unload.
+
+    A reference keeps a live link to the source file; ``maya_import_file``
+    copies content in and breaks that link. Production scenes are assembled
+    from references, so prefer this tool whenever the content has its own
+    publish and may be re-versioned.
+
+    ``replace`` is the version-swap path: it repoints an existing reference
+    node at a new file without disturbing the namespace or anything built on
+    top of it. ``list`` returns every reference node with its file, namespace
+    and loaded state — the ``reference_node`` the other operations require.
+
+    ``unload`` keeps the link and drops the content from memory; it is the
+    reversible counterpart of ``load``. Removing a reference outright is NOT
+    offered here: it is destructive and the safety module requires explicit
+    user confirmation for it.
+    """
+    op = params.operation.value
+
+    needs_node = {"replace", "load", "unload"}
+    if op in needs_node and not params.reference_node:
+        return json.dumps({"error": f"operation '{op}' requires 'reference_node' (get it from operation='list')"})
+    if op in {"create", "replace"} and not params.file_path:
+        return json.dumps({"error": f"operation '{op}' requires 'file_path'"})
+
+    try:
+        if op == "list":
+            # Plain string: braces are literal Maya-side Python, not f-string.
+            code = """
+import maya.cmds as cmds
+_refs = []
+for _n in (cmds.ls(type='reference') or []):
+    if _n == 'sharedReferenceNode' or _n.endswith('UNKNOWN_REF_NODE'):
+        continue
+    try:
+        _fn = cmds.referenceQuery(_n, filename=True)
+    except Exception:
+        continue
+    try:
+        _ns = cmds.referenceQuery(_n, namespace=True)
+    except Exception:
+        _ns = None
+    _refs.append({'reference_node': _n, 'file': _fn, 'namespace': _ns,
+                  'loaded': cmds.referenceQuery(_n, isLoaded=True)})
+result = {'count': len(_refs), 'references': _refs}
+"""
+            return await asyncio.to_thread(bridge.execute, code)
+
+        if op == "create":
+            import os as _os
+            ns = params.namespace or _os.path.splitext(_os.path.basename(params.file_path))[0]
+            fp, ns_lit = _py_str(params.file_path), _py_str(ns)
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_reference_create')
+try:
+    _before = set(cmds.ls(type='reference') or [])
+    cmds.file({fp}, reference=True, namespace={ns_lit}, mergeNamespacesOnClash=False)
+    _new = [n for n in (cmds.ls(type='reference') or []) if n not in _before]
+    _node = _new[0] if _new else None
+    result = {{'operation': 'create', 'file': {fp}, 'namespace': {ns_lit},
+              'reference_node': _node,
+              'nodes': (cmds.referenceQuery(_node, nodes=True) or [])[:20] if _node else []}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+            # A referenced rig is as heavy as an imported one; 120s + heartbeats
+            # instead of the 10s Command Port default.
+            return await _execute_with_heartbeat(
+                code, ctx, "create reference", bridge_timeout=120.0
+            )
+
+        rn = _py_str(params.reference_node)
+
+        if op == "replace":
+            fp = _py_str(params.file_path)
+            code = f"""
+import maya.cmds as cmds
+cmds.undoInfo(openChunk=True, chunkName='mcp_reference_replace')
+try:
+    _was = cmds.referenceQuery({rn}, filename=True)
+    cmds.file({fp}, loadReference={rn})
+    result = {{'operation': 'replace', 'reference_node': {rn},
+              'was': _was, 'now': cmds.referenceQuery({rn}, filename=True)}}
+finally:
+    cmds.undoInfo(closeChunk=True)
+"""
+            return await _execute_with_heartbeat(
+                code, ctx, "replace reference", bridge_timeout=120.0
+            )
+
+        flag = "loadReference" if op == "load" else "unloadReference"
+        code = f"""
+import maya.cmds as cmds
+cmds.file({flag}={rn})
+result = {{'operation': {_py_str(op)}, 'reference_node': {rn},
+          'file': cmds.referenceQuery({rn}, filename=True),
+          'loaded': cmds.referenceQuery({rn}, isLoaded=True)}}
+"""
+        return await _execute_with_heartbeat(
+            code, ctx, f"{op} reference", bridge_timeout=120.0
+        )
     except Exception as e:
         return _handle_error(e)
 

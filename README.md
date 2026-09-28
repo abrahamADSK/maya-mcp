@@ -58,11 +58,11 @@ FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
 ---
 
 <!-- concept:mcp_tool_count start -->
-## Tools (16 MCP tools)
+## Tools (17 MCP tools)
 <!-- concept:mcp_tool_count end -->
 
 <!-- concept:mcp_tool_table start -->
-### Maya Direct Tools (9 tools)
+### Maya Direct Tools (10 tools)
 | Tool | Description |
 |------|-------------|
 | `maya_create_primitive` | Create cube / sphere / cylinder / cone / plane / torus |
@@ -73,6 +73,7 @@ FastMCP server (src/maya_mcp/server.py) — 16 MCP tools
 | `maya_mesh_operation` | Extrude, bevel, boolean (union/diff/intersect), combine, separate, smooth |
 | `maya_set_keyframe` | Keyframe any attribute with tangent control (auto/linear/flat/spline/step) |
 | `maya_import_file` | Import OBJ, FBX, GLB/GLTF, Alembic, MA/MB, BVH mocap with namespace and scale (streams progress; 120s budget for heavy assets, 240s for BVH) |
+| `maya_reference` | Reference files and manage the reference lifecycle: create, list, replace (version swap), load, unload. Keeps the live link to the source file that `maya_import_file` breaks — the way production scenes are assembled. Removal is not offered (destructive; safety requires explicit confirmation) |
 | `maya_viewport_capture` | Playblast screenshot to PNG/JPG at any resolution |
 
 ### Dispatcher Tools (3 tools)
