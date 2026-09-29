@@ -11,6 +11,21 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Security
+- **`.env` permission check in `--doctor`.** `install.sh` never creates `.env` —
+  the operator copies `.env.example` by hand, so it inherits the umask, commonly
+  `0644`. It holds `WORLDLABS_API_KEY` (and `GPU_API_KEY` when set), which the
+  server forwards to remote services, so any other account on the host could read
+  and spend them. The doctor now WARNs with the exact `chmod` to run. The file
+  itself is deployment state, not code — this is the guard, not the fix.
+
+### Fixed
+- **The module docstring advertised a `--transport http` flag that does not
+  exist.** `main()` calls `mcp.run()` with no argument parsing. Removed, with a
+  note that stdio is the only transport and that adding HTTP without an
+  authentication layer would expose Maya's Command Port — which executes
+  arbitrary Python — to anything able to reach the port.
+
 ## [1.25.0] — 2026-09-28
 
 ### Added

@@ -241,6 +241,27 @@ def _parse_block_version(block_text: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def check_env_permissions() -> tuple[str, str]:
+    """Flag a .env readable by anyone but its owner.
+
+    install.sh never creates .env — the operator copies .env.example by hand,
+    so the file inherits whatever the umask gave it, commonly 0644. It holds
+    WORLDLABS_API_KEY (and, if set, GPU_API_KEY), which the server forwards to
+    remote services, so any other account on the host can read and spend them.
+    """
+    env = REPO_ROOT / ".env"
+    if not env.is_file():
+        return ("SKIP", ".env not present — nothing to check.")
+    mode = env.stat().st_mode & 0o777
+    if mode & 0o077:
+        return (
+            "WARN",
+            f".env is mode {mode:04o} — readable beyond its owner. It holds API "
+            f"keys. Fix with: chmod 600 {env}",
+        )
+    return ("PASS", f".env is mode {mode:04o} (owner-only)")
+
+
 def check_user_setup() -> tuple[str, str]:
     versions = detect_maya_versions()
     if not versions:
@@ -501,6 +522,7 @@ def check_vision3d_connectivity() -> tuple[str, str]:
 CHECKS = [
     ("claude.json entry", check_claude_json),
     (".env file", check_env_file),
+    (".env permissions", check_env_permissions),
     ("Placeholder env detection", check_placeholder_env),
     ("pyproject.toml", check_pyproject_toml),
     ("userSetup.py bootstrap", check_user_setup),

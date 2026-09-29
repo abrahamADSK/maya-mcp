@@ -17,7 +17,13 @@ Features:
 
 Usage:
     python server.py                    # stdio transport (MCP standard)
-    python server.py --transport http   # HTTP transport (dev/debug)
+
+    stdio is the ONLY transport. There is no ``--transport`` flag: ``main()``
+    calls ``mcp.run()`` with no argument parsing, so any such flag is ignored.
+    Do not add an HTTP transport without an authentication layer in front of
+    it — this server drives Maya's Command Port, which executes arbitrary
+    Python, and an unauthenticated HTTP endpoint would expose that to anything
+    that can reach the port.
 
 Environment variables (see .env.example):
     MAYA_HOST          — host where Maya is running (default: localhost)
