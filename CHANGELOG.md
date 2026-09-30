@@ -11,6 +11,15 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **Server failed to start after a fresh venv build: `mcp` bounded `<2`.** The
+  dependency was `mcp[cli]>=1.0.0` with no ceiling, so rebuilding the venv
+  resolved `mcp` 2.2.0, where `mcp.server.fastmcp` no longer exists — the import
+  in `server.py` raised `ModuleNotFoundError` and Claude Code reported only
+  "Connection closed". fpt-mcp and flame-mcp received this bound in Chat 92;
+  maya-mcp was missed. Now `mcp[cli]>=1.0.0,<2` (resolves 1.30.0, matching
+  fpt-mcp). Migrating to the 2.x `MCPServer` API is a separate, deliberate step.
+
 ### Security
 - **`.env` permission check in `--doctor`.** `install.sh` never creates `.env` —
   the operator copies `.env.example` by hand, so it inherits the umask, commonly
