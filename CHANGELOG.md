@@ -24,6 +24,11 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   "Connection closed". fpt-mcp and flame-mcp received this bound in Chat 92;
   maya-mcp was missed. Now `mcp[cli]>=1.0.0,<2` (resolves 1.30.0, matching
   fpt-mcp). Migrating to the 2.x `MCPServer` API is a separate, deliberate step.
+- **The module docstring advertised a `--transport http` flag that does not
+  exist.** `main()` calls `mcp.run()` with no argument parsing. Removed, with a
+  note that stdio is the only transport and that adding HTTP without an
+  authentication layer would expose Maya's Command Port — which executes
+  arbitrary Python — to anything able to reach the port.
 
 ### Security
 - **`.env` permission check in `--doctor`.** `install.sh` never creates `.env` —
@@ -32,13 +37,6 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
   server forwards to remote services, so any other account on the host could read
   and spend them. The doctor now WARNs with the exact `chmod` to run. The file
   itself is deployment state, not code — this is the guard, not the fix.
-
-### Fixed
-- **The module docstring advertised a `--transport http` flag that does not
-  exist.** `main()` calls `mcp.run()` with no argument parsing. Removed, with a
-  note that stdio is the only transport and that adding HTTP without an
-  authentication layer would expose Maya's Command Port — which executes
-  arbitrary Python — to anything able to reach the port.
 
 ## [1.25.0] — 2026-09-28
 
