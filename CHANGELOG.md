@@ -11,6 +11,11 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- **CI pins `mypy==2.3.1`** (the version every green run already used). mypy is a
+  blocking job and was installed unpinned, so a new mypy release could fail an
+  unrelated PR — the same drift that `ruff==0.15.11` was pinned against in Chat 92.
+
 ### Fixed
 - **Server failed to start after a fresh venv build: `mcp` bounded `<2`.** The
   dependency was `mcp[cli]>=1.0.0` with no ceiling, so rebuilding the venv
