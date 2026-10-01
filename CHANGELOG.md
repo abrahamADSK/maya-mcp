@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.25.1] — 2026-10-01
+
 ### Changed
 - **CI pins `mypy==2.3.1`** (the version every green run already used). mypy is a
   blocking job and was installed unpinned, so a new mypy release could fail an
