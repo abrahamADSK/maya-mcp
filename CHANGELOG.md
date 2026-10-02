@@ -11,6 +11,19 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Docs
+- **RAG: 19 staged candidates curated** (staged by read-only models since
+  July; surfaced by the new `/mcp-session` pending-candidates check). Promoted
+  2: `ANTI_PATTERNS.md` gains "setAttr on a keyed attribute is silently
+  overwritten", and `ARNOLD_API.md` gains per-light AOVs (light groups) —
+  **corrected**: the candidate's `addAOV(name)` alone renders all zeros; the
+  aiAOV needs the explicit LPE `C.*<L.'<group>'>`. Rejected 9 (already
+  covered by `render_still`, the Arnold docs, the `maya-anim-transfer` skill
+  or `maya_worldlabs`, or specific to the finished character job). Archived 8
+  skinning / Quick Rig candidates outside the corpus (domain off the roadmap,
+  not verifiable without Maya work). Both new sections retrieve first or
+  second for natural queries.
+
 ## [1.26.1] — 2026-10-02
 
 ### Fixed
