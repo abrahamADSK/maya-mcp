@@ -11,6 +11,15 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Fixed
+- **`mayapy_runner.py` reported success on a failed batch.** First real run
+  (Chat 109, mayapy 2027, scratch scenes only): once
+  `maya.standalone.initialize()` has run, mayapy discards `sys.exit(N)` and
+  exits 0, so "1 ok, 1 failed" came back as exit 0. The runner now flushes and
+  leaves through `os._exit(code)`; verified: system python → 2, empty scene →
+  0, one good + one missing scene → 1 with the full summary printed. The
+  `maya-headless-batch` skill documents the trap for any copied runner.
+
 ## [1.26.0] — 2026-10-02
 
 ### Changed

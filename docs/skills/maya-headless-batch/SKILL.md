@@ -128,6 +128,11 @@ teardown. Copy it, replace `do_work`, run it with mayapy:
 Resolve the real mayapy from the Maya the pipeline is pinned to, not "the newest
 installed" — the launcher authority is FPT's configured Software version.
 
+**Exit codes lie after `maya.standalone.initialize()`.** mayapy 2027 then exits
+0 whatever `sys.exit(N)` says (measured Chat 109), so a failed batch reads as a
+success to whoever launched it. Leave through `os._exit(code)` after flushing
+stdout/stderr — the runner already does; keep that ending when you copy it.
+
 ## What this skill is not
 
 - **Not the catcher / relight render recipe.** Beauty + per-light layers +
