@@ -134,3 +134,21 @@ This document helps the RAG system correct common mistakes before they reach May
 
 10. **"cmds.ls(type='light') finds all lights"** — WRONG. Use `cmds.ls(lights=True)`.
    `type='light'` only finds legacy directional lights.
+
+
+## setAttr on a Keyed (Animated) Attribute Is Silently Overwritten
+
+<!-- promoted from rag/candidates.json (2026-07-02), Chat 109 -->
+WRONG: `cmds.setAttr('ctrl.translateY', v)` (or `cmds.xform`) on an attribute
+an animCurve drives. The write is accepted, no error is raised, and the next
+evaluation puts the curve's value back — a manual pose reads back as 0.0.
+
+RIGHT: change the curve, or remove it.
+
+```python
+cmds.setKeyframe("ctrl", at="translateY", t=frame, value=v)   # edit the animation
+# or, for a static pose: cmds.cutKey("ctrl", at="translateY") then setAttr
+cmds.currentTime(frame - 1); cmds.currentTime(frame)            # force IK/constraint re-eval
+pos = cmds.xform("ik_end_JNT", q=True, ws=True, t=True)         # measure only after that
+```
+

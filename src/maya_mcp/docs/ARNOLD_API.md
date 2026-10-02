@@ -241,3 +241,37 @@ cmds.connectAttr(f'{normal_file}.outColor', f'{bump}.bumpMap')
 cmds.setAttr(f'{bump}.bumpHeight', 1.0)
 cmds.connectAttr(f'{bump}.outValue', f'{shader}.normalCamera')
 ```
+
+
+## Per-light AOVs (light groups) in mtoa
+
+<!-- promoted from rag/candidates.json (2026-07-12) and CORRECTED, Chat 109 -->
+To get one AOV per light (each light's contribution on its own layer):
+
+1. Tag each light SHAPE with a group name on `.aiAov`.
+2. Create an aiAOV with that SAME name **and give it an explicit light path
+   expression** `C.*<L.'<group>'>`. Without the LPE the layer renders
+   **all zeros** — `AOVInterface().addAOV(name)` alone is not enough (measured:
+   that was the long-standing "empty light group" bug).
+
+```python
+import maya.cmds as cmds
+import mtoa.aovs as aovs
+
+groups = {"aiAreaLightShape1": "key", "aiAreaLightShape2": "fill"}
+for shape, grp in groups.items():
+    cmds.setAttr(shape + ".aiAov", grp, type="string")
+
+iface = aovs.AOVInterface()
+for grp in set(groups.values()):
+    iface.addAOV(grp)
+    node = "aiAOV_" + grp                          # mtoa's node naming
+    assert cmds.objExists(node), node              # check, don't assume
+    cmds.setAttr(node + ".lightPathExpression", "C.*<L.'%s'>" % grp, type="string")
+```
+
+Verify numerically (each layer's non-zero fraction) before trusting it — an
+empty layer looks like a valid render. Two lights that share ONE mesh
+(duplicate mesh-lights) cannot be split into separate groups: render each of
+those lights solo instead.
+
