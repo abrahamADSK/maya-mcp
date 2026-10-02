@@ -14,11 +14,15 @@ three failures that make headless runs waste an afternoon:
    run continues; failures are collected and reported at the end.
 3. A non-zero exit that says nothing. The summary distinguishes "nothing ran"
    from "ran and some files failed".
+4. An exit code that lies. Once ``maya.standalone.initialize()`` has run,
+   mayapy 2027 discards ``sys.exit(N)`` and exits 0 (measured Chat 109), so a
+   failed batch looked successful. The code leaves through ``os._exit`` instead.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import traceback
 
@@ -124,4 +128,10 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    # sys.exit(code) is swallowed after maya.standalone.initialize() — mayapy
+    # then exits 0 whatever the code. os._exit keeps it; flush first, because
+    # os._exit skips interpreter teardown.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
