@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.26.2] — 2026-10-02
+
 ### Docs
 - **RAG: 19 staged candidates curated** (staged by read-only models since
   July; surfaced by the new `/mcp-session` pending-candidates check). Promoted
