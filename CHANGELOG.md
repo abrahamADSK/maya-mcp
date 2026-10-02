@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.26.0] — 2026-10-02
+
 ### Changed
 - **Console models moved to the Claude 5.x family.** The selector (and `VISION_MODELS`) now offers
   Claude Opus 5.5 (`claude-opus-5-5`, default), Claude Fable 5.1
