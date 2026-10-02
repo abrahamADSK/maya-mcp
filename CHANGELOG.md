@@ -11,6 +11,18 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+### Changed
+- **Console models moved to the Claude 5.x family.** The selector (and `VISION_MODELS`) now offers
+  Claude Opus 5.5 (`claude-opus-5-5`, default), Claude Fable 5.1
+  (`claude-fable-5-1`) and Claude Sonnet 5.5 (`claude-sonnet-5-5`), replacing
+  Opus 4.8 / Fable 5 / Sonnet 4.6 (still served by the API, no longer listed).
+  Measured before the switch with `claude -p` (Claude Code 2.1.287): Opus 5.5
+  and Sonnet 5.5 answer both in Auto and with a fixed effort
+  (`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1`, even at `max`), so the effort
+  selector needed no change. Fable 5.1 — like Fable 5 before it — needs usage
+  credits on a Max/Pro plan. Opus 5.5 is $4/$20 per MTok vs $5/$25 for 4.8.
+  `pr-review.yml` pins `claude-sonnet-5-5` (OAuth is Sonnet-scoped).
+
 ## [1.25.1] — 2026-10-01
 
 ### Changed
