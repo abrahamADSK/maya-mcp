@@ -11,6 +11,8 @@ and the `HANDOFF.md` "Sesión N" blocks for history prior to that.
 
 ## [Unreleased]
 
+## [1.26.1] — 2026-10-02
+
 ### Fixed
 - **`mayapy_runner.py` reported success on a failed batch.** First real run
   (Chat 109, mayapy 2027, scratch scenes only): once
